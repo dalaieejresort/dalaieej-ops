@@ -97,7 +97,7 @@ export function PosOrderView({
               {cart.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="p-8 text-center text-[#888]">
-                    Захиалга хоосон
+                    Захиалга хоосон байна
                   </td>
                 </tr>
               ) : (

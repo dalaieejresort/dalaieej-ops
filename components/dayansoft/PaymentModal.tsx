@@ -67,7 +67,7 @@ export function PaymentModal({ total, onClose, onConfirm }: PaymentModalProps) {
             </div>
             <label className="mt-2 flex items-center gap-2 text-xs text-[#666]">
               <input type="checkbox" />
-              Принтерээр хэвлэхгүй дэлгэцээр харах
+              Баримт хэвлэхгүй, дэлгэцээр харах
             </label>
           </div>
         </div>

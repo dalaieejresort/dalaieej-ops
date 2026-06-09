@@ -52,7 +52,7 @@ export const FALLBACK_CATALOG: CatalogItem[] = [
   { id: "cocktail-2", name: "Маргарита", category: "cocktail", price: 20000 },
   { id: "food-3", name: "Шорлог", category: "food", price: 25000 },
   { id: "food-4", name: "Салат", category: "food", price: 12000 },
-  { id: "food-5", name: "Тахиа шарсан", category: "food", price: 28000 },
+  { id: "food-5", name: "Шарсан тахиа", category: "food", price: 28000 },
   { id: "beer-3", name: "Hennessy XO 50гр", category: "beer", price: 380000 },
 ];
 

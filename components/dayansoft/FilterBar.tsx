@@ -58,7 +58,7 @@ export function FilterBar({ onSeatPlan, onRefresh }: FilterBarProps) {
         <IconBtn label="Байршил">📍</IconBtn>
         <IconBtn label="Дэлгэц">⛶</IconBtn>
         <IconBtn label="Жагсаалт">☰</IconBtn>
-        <IconBtn label="Ширээний төлөвөлөгөө" onClick={onSeatPlan}>
+        <IconBtn label="Ширээний төлөвлөгөө" onClick={onSeatPlan}>
           ✏
         </IconBtn>
         <IconBtn label="Нэмэх">＋</IconBtn>

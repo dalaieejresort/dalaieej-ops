@@ -1235,7 +1235,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: settlementDraftAmount,
-          description: `${selectedChargeGroup?.label ?? "Өр/таб"} төлбөр`,
+          description: `${selectedChargeGroup?.label ?? "Өр"} төлбөр`,
         }),
       });
       const data = (await response.json().catch(() => null)) as
@@ -1376,8 +1376,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSettlementStatus("success");
       setSettlementMessage(
         settlementRemaining === 0
-          ? `${selectedChargeGroup?.label ?? "Өр/таб"} төлбөр хаагдлаа`
-          : `${selectedChargeGroup?.label ?? "Өр/таб"} хэсэгчилсэн төлбөр бичигдлээ`,
+          ? `${selectedChargeGroup?.label ?? "Өр"} төлбөр хаагдлаа`
+          : `${selectedChargeGroup?.label ?? "Өр"} хэсэгчилсэн төлбөр бичигдлээ`,
       );
       setSettlementLines([]);
       resetSettlementDraft();
@@ -1800,7 +1800,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-base font-black">Өр/таб төлбөрүүд</h2>
+                    <h2 className="text-base font-black">Өр төлбөрүүд</h2>
                     <p className="text-xs font-semibold text-[#6b7280]">
                       Өрөө, нэр, утсаар бичсэн төлөгдөөгүй борлуулалт
                     </p>
@@ -2162,7 +2162,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           ) : (
             <>
               <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
-                <h2 className="text-base font-bold">Өр/таб хаах</h2>
+                <h2 className="text-base font-bold">Өр хаах</h2>
                 <button
                   type="button"
                   onClick={() => void loadUnpaidCharges()}
@@ -2791,7 +2791,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     </p>
                   </div>
                   <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
-                    <p className="font-bold text-[#6b7280]">Өр/таб</p>
+                    <p className="font-bold text-[#6b7280]">Өр</p>
                     <p className="text-lg font-black">
                       {formatMNT(dayTotals.roomChargeTotal)}
                     </p>
