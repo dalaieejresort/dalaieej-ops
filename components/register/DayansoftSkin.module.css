@@ -1,0 +1,210 @@
+.dayansoftPos {
+  --pos-orange: #e19b18;
+  --pos-orange-dark: #e19b18;
+  --pos-orange-soft: #ebcfb3;
+  --pos-purple: #940094;
+  --pos-blue: #1177d7;
+  --pos-blue-dark: #1177d7;
+  --pos-mid-blue: #1177d7;
+  --pos-sky: #9eceff;
+  --pos-border: #a9a9a9;
+  --pos-panel: #eeeef2;
+  --pos-window: #eeeef2;
+  background: var(--pos-window) !important;
+  color: #151515;
+  font-family: Arial, var(--font-sans);
+}
+
+.dayansoftPos *,
+.dayansoftPos *::before,
+.dayansoftPos *::after {
+  letter-spacing: 0;
+  box-shadow: none !important;
+}
+
+.dayansoftPos :global([class*="rounded"]) {
+  border-radius: 2px !important;
+}
+
+.dayansoftPos :global(button),
+.dayansoftPos :global(button[class*="rounded"]) {
+  border-radius: 0 !important;
+}
+
+.dayansoftPos :global(header) {
+  min-height: 3.25rem;
+  background: var(--pos-orange) !important;
+  border-color: var(--pos-orange) !important;
+  color: #171717;
+}
+
+.dayansoftPos :global(header h1),
+.dayansoftPos :global(header p),
+.dayansoftPos :global(header .text-\[\#6b7280\]) {
+  color: #171717 !important;
+}
+
+.dayansoftPos :global(main) {
+  background: var(--pos-window);
+}
+
+.dayansoftPos :global(section) {
+  background: var(--pos-window);
+  border-color: var(--pos-border) !important;
+}
+
+.dayansoftPos :global(aside),
+.dayansoftPos :global(section > div),
+.dayansoftPos :global(aside > div),
+.dayansoftPos :global(.bg-white),
+.dayansoftPos :global([class*="bg-[#f8fafc]"]) {
+  background-color: var(--pos-panel) !important;
+}
+
+.dayansoftPos :global([class*="border-[#d1d5db]"]),
+.dayansoftPos :global([class*="border-[#cbd5e1]"]),
+.dayansoftPos :global([class*="border-[#e5e7eb]"]),
+.dayansoftPos :global([class*="border-[#fecaca]"]),
+.dayansoftPos :global([class*="border-[#bbf7d0]"]) {
+  border-color: var(--pos-border) !important;
+}
+
+.dayansoftPos :global(input),
+.dayansoftPos :global(select) {
+  background-color: #fff !important;
+  border-color: var(--pos-border) !important;
+}
+
+.dayansoftPos :global(button) {
+  border-color: var(--pos-border) !important;
+}
+
+.dayansoftPos :global(button.bg-white),
+.dayansoftPos :global(button[class*="bg-white"]),
+.dayansoftPos :global(button[class*="hover:bg-[#f8fafc]"]),
+.dayansoftPos :global(button[class*="hover:bg-[#eef2ff]"]) {
+  background: var(--pos-sky) !important;
+  border-color: var(--pos-sky) !important;
+  color: #102033 !important;
+}
+
+.dayansoftPos :global(button:not(:disabled):hover) {
+  filter: brightness(0.98);
+}
+
+.dayansoftPos :global(button:not(:disabled):active) {
+  transform: translateY(1px);
+}
+
+.dayansoftPos :global(button[class*="bg-[#111827]"]) {
+  background: var(--pos-purple) !important;
+  border-color: var(--pos-purple) !important;
+  color: #fff !important;
+}
+
+.dayansoftPos :global(button[style*="background-color"]) {
+  background: var(--pos-orange) !important;
+  border-color: var(--pos-orange) !important;
+  color: #111 !important;
+}
+
+.dayansoftPos :global(button[class*="bg-[#047857]"]) {
+  background: var(--pos-orange) !important;
+  border-color: var(--pos-orange) !important;
+  color: #111 !important;
+}
+
+.dayansoftPos :global(button[class*="bg-[#b91c1c]"]) {
+  background: var(--pos-blue) !important;
+  border-color: var(--pos-blue) !important;
+  color: #fff !important;
+}
+
+.dayansoftPos :global(button:disabled) {
+  background: #d9d9d9 !important;
+  border-color: #d9d9d9 !important;
+  color: #6c6c6c !important;
+  opacity: 1 !important;
+}
+
+.dayansoftPos :global(section > div:first-child) {
+  background: var(--pos-orange-soft) !important;
+  border-color: var(--pos-border) !important;
+}
+
+.dayansoftPos :global(section > div:first-child button:not([style])) {
+  background: var(--pos-mid-blue) !important;
+  border-color: var(--pos-mid-blue) !important;
+  color: #fff !important;
+}
+
+.dayansoftPos :global(button[data-testid="product-tile"]) {
+  height: 7rem !important;
+  padding: 0.55rem !important;
+  background: var(--pos-orange-soft) !important;
+  border-color: var(--pos-orange-soft) !important;
+  color: #151515 !important;
+}
+
+.dayansoftPos :global(button[data-testid="product-tile"]:hover) {
+  background: var(--pos-orange-soft) !important;
+  border-color: var(--pos-orange-soft) !important;
+}
+
+.dayansoftPos :global([data-testid="product-tile"] span:last-child span:last-child) {
+  background: var(--pos-blue) !important;
+  border: 1px solid var(--pos-blue);
+  color: #fff !important;
+  font-size: 0.75rem;
+}
+
+.dayansoftPos :global(.divide-y > :not([hidden]) ~ :not([hidden])),
+.dayansoftPos :global([class*="divide-[#e5e7eb]"] > :not([hidden]) ~ :not([hidden])) {
+  border-color: #c7c7c7 !important;
+}
+
+.dayansoftPos :global(.shadow),
+.dayansoftPos :global(.shadow-sm),
+.dayansoftPos :global(.shadow-xl),
+.dayansoftPos :global(.shadow-2xl) {
+  box-shadow: none !important;
+}
+
+.dayansoftPos :global(.ring-2) {
+  box-shadow: none !important;
+  outline: 2px solid var(--pos-purple);
+  outline-offset: -2px;
+}
+
+.dayansoftPos :global(.text-\[\#6b7280\]) {
+  color: #5f5f5f !important;
+}
+
+.dayansoftPos :global([class*="bg-[#ecfdf5]"]) {
+  background-color: var(--pos-sky) !important;
+}
+
+.dayansoftPos :global([class*="bg-[#fef2f2]"]) {
+  background-color: var(--pos-orange-soft) !important;
+}
+
+.dayansoftPos :global([class*="fixed"][class*="inset-0"]) {
+  background-color: rgb(0 0 0 / 0.22) !important;
+}
+
+.dayansoftPos :global([class*="fixed"][class*="inset-0"] > div) {
+  background-color: #fbfbfb !important;
+  border-color: var(--pos-orange) !important;
+}
+
+.dayansoftPos :global([data-testid="complete-sale"]) {
+  font-size: 1.05rem;
+}
+
+.dayansoftPos > :global(header),
+.dayansoftPos > :global(header.bg-white) {
+  background: var(--pos-orange) !important;
+  background-color: var(--pos-orange) !important;
+  background-image: none !important;
+  border-color: var(--pos-orange) !important;
+}

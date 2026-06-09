@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
 import type { CartLine, CatalogItem, ItemCategory } from "@/lib/pos/types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
+import styles from "./DayansoftSkin.module.css";
 
 type CatalogResponseItem = {
   sku: string;
@@ -1608,7 +1609,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]">
+    <div className={`${styles.dayansoftPos} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
       <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-4 py-3">
         <div>
           <h1 className="text-lg font-bold leading-tight">Dalai Eej Register</h1>
