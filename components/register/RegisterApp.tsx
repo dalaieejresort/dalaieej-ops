@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
 import type { CartLine, CatalogItem, ItemCategory } from "@/lib/pos/types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
@@ -23,6 +23,98 @@ type QPayInvoice = {
   qrCode: string;
   qrText: string;
   shortUrl: string;
+};
+
+type DayStatus = "loading" | "ready" | "saving" | "error";
+type DayModalMode = "open" | "close" | null;
+type VoidStatus = "idle" | "loading" | "saving" | "success" | "error";
+
+type DayTotals = {
+  salesTotal: number;
+  paymentTotal: number;
+  cashPaymentTotal: number;
+  cardPaymentTotal: number;
+  qpayPaymentTotal: number;
+  otherPaymentTotal: number;
+  roomChargeTotal: number;
+  expectedCash: number;
+};
+
+type DaySession = {
+  businessDate: string;
+  openedAt: string;
+  openedBy: string;
+  startingCash: number;
+  status: "open" | "closed" | string;
+  closedAt: string;
+  closedBy: string;
+  countedCash: number;
+  expectedCash: number;
+  cashDifference: number;
+  paymentTotal: number;
+  cashPaymentTotal: number;
+  cardPaymentTotal: number;
+  qpayPaymentTotal: number;
+  otherPaymentTotal: number;
+  roomChargeTotal: number;
+  salesTotal: number;
+  notes: string;
+};
+
+type RecentSale = {
+  transactionId: string;
+  timestamp: string;
+  staff: string;
+  paymentMethod: string;
+  paidStatus: string;
+  roomOrGuest: string;
+  total: number;
+  paidAmount: number;
+  refundableAmount: number;
+  itemSummary: string;
+  notes: string;
+};
+
+type RegisterMode = "sale" | "charges";
+type SettlementMethod = "cash" | "card" | "qpay";
+type SettlementStatus = "idle" | "saving" | "success" | "error";
+
+type SettlementPaymentLine = {
+  id: string;
+  method: SettlementMethod;
+  methodLabel: string;
+  amount: number;
+  cashReceived: number;
+  changeDue: number;
+  qpayInvoiceId: string;
+};
+
+type UnpaidCharge = {
+  transactionId: string;
+  timestamp: string;
+  staff: string;
+  paymentMethod: string;
+  roomOrGuest: string;
+  subtotal: number;
+  discount: number;
+  total: number;
+  originalTotal: number;
+  paidAmount: number;
+  balance: number;
+  itemCount: number;
+  itemSummary: string;
+  qpayInvoiceId: string;
+  notes: string;
+};
+
+type ChargeGroup = {
+  key: string;
+  label: string;
+  charges: UnpaidCharge[];
+  total: number;
+  paidAmount: number;
+  originalTotal: number;
+  latestTimestamp: string;
 };
 
 type PrintableSale = {
@@ -69,11 +161,27 @@ const PAYMENT_METHODS = [
 
 type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
 
+const SETTLEMENT_METHODS = [
+  { id: "cash", label: "Бэлэн" },
+  { id: "card", label: "Карт" },
+  { id: "qpay", label: "QPay" },
+] as const satisfies Array<{ id: SettlementMethod; label: string }>;
+
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
 const KITCHEN_CATEGORIES = new Set<ItemCategory>(["food", "dessert"]);
 const ROOM_NUMBERS = Array.from({ length: 18 }, (_, index) =>
   String(index + 1),
 );
+const EMPTY_DAY_TOTALS: DayTotals = {
+  salesTotal: 0,
+  paymentTotal: 0,
+  cashPaymentTotal: 0,
+  cardPaymentTotal: 0,
+  qpayPaymentTotal: 0,
+  otherPaymentTotal: 0,
+  roomChargeTotal: 0,
+  expectedCash: 0,
+};
 
 function inferCategory(name: string): ItemCategory {
   const normalized = name.toLowerCase();
@@ -160,25 +268,117 @@ function printablePage(title: string, body: string) {
     <meta charset="utf-8" />
     <title>${escapeHtml(title)}</title>
     <style>
-      @page { size: 80mm auto; margin: 4mm; }
+      @page { size: 80mm auto; margin: 3mm; }
       * { box-sizing: border-box; }
-      body { margin: 0; color: #111; font-family: Arial, sans-serif; font-size: 12px; }
-      h1 { margin: 0 0 6px; text-align: center; font-size: 18px; letter-spacing: 0; }
-      h2 { margin: 0 0 8px; text-align: center; font-size: 13px; font-weight: 700; }
-      .meta { display: grid; gap: 2px; margin: 8px 0; border-top: 1px dashed #111; border-bottom: 1px dashed #111; padding: 6px 0; }
-      .row { display: flex; justify-content: space-between; gap: 8px; }
-      .items { margin-top: 8px; }
-      .item { border-bottom: 1px solid #ddd; padding: 6px 0; }
-      .item-main { display: grid; grid-template-columns: 36px 1fr auto; gap: 6px; align-items: baseline; }
-      .qty { font-size: 18px; font-weight: 900; }
-      .name { font-size: 14px; font-weight: 800; overflow-wrap: anywhere; }
-      .price { font-weight: 700; text-align: right; }
-      .total { margin-top: 10px; border-top: 2px solid #111; padding-top: 8px; font-size: 16px; font-weight: 900; }
-      .note { margin-top: 10px; text-align: center; font-size: 11px; }
-      @media screen { body { max-width: 320px; padding: 12px; } }
+      html { margin: 0; padding: 0; background: #fff; }
+      body {
+        width: 72mm;
+        margin: 0 auto;
+        padding: 0;
+        color: #000;
+        background: #fff;
+        font-family: Arial, "Helvetica Neue", sans-serif;
+        font-size: 11px;
+        line-height: 1.25;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      h1 {
+        margin: 0 0 4px;
+        text-align: center;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin: 0 0 7px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .meta {
+        display: grid;
+        gap: 2px;
+        margin: 7px 0;
+        border-top: 1px dashed #000;
+        border-bottom: 1px dashed #000;
+        padding: 5px 0;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 6px;
+        align-items: baseline;
+      }
+      .row span:last-child,
+      .row strong:last-child {
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+      .items { margin-top: 6px; }
+      .item {
+        break-inside: avoid;
+        border-bottom: 1px solid #ddd;
+        padding: 5px 0;
+      }
+      .item-main {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr) 54px;
+        gap: 5px;
+        align-items: baseline;
+      }
+      .qty {
+        font-size: 18px;
+        font-weight: 900;
+      }
+      .name {
+        font-size: 12px;
+        font-weight: 800;
+        overflow-wrap: anywhere;
+      }
+      .price {
+        font-size: 11px;
+        font-weight: 800;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .total {
+        margin-top: 8px;
+        border-top: 2px solid #000;
+        padding-top: 7px;
+        font-size: 15px;
+        font-weight: 900;
+      }
+      .kitchen .item-main {
+        grid-template-columns: 46px minmax(0, 1fr);
+      }
+      .kitchen .qty {
+        font-size: 24px;
+      }
+      .kitchen .name {
+        font-size: 16px;
+        font-weight: 900;
+      }
+      .note {
+        margin-top: 9px;
+        text-align: center;
+        font-size: 10px;
+      }
+      .cut {
+        margin-top: 12px;
+        border-top: 1px dashed #000;
+        height: 4px;
+      }
+      @media screen {
+        body {
+          max-width: 320px;
+          padding: 12px;
+          box-shadow: 0 0 0 1px #ddd;
+        }
+      }
     </style>
   </head>
-  <body>${body}</body>
+  <body>${body}<div class="cut"></div></body>
 </html>`;
 }
 
@@ -189,7 +389,7 @@ function printHtml(title: string, body: string) {
   printWindow.document.write(printablePage(title, body));
   printWindow.document.close();
   printWindow.focus();
-  printWindow.print();
+  window.setTimeout(() => printWindow.print(), 150);
   return true;
 }
 
@@ -203,13 +403,57 @@ function getQrImageSource(qrCode: string) {
   return `data:image/png;base64,${qrCode}`;
 }
 
+function createLocalPaymentId() {
+  return `local-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+}
+
+function getChargeGroupKey(charge: UnpaidCharge) {
+  return (charge.roomOrGuest || "Өрөө/Зочин").trim().toLowerCase();
+}
+
+function getChargeGroupLabel(charge: UnpaidCharge) {
+  return charge.roomOrGuest || "Өрөө/Зочин";
+}
+
+function buildChargeGroups(charges: UnpaidCharge[]) {
+  const groups = new Map<string, ChargeGroup>();
+
+  for (const charge of charges) {
+    const key = getChargeGroupKey(charge);
+    const existing = groups.get(key);
+
+    if (existing) {
+      existing.charges.push(charge);
+      existing.total += charge.total;
+      existing.paidAmount += charge.paidAmount;
+      existing.originalTotal += charge.originalTotal;
+      existing.latestTimestamp = charge.timestamp || existing.latestTimestamp;
+    } else {
+      groups.set(key, {
+        key,
+        label: getChargeGroupLabel(charge),
+        charges: [charge],
+        total: charge.total,
+        paidAmount: charge.paidAmount,
+        originalTotal: charge.originalTotal,
+        latestTimestamp: charge.timestamp,
+      });
+    }
+  }
+
+  return Array.from(groups.values()).sort((first, second) =>
+    first.label.localeCompare(second.label),
+  );
+}
+
 function printKitchenSheet(sale: PrintableSale) {
   const kitchenItems = getKitchenItems(sale);
   if (kitchenItems.length === 0) return false;
 
   return printHtml(
     "Гал тогоо",
-    `<h1>ГАЛ ТОГОО</h1>
+    `<div class="kitchen">
+    <h1>ГАЛ ТОГОО</h1>
     <h2>Захиалгын хуудас</h2>
     <div class="meta">
       <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
@@ -228,13 +472,13 @@ function printKitchenSheet(sale: PrintableSale) {
             <div class="item-main">
               <span class="qty">${item.quantity}x</span>
               <span class="name">${escapeHtml(item.name)}</span>
-              <span></span>
             </div>
           </div>`,
         )
         .join("")}
     </div>
-    <div class="note">Гал тогоонд хэвлэв</div>`,
+    <div class="note">Гал тогоонд хэвлэв</div>
+    </div>`,
   );
 }
 
@@ -305,6 +549,42 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [qpayMessage, setQPayMessage] = useState("");
   const [qpayWindowOpen, setQPayWindowOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [dayStatus, setDayStatus] = useState<DayStatus>("loading");
+  const [dayMessage, setDayMessage] = useState("");
+  const [daySession, setDaySession] = useState<DaySession | null>(null);
+  const [dayTotals, setDayTotals] = useState<DayTotals>(EMPTY_DAY_TOTALS);
+  const [dayModalMode, setDayModalMode] = useState<DayModalMode>(null);
+  const [dayCashAmount, setDayCashAmount] = useState(0);
+  const [dayNotes, setDayNotes] = useState("");
+  const [voidModalOpen, setVoidModalOpen] = useState(false);
+  const [voidStatus, setVoidStatus] = useState<VoidStatus>("idle");
+  const [voidMessage, setVoidMessage] = useState("");
+  const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
+  const [selectedVoidTransactionId, setSelectedVoidTransactionId] = useState("");
+  const [voidReason, setVoidReason] = useState("");
+  const [voidRefundMethod, setVoidRefundMethod] = useState("Бэлэн");
+  const [registerMode, setRegisterMode] = useState<RegisterMode>("sale");
+  const [unpaidCharges, setUnpaidCharges] = useState<UnpaidCharge[]>([]);
+  const [chargesStatus, setChargesStatus] = useState<CatalogStatus>("loading");
+  const [chargesMessage, setChargesMessage] = useState("");
+  const [selectedChargeGroupKey, setSelectedChargeGroupKey] = useState("");
+  const [selectedChargeIds, setSelectedChargeIds] = useState<string[]>([]);
+  const [settlementMethod, setSettlementMethod] =
+    useState<SettlementMethod>("cash");
+  const [settlementPaymentAmount, setSettlementPaymentAmount] = useState(0);
+  const [settlementLines, setSettlementLines] = useState<SettlementPaymentLine[]>([]);
+  const [settlementCashReceived, setSettlementCashReceived] = useState(0);
+  const [settlementStatus, setSettlementStatus] =
+    useState<SettlementStatus>("idle");
+  const [settlementMessage, setSettlementMessage] = useState("");
+  const [settlementQPayInvoice, setSettlementQPayInvoice] =
+    useState<QPayInvoice | null>(null);
+  const [settlementQPayStatus, setSettlementQPayStatus] =
+    useState<QPayStatus>("idle");
+  const [settlementQPayMessage, setSettlementQPayMessage] = useState("");
+  const [settlementQPayWindowOpen, setSettlementQPayWindowOpen] =
+    useState(false);
+  const selectedChargeGroupKeyRef = useRef("");
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -326,13 +606,88 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, []);
 
+  const loadUnpaidCharges = useCallback(async () => {
+    setChargesStatus("loading");
+    setChargesMessage("");
+
+    try {
+      const response = await fetch("/api/sales", { cache: "no-store" });
+      const data = (await response.json().catch(() => null)) as
+        | { charges?: UnpaidCharge[]; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өр төлбөрүүдийг авч чадсангүй");
+      }
+
+      const charges = Array.isArray(data?.charges) ? data.charges : [];
+      const groups = buildChargeGroups(charges);
+      const nextGroup =
+        groups.find((group) => group.key === selectedChargeGroupKeyRef.current) ??
+        groups[0] ??
+        null;
+      setUnpaidCharges(charges);
+      setChargesStatus("ready");
+      selectedChargeGroupKeyRef.current = nextGroup?.key ?? "";
+      setSelectedChargeGroupKey(nextGroup?.key ?? "");
+      setSelectedChargeIds(
+        nextGroup?.charges.map((charge) => charge.transactionId) ?? [],
+      );
+    } catch (error) {
+      setUnpaidCharges([]);
+      setChargesStatus("sample");
+      selectedChargeGroupKeyRef.current = "";
+      setSelectedChargeGroupKey("");
+      setSelectedChargeIds([]);
+      setChargesMessage(
+        error instanceof Error ? error.message : "Өр төлбөрүүдийг авч чадсангүй",
+      );
+    }
+  }, []);
+
+  const loadDayStatus = useCallback(async () => {
+    setDayStatus("loading");
+    setDayMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/day?businessDate=${encodeURIComponent(businessDate)}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json().catch(() => null)) as
+        | {
+            session?: DaySession | null;
+            totals?: DayTotals;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өдрийн төлөв авч чадсангүй");
+      }
+
+      setDaySession(data?.session ?? null);
+      setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
+      setDayStatus("ready");
+    } catch (error) {
+      setDaySession(null);
+      setDayTotals(EMPTY_DAY_TOTALS);
+      setDayStatus("error");
+      setDayMessage(
+        error instanceof Error ? error.message : "Өдрийн төлөв авч чадсангүй",
+      );
+    }
+  }, [businessDate]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadCatalog();
+      void loadUnpaidCharges();
+      void loadDayStatus();
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [loadCatalog]);
+  }, [loadCatalog, loadDayStatus, loadUnpaidCharges]);
 
   useEffect(() => {
     function syncFullscreenState() {
@@ -381,7 +736,24 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const roomRequired = paymentMethod === "room";
   const qpayRequired = paymentMethod === "qpay";
   const qpayPaid = qpayStatus === "paid";
+  const dayOpen = daySession?.status === "open";
+  const dayClosed = daySession?.status === "closed";
+  const dayCashDifference = dayCashAmount - dayTotals.expectedCash;
+  const dayCloseHasVariance =
+    dayModalMode === "close" && dayCashDifference !== 0;
+  const canSubmitDaySession =
+    dayStatus !== "saving" &&
+    dayCashAmount >= 0 &&
+    (!dayCloseHasVariance || dayNotes.trim().length > 0);
+  const selectedVoidSale =
+    recentSales.find((sale) => sale.transactionId === selectedVoidTransactionId) ??
+    null;
+  const canSubmitVoid =
+    voidStatus !== "saving" &&
+    Boolean(selectedVoidSale) &&
+    voidReason.trim().length > 0;
   const canCompleteSale =
+    dayOpen &&
     cart.length > 0 &&
     saleStatus !== "saving" &&
     (!cashRequired || cashShort === 0) &&
@@ -389,13 +761,74 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (!qpayRequired || qpayPaid);
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
-    : roomRequired
+    : !dayOpen
+      ? "Өдрөө нээнэ үү"
+      : roomRequired
       ? "Өрөө/зочинд бичих"
       : qpayRequired
         ? qpayPaid
           ? "QPay борлуулалт хадгалах"
           : "QPay төлбөр хүлээгдэж байна"
         : "Төлбөр авах";
+  const chargeGroups = useMemo(
+    () => buildChargeGroups(unpaidCharges),
+    [unpaidCharges],
+  );
+  const selectedChargeGroup =
+    chargeGroups.find((group) => group.key === selectedChargeGroupKey) ?? null;
+  const selectedCharges = unpaidCharges.filter((charge) =>
+    selectedChargeIds.includes(charge.transactionId),
+  );
+  const selectedChargeTotal = selectedCharges.reduce(
+    (sum, charge) => sum + charge.total,
+    0,
+  );
+  const selectedChargeOriginalTotal = selectedCharges.reduce(
+    (sum, charge) => sum + charge.originalTotal,
+    0,
+  );
+  const selectedChargePaidAmount = selectedCharges.reduce(
+    (sum, charge) => sum + charge.paidAmount,
+    0,
+  );
+  const settlementLineTotal = settlementLines.reduce(
+    (sum, line) => sum + line.amount,
+    0,
+  );
+  const settlementRemaining = Math.max(
+    selectedChargeTotal - settlementLineTotal,
+    0,
+  );
+  const settlementDraftAmount =
+    settlementPaymentAmount > 0 ? settlementPaymentAmount : settlementRemaining;
+  const settlementDraftOverRemaining =
+    settlementDraftAmount > settlementRemaining;
+  const settlementCashRequired = settlementMethod === "cash";
+  const settlementQPayRequired = settlementMethod === "qpay";
+  const settlementCashShort = settlementCashRequired
+    ? Math.max(settlementDraftAmount - settlementCashReceived, 0)
+    : 0;
+  const settlementChangeDue = Math.max(
+    settlementCashReceived - settlementDraftAmount,
+    0,
+  );
+  const canAddSettlementLine =
+    selectedCharges.length > 0 &&
+    settlementStatus !== "saving" &&
+    settlementRemaining > 0 &&
+    settlementDraftAmount > 0 &&
+    !settlementDraftOverRemaining &&
+    (!settlementCashRequired || settlementCashShort === 0) &&
+    (!settlementQPayRequired || settlementQPayStatus === "paid");
+  const canSettleCharge =
+    selectedCharges.length > 0 &&
+    settlementLines.length > 0 &&
+    settlementStatus !== "saving";
+  const settlementSubmitLabel = settlementStatus === "saving"
+    ? "Бичиж байна"
+    : settlementRemaining === 0
+      ? "Төлбөр хаах"
+      : "Хэсэгчилсэн төлбөр бичих";
 
   function addToCart(item: CatalogItem) {
     setSaleStatus("idle");
@@ -440,6 +873,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setPaymentMethod(method);
     if (method === "qpay") {
       setQPayWindowOpen(true);
+      void createQPayInvoice();
     } else {
       resetQPayPayment();
     }
@@ -465,6 +899,496 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
+  function openDayModal(mode: Exclude<DayModalMode, null>) {
+    setDayModalMode(mode);
+    setDayStatus("ready");
+    setDayMessage("");
+    setDayNotes("");
+    setDayCashAmount(mode === "open" ? daySession?.startingCash ?? 0 : 0);
+  }
+
+  function setDayCashInput(value: string) {
+    const amount = Number(value.replace(/[^\d]/g, ""));
+    setDayCashAmount(Number.isFinite(amount) ? amount : 0);
+    if (dayStatus === "error") {
+      setDayStatus("ready");
+      setDayMessage("");
+    }
+  }
+
+  async function submitDaySession() {
+    if (!dayModalMode || dayStatus === "saving") return;
+    if (!canSubmitDaySession) {
+      setDayStatus("error");
+      setDayMessage("Зөрүүтэй бол тайлбар бичнэ үү");
+      return;
+    }
+
+    setDayStatus("saving");
+    setDayMessage("");
+
+    try {
+      const response = await fetch("/api/day", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: dayModalMode,
+          businessDate,
+          staffName,
+          startingCash: dayModalMode === "open" ? dayCashAmount : undefined,
+          countedCash: dayModalMode === "close" ? dayCashAmount : undefined,
+          notes: dayNotes,
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | {
+            session?: DaySession | null;
+            totals?: DayTotals;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өдрийн төлөв хадгалж чадсангүй");
+      }
+
+      setDaySession(data?.session ?? null);
+      setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
+      setDayModalMode(null);
+      setDayCashAmount(0);
+      setDayNotes("");
+      setDayStatus("ready");
+      setDayMessage(
+        dayModalMode === "open" ? "Өдөр нээгдлээ" : "Өдрийн хаалт хадгалагдлаа",
+      );
+    } catch (error) {
+      setDayStatus("error");
+      setDayMessage(
+        error instanceof Error ? error.message : "Өдрийн төлөв хадгалж чадсангүй",
+      );
+    }
+  }
+
+  async function loadVoidableSales() {
+    setVoidStatus("loading");
+    setVoidMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/voids?businessDate=${encodeURIComponent(businessDate)}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json().catch(() => null)) as
+        | { sales?: RecentSale[]; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Борлуулалтын жагсаалт авч чадсангүй");
+      }
+
+      const sales = Array.isArray(data?.sales) ? data.sales : [];
+      setRecentSales(sales);
+      setSelectedVoidTransactionId((current) =>
+        sales.some((sale) => sale.transactionId === current)
+          ? current
+          : sales[0]?.transactionId ?? "",
+      );
+      setVoidStatus("idle");
+    } catch (error) {
+      setRecentSales([]);
+      setSelectedVoidTransactionId("");
+      setVoidStatus("error");
+      setVoidMessage(
+        error instanceof Error
+          ? error.message
+          : "Борлуулалтын жагсаалт авч чадсангүй",
+      );
+    }
+  }
+
+  function openVoidModal() {
+    if (!dayOpen) {
+      setVoidStatus("error");
+      setVoidMessage("Буцаалт хийхээс өмнө өдрөө нээнэ үү");
+      openDayModal("open");
+      return;
+    }
+
+    setVoidModalOpen(true);
+    setVoidReason("");
+    setVoidRefundMethod("Бэлэн");
+    setVoidMessage("");
+    void loadVoidableSales();
+  }
+
+  async function submitVoidSale() {
+    if (!selectedVoidSale || !canSubmitVoid) {
+      setVoidStatus("error");
+      setVoidMessage("Буцаах борлуулалт болон шалтгаанаа сонгоно уу");
+      return;
+    }
+
+    setVoidStatus("saving");
+    setVoidMessage("");
+
+    try {
+      const response = await fetch("/api/voids", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transactionId: selectedVoidSale.transactionId,
+          businessDate,
+          staffName,
+          reason: voidReason,
+          refundMethod:
+            selectedVoidSale.refundableAmount > 0
+              ? voidRefundMethod
+              : "No refund",
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { refundAmount?: number; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Буцаалт хадгалж чадсангүй");
+      }
+
+      setVoidReason("");
+      await Promise.all([
+        loadVoidableSales(),
+        loadDayStatus(),
+        loadUnpaidCharges(),
+      ]);
+      setVoidStatus("success");
+      setVoidMessage(
+        `Буцаалт хадгалагдлаа${
+          Number(data?.refundAmount ?? 0) > 0
+            ? ` · ${formatMNT(Number(data?.refundAmount ?? 0))}`
+            : ""
+        }`,
+      );
+    } catch (error) {
+      setVoidStatus("error");
+      setVoidMessage(
+        error instanceof Error ? error.message : "Буцаалт хадгалж чадсангүй",
+      );
+    }
+  }
+
+  function selectRegisterMode(mode: RegisterMode) {
+    setRegisterMode(mode);
+    setSaleStatus("idle");
+    setSaleMessage("");
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+    if (mode === "charges") {
+      void loadUnpaidCharges();
+    }
+  }
+
+  function selectChargeGroup(group: ChargeGroup) {
+    selectedChargeGroupKeyRef.current = group.key;
+    setSelectedChargeGroupKey(group.key);
+    setSelectedChargeIds(group.charges.map((charge) => charge.transactionId));
+    resetSettlementPaymentState();
+  }
+
+  function toggleSelectedCharge(transactionId: string) {
+    setSelectedChargeIds((current) => {
+      const next = current.includes(transactionId)
+        ? current.filter((id) => id !== transactionId)
+        : [...current, transactionId];
+      return next;
+    });
+    resetSettlementPaymentState();
+  }
+
+  function resetSettlementQPayPayment() {
+    setSettlementQPayInvoice(null);
+    setSettlementQPayStatus("idle");
+    setSettlementQPayMessage("");
+    setSettlementQPayWindowOpen(false);
+  }
+
+  function resetSettlementDraft() {
+    setSettlementPaymentAmount(0);
+    setSettlementCashReceived(0);
+    resetSettlementQPayPayment();
+  }
+
+  function resetSettlementPaymentState() {
+    setSettlementLines([]);
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+    resetSettlementDraft();
+  }
+
+  function selectSettlementMethod(method: SettlementMethod) {
+    setSettlementMethod(method);
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+    setSettlementCashReceived(0);
+    resetSettlementQPayPayment();
+    if (method === "qpay") {
+      setSettlementQPayWindowOpen(true);
+      void createSettlementQPayInvoice();
+    }
+  }
+
+  function setSettlementAmountInput(value: string) {
+    const amount = Number(value.replace(/[^\d]/g, ""));
+    setSettlementPaymentAmount(Number.isFinite(amount) ? amount : 0);
+    resetSettlementQPayPayment();
+    if (settlementMethod === "qpay") {
+      setSettlementQPayWindowOpen(true);
+    }
+    if (settlementStatus === "error") {
+      setSettlementStatus("idle");
+      setSettlementMessage("");
+    }
+  }
+
+  function setSettlementCashInput(value: string) {
+    const amount = Number(value.replace(/[^\d]/g, ""));
+    setSettlementCashReceived(Number.isFinite(amount) ? amount : 0);
+    if (settlementStatus === "error") {
+      setSettlementStatus("idle");
+      setSettlementMessage("");
+    }
+  }
+
+  function addSettlementLine() {
+    if (!canAddSettlementLine) {
+      if (settlementDraftOverRemaining) {
+        setSettlementStatus("error");
+        setSettlementMessage("Төлөх мөр үлдэгдлээс их байна");
+        return;
+      }
+
+      if (settlementCashRequired && settlementCashShort > 0) {
+        setSettlementStatus("error");
+        setSettlementMessage(`${formatMNT(settlementCashShort)} дутуу байна`);
+        return;
+      }
+
+      if (settlementQPayRequired && settlementQPayStatus !== "paid") {
+        setSettlementStatus("error");
+        setSettlementMessage("QPay төлбөрөө шалгаж баталгаажуулна уу");
+        setSettlementQPayWindowOpen(true);
+        return;
+      }
+
+      return;
+    }
+
+    const methodLabel =
+      SETTLEMENT_METHODS.find((method) => method.id === settlementMethod)
+        ?.label ?? settlementMethod;
+    setSettlementLines((current) => [
+      ...current,
+      {
+        id: createLocalPaymentId(),
+        method: settlementMethod,
+        methodLabel,
+        amount: settlementDraftAmount,
+        cashReceived: settlementCashRequired ? settlementCashReceived : 0,
+        changeDue: settlementCashRequired ? settlementChangeDue : 0,
+        qpayInvoiceId: settlementQPayRequired
+          ? settlementQPayInvoice?.invoiceId ?? ""
+          : "",
+      },
+    ]);
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+    resetSettlementDraft();
+  }
+
+  function removeSettlementLine(id: string) {
+    setSettlementLines((current) => current.filter((line) => line.id !== id));
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+  }
+
+  async function createSettlementQPayInvoice() {
+    if (
+      selectedCharges.length === 0 ||
+      settlementQPayStatus === "creating" ||
+      settlementQPayInvoice
+    ) {
+      return;
+    }
+    if (settlementDraftAmount <= 0 || settlementDraftOverRemaining) {
+      setSettlementQPayStatus("error");
+      setSettlementQPayMessage("QPay үүсгэх дүнгээ шалгана уу");
+      return;
+    }
+
+    setSettlementQPayWindowOpen(true);
+    setSettlementQPayStatus("creating");
+    setSettlementQPayMessage("");
+
+    try {
+      const response = await fetch("/api/qpay/create-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: settlementDraftAmount,
+          description: `${selectedChargeGroup?.label ?? "Өр/таб"} төлбөр`,
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | (QPayInvoice & { success?: boolean; error?: string })
+        | null;
+
+      if (!response.ok || !data?.invoiceId) {
+        throw new Error(data?.error ?? "QPay invoice үүсгэж чадсангүй");
+      }
+
+      setSettlementQPayInvoice({
+        invoiceId: data.invoiceId,
+        qrCode: data.qrCode ?? "",
+        qrText: data.qrText ?? "",
+        shortUrl: data.shortUrl ?? "",
+      });
+      setSettlementQPayStatus("pending");
+      setSettlementQPayMessage("QR уншуулсны дараа төлбөр шалгана уу");
+    } catch (error) {
+      setSettlementQPayStatus("error");
+      setSettlementQPayMessage(
+        error instanceof Error ? error.message : "QPay invoice үүсгэж чадсангүй",
+      );
+    }
+  }
+
+  async function checkSettlementQPayPayment() {
+    if (!settlementQPayInvoice || settlementQPayStatus === "checking") return;
+
+    setSettlementQPayStatus("checking");
+    setSettlementQPayMessage("");
+
+    try {
+      const response = await fetch("/api/qpay/check-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: settlementQPayInvoice.invoiceId,
+          expectedAmount: settlementDraftAmount,
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { paid?: boolean; paidAmount?: number; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "QPay төлбөр шалгаж чадсангүй");
+      }
+
+      if (!data?.paid) {
+        setSettlementQPayStatus("pending");
+        setSettlementQPayMessage("Төлбөр хараахан орж ирээгүй байна");
+        return;
+      }
+
+      setSettlementQPayStatus("paid");
+      setSettlementQPayMessage(
+        `QPay төлөгдсөн: ${formatMNT(Number(data.paidAmount ?? settlementDraftAmount))}`,
+      );
+    } catch (error) {
+      setSettlementQPayStatus("error");
+      setSettlementQPayMessage(
+        error instanceof Error ? error.message : "QPay төлбөр шалгаж чадсангүй",
+      );
+    }
+  }
+
+  async function settleSelectedCharge() {
+    if (selectedCharges.length === 0 || settlementStatus === "saving") return;
+    if (settlementLines.length === 0) return;
+
+    setSettlementStatus("saving");
+    setSettlementMessage("");
+
+    try {
+      const paymentsByTransaction = new Map<
+        string,
+        Array<{
+          paymentMethod: string;
+          amount: number;
+          cashReceived: number;
+          changeDue: number;
+          qpayInvoiceId: string;
+        }>
+      >();
+      const remainingByTransaction = selectedCharges.map((charge) => ({
+        charge,
+        remaining: charge.total,
+      }));
+
+      for (const line of settlementLines) {
+        let remainingLineAmount = line.amount;
+        let tenderDetailsRecorded = false;
+
+        for (const item of remainingByTransaction) {
+          if (remainingLineAmount <= 0) break;
+          if (item.remaining <= 0) continue;
+
+          const amount = Math.min(remainingLineAmount, item.remaining);
+          const payments = paymentsByTransaction.get(item.charge.transactionId) ?? [];
+          payments.push({
+            paymentMethod: line.methodLabel,
+            amount,
+            cashReceived: tenderDetailsRecorded ? 0 : line.cashReceived,
+            changeDue: tenderDetailsRecorded ? 0 : line.changeDue,
+            qpayInvoiceId: line.qpayInvoiceId,
+          });
+          tenderDetailsRecorded = true;
+          paymentsByTransaction.set(item.charge.transactionId, payments);
+          item.remaining -= amount;
+          remainingLineAmount -= amount;
+        }
+      }
+
+      if (paymentsByTransaction.size === 0) {
+        throw new Error("Төлбөр бичих сонгосон мөр алга байна");
+      }
+
+      for (const [transactionId, payments] of paymentsByTransaction) {
+        const response = await fetch("/api/sales", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transactionId,
+            staffName,
+            payments,
+          }),
+        });
+        const data = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+
+        if (!response.ok) {
+          throw new Error(data?.error ?? "Өр төлбөр хааж чадсангүй");
+        }
+      }
+
+      setSettlementStatus("success");
+      setSettlementMessage(
+        settlementRemaining === 0
+          ? `${selectedChargeGroup?.label ?? "Өр/таб"} төлбөр хаагдлаа`
+          : `${selectedChargeGroup?.label ?? "Өр/таб"} хэсэгчилсэн төлбөр бичигдлээ`,
+      );
+      setSettlementLines([]);
+      resetSettlementDraft();
+      await loadUnpaidCharges();
+    } catch (error) {
+      setSettlementStatus("error");
+      setSettlementMessage(
+        error instanceof Error ? error.message : "Өр төлбөр хааж чадсангүй",
+      );
+    }
+  }
+
   function setChargeReference(value: string) {
     setRoomNumber(value);
     if (saleStatus === "error") {
@@ -487,7 +1411,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   async function createQPayInvoice() {
-    if (cartTotal <= 0 || qpayStatus === "creating") return;
+    if (cartTotal <= 0 || qpayStatus === "creating" || qpayInvoice) return;
 
     setQPayStatus("creating");
     setQPayMessage("");
@@ -586,6 +1510,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   async function completeSale() {
     if (cart.length === 0 || saleStatus === "saving") return;
+    if (!dayOpen) {
+      setSaleStatus("error");
+      setSaleMessage("Борлуулалт хийхээс өмнө өдрөө нээнэ үү");
+      openDayModal("open");
+      return;
+    }
     if (cashRequired && cashShort > 0) {
       setSaleStatus("error");
       setSaleMessage(`${formatMNT(cashShort)} дутуу байна`);
@@ -655,14 +1585,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setLastSale(completedSale);
       setSaleSequence(nextSaleSequence);
       setSaleStatus("success");
+      if (roomRequired) {
+        void loadUnpaidCharges();
+      }
+      void loadDayStatus();
       const kitchenItems = getKitchenItems(completedSale);
-      const kitchenPrinted = printKitchenSheet(completedSale);
       setSaleMessage(
         `${formatMNT(cartTotal)} хадгаллаа${
           kitchenItems.length > 0
-            ? kitchenPrinted
-              ? " · Гал тогооны хуудас хэвлэгдлээ"
-              : " · Гал тогооны хуудсыг хэвлэх товчоор гаргана уу"
+            ? " · Гал тогооны хуудсыг хэвлэх товчоор гаргана уу"
             : ""
         }`,
       );
@@ -684,7 +1615,68 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
         </div>
 
+        <div className="flex rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-1">
+          <button
+            type="button"
+            onClick={() => selectRegisterMode("sale")}
+            className={`h-9 rounded px-3 text-sm font-extrabold ${
+              registerMode === "sale"
+                ? "bg-[#111827] text-white"
+                : "text-[#374151] hover:bg-white"
+            }`}
+          >
+            Борлуулалт
+          </button>
+          <button
+            type="button"
+            onClick={() => selectRegisterMode("charges")}
+            className={`h-9 rounded px-3 text-sm font-extrabold ${
+              registerMode === "charges"
+                ? "bg-[#111827] text-white"
+                : "text-[#374151] hover:bg-white"
+            }`}
+          >
+            Өр/Таб
+            {unpaidCharges.length > 0 ? ` (${unpaidCharges.length})` : ""}
+          </button>
+        </div>
+
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div
+            className={`flex h-10 items-center rounded-md border px-3 text-xs font-black ${
+              dayOpen
+                ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                : dayClosed
+                  ? "border-[#e5e7eb] bg-[#f8fafc] text-[#374151]"
+                  : "border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]"
+            }`}
+          >
+            {dayStatus === "loading"
+              ? "Өдөр..."
+              : dayOpen
+                ? `Нээлттэй · ${formatMNT(daySession?.startingCash ?? 0)}`
+                : dayClosed
+                  ? "Хаалттай"
+                  : "Өдөр нээгээгүй"}
+          </div>
+          <button
+            type="button"
+            onClick={() => openDayModal(dayOpen ? "close" : "open")}
+            className={`h-10 rounded-md px-3 text-sm font-black text-white ${
+              dayOpen
+                ? "bg-[#b91c1c] hover:bg-[#991b1b]"
+                : "bg-[#047857] hover:bg-[#065f46]"
+            }`}
+          >
+            {dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
+          </button>
+          <button
+            type="button"
+            onClick={openVoidModal}
+            className="h-10 rounded-md border border-[#fecaca] bg-white px-3 text-sm font-black text-[#b91c1c] hover:bg-[#fef2f2]"
+          >
+            Буцаалт
+          </button>
           <select
             value={staffName}
             onChange={(event) => setStaffName(event.target.value)}
@@ -699,7 +1691,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           </select>
           <button
             type="button"
-            onClick={loadCatalog}
+            onClick={() => {
+              void loadCatalog();
+              void loadUnpaidCharges();
+              void loadDayStatus();
+            }}
             className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
           >
             Шинэчлэх
@@ -716,88 +1712,183 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
         <section className="flex min-h-0 flex-col border-r border-[#d1d5db]">
-          <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="min-w-[220px] flex-1">
-                <span className="sr-only">Бараа хайх</span>
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  type="search"
-                  placeholder="Бараа эсвэл код хайх"
-                  className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-base outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
-                />
-              </label>
+          {registerMode === "sale" ? (
+            <>
+              <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="min-w-[220px] flex-1">
+                    <span className="sr-only">Бараа хайх</span>
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      type="search"
+                      placeholder="Бараа эсвэл код хайх"
+                      className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-base outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                    />
+                  </label>
 
-              <div className="flex max-w-full gap-2 overflow-x-auto">
-                {categories.map((category) => (
+                  <div className="flex max-w-full gap-2 overflow-x-auto">
+                    {categories.map((category) => (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => setActiveCategory(category)}
+                        className={`h-11 shrink-0 rounded-md border px-3 text-sm font-bold ${
+                          activeCategory === category
+                            ? "border-transparent text-white"
+                            : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
+                        }`}
+                        style={
+                          activeCategory === category
+                            ? { backgroundColor: CATEGORY_ACCENTS[category] }
+                            : undefined
+                        }
+                      >
+                        {CATEGORY_LABELS[category]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {catalogStatus === "sample" && (
+                  <div className="mb-3 rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-medium text-[#92400e]">
+                    Google Sheets холбогдоогүй байна. Туршилтын жагсаалт ашиглаж байна.
+                  </div>
+                )}
+
+                {catalogStatus === "loading" ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                    {Array.from({ length: 10 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-32 rounded-md border border-[#e5e7eb] bg-white"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                    {visibleProducts.map((item) => (
+                      <button
+                        key={item.id}
+                        data-testid="product-tile"
+                        type="button"
+                        onClick={() => addToCart(item)}
+                        className="flex h-32 flex-col justify-between rounded-md border border-[#d1d5db] bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow active:scale-[0.99]"
+                      >
+                        <span className="break-words text-sm font-bold leading-snug text-[#111827]">
+                          {item.name}
+                        </span>
+                        <span className="flex items-end justify-between gap-2">
+                          <span className="text-xs font-medium text-[#6b7280]">
+                            {item.sku}
+                          </span>
+                          <span className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857]">
+                            {formatNumber(item.price)}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-black">Өр/таб төлбөрүүд</h2>
+                    <p className="text-xs font-semibold text-[#6b7280]">
+                      Өрөө, нэр, утсаар бичсэн төлөгдөөгүй борлуулалт
+                    </p>
+                  </div>
                   <button
-                    key={category}
                     type="button"
-                    onClick={() => setActiveCategory(category)}
-                    className={`h-11 shrink-0 rounded-md border px-3 text-sm font-bold ${
-                      activeCategory === category
-                        ? "border-transparent text-white"
-                        : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
-                    }`}
-                    style={
-                      activeCategory === category
-                        ? { backgroundColor: CATEGORY_ACCENTS[category] }
-                        : undefined
-                    }
+                    onClick={() => void loadUnpaidCharges()}
+                    className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold hover:bg-[#f8fafc]"
                   >
-                    {CATEGORY_LABELS[category]}
+                    Шинэчлэх
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
-          </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            {catalogStatus === "sample" && (
-              <div className="mb-3 rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-medium text-[#92400e]">
-                Google Sheets холбогдоогүй байна. Туршилтын жагсаалт ашиглаж байна.
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {chargesStatus === "loading" ? (
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-28 rounded-md border border-[#e5e7eb] bg-white"
+                      />
+                    ))}
+                  </div>
+                ) : chargesMessage ? (
+                  <div className="rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-bold text-[#92400e]">
+                    {chargesMessage}
+                  </div>
+                ) : chargeGroups.length === 0 ? (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Одоогоор хаагдаагүй өр/таб алга.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {chargeGroups.map((group) => (
+                      <button
+                        key={group.key}
+                        type="button"
+                        onClick={() => selectChargeGroup(group)}
+                        className={`rounded-md border bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow ${
+                          selectedChargeGroupKey === group.key
+                            ? "border-[#111827] ring-2 ring-[#111827]"
+                            : "border-[#d1d5db]"
+                        }`}
+                      >
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-words text-base font-black">
+                              {group.label}
+                            </p>
+                            <p className="text-xs font-semibold text-[#6b7280]">
+                              {group.charges.length} төлбөр · {group.latestTimestamp}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-lg font-black text-[#b91c1c]">
+                            {formatMNT(group.total)}
+                          </span>
+                        </div>
+                        <p className="break-words text-sm font-semibold text-[#374151]">
+                          {group.charges
+                            .map((charge) => charge.itemSummary)
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .join(" · ") || `${group.charges.length} төлбөр`}
+                        </p>
+                        {group.paidAmount > 0 && (
+                          <p className="mt-2 text-xs font-bold text-[#047857]">
+                            Төлсөн {formatMNT(group.paidAmount)} · Үлдэгдэл{" "}
+                            {formatMNT(group.total)}
+                          </p>
+                        )}
+                        <p className="mt-2 break-words text-xs font-bold text-[#6b7280]">
+                          {group.charges
+                            .map((charge) => charge.transactionId)
+                            .slice(0, 3)
+                            .join(", ")}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-
-            {catalogStatus === "loading" ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                {Array.from({ length: 10 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="h-32 rounded-md border border-[#e5e7eb] bg-white"
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                {visibleProducts.map((item) => (
-                  <button
-                    key={item.id}
-                    data-testid="product-tile"
-                    type="button"
-                    onClick={() => addToCart(item)}
-                    className="flex h-32 flex-col justify-between rounded-md border border-[#d1d5db] bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow active:scale-[0.99]"
-                  >
-                    <span className="break-words text-sm font-bold leading-snug text-[#111827]">
-                      {item.name}
-                    </span>
-                    <span className="flex items-end justify-between gap-2">
-                      <span className="text-xs font-medium text-[#6b7280]">
-                        {item.sku}
-                      </span>
-                      <span className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857]">
-                        {formatNumber(item.price)}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+            </>
+          )}
         </section>
 
         <aside className="flex min-h-[420px] flex-col bg-white">
+          {registerMode === "sale" ? (
+            <>
           <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
             <h2 className="text-base font-bold">Одоогийн борлуулалт</h2>
             <button
@@ -1013,7 +2104,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             {qpayRequired && !qpayWindowOpen && (
               <button
                 type="button"
-                onClick={() => setQPayWindowOpen(true)}
+                onClick={() => {
+                  setQPayWindowOpen(true);
+                  void createQPayInvoice();
+                }}
                 className="mb-3 h-11 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc]"
               >
                 QPay QR цонх нээх
@@ -1063,8 +2157,757 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               {completeSaleLabel}
             </button>
           </div>
+            </>
+          ) : (
+            <>
+              <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
+                <h2 className="text-base font-bold">Өр/таб хаах</h2>
+                <button
+                  type="button"
+                  onClick={() => void loadUnpaidCharges()}
+                  className="rounded-md border border-[#cbd5e1] px-3 py-1.5 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc]"
+                >
+                  Шинэчлэх
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {!selectedChargeGroup ? (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Хаах өр/таб сонгоно уу.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
+                      <p className="break-words text-lg font-black">
+                        {selectedChargeGroup.label}
+                      </p>
+                      <p className="mt-1 break-words text-xs font-bold text-[#6b7280]">
+                        {selectedChargeGroup.charges.length} төлбөрөөс{" "}
+                        {selectedCharges.length} сонгосон
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold text-[#6b7280]">
+                          Сонгох төлбөрүүд
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedChargeIds(
+                              selectedChargeGroup.charges.map(
+                                (charge) => charge.transactionId,
+                              ),
+                            );
+                            resetSettlementPaymentState();
+                          }}
+                          className="rounded-md border border-[#cbd5e1] px-2 py-1 text-xs font-black hover:bg-[#f8fafc]"
+                        >
+                          Бүгд
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {selectedChargeGroup.charges.map((charge) => {
+                          const checked = selectedChargeIds.includes(
+                            charge.transactionId,
+                          );
+
+                          return (
+                            <button
+                              key={charge.transactionId}
+                              type="button"
+                              onClick={() =>
+                                toggleSelectedCharge(charge.transactionId)
+                              }
+                              className={`w-full rounded-md border p-2 text-left ${
+                                checked
+                                  ? "border-[#111827] bg-[#f8fafc]"
+                                  : "border-[#e5e7eb] bg-white"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="break-words text-sm font-black">
+                                    {checked ? "[x]" : "[ ]"}{" "}
+                                    {charge.itemSummary ||
+                                      `${charge.itemCount} бараа`}
+                                  </p>
+                                  <p className="mt-0.5 text-xs font-bold text-[#6b7280]">
+                                    {charge.transactionId} · {charge.timestamp}
+                                  </p>
+                                </div>
+                                <span className="shrink-0 text-sm font-black">
+                                  {formatMNT(charge.total)}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                      <div className="flex items-end justify-between gap-3">
+                        <span className="text-sm font-semibold text-[#6b7280]">
+                          Сонгосон төлөх дүн
+                        </span>
+                        <span className="text-3xl font-black tracking-normal">
+                          {formatMNT(selectedChargeTotal)}
+                        </span>
+                      </div>
+                      {selectedChargePaidAmount > 0 && (
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                          <div>
+                            <p className="text-xs font-bold text-[#6b7280]">
+                              Анхны дүн
+                            </p>
+                            <p className="font-black">
+                              {formatMNT(selectedChargeOriginalTotal)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-[#6b7280]">
+                              Өмнө төлсөн
+                            </p>
+                            <p className="font-black text-[#047857]">
+                              {formatMNT(selectedChargePaidAmount)}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 border-t border-[#d1d5db] p-4">
+                {selectedCharges.length > 0 && (
+                  <>
+                    {settlementLines.length > 0 && (
+                      <div className="mb-3 rounded-md border border-[#d1d5db] bg-white">
+                        <div className="border-b border-[#e5e7eb] px-3 py-2 text-xs font-black text-[#6b7280]">
+                          Нэмсэн төлбөрүүд
+                        </div>
+                        <div className="divide-y divide-[#e5e7eb]">
+                          {settlementLines.map((line) => (
+                            <div
+                              key={line.id}
+                              className="flex items-center justify-between gap-2 px-3 py-2"
+                            >
+                              <div>
+                                <p className="text-sm font-black">
+                                  {line.methodLabel}
+                                </p>
+                                {line.qpayInvoiceId && (
+                                  <p className="text-xs font-bold text-[#6b7280]">
+                                    {line.qpayInvoiceId}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-black">
+                                  {formatMNT(line.amount)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeSettlementLine(line.id)}
+                                  className="h-8 rounded-md border border-[#fecaca] px-2 text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2]"
+                                >
+                                  Хасах
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between border-t border-[#e5e7eb] px-3 py-2 text-sm">
+                          <span className="font-bold text-[#6b7280]">
+                            Үлдэх
+                          </span>
+                          <span className="font-black">
+                            {formatMNT(settlementRemaining)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mb-3 grid grid-cols-3 gap-2">
+                      {SETTLEMENT_METHODS.map((method) => (
+                        <button
+                          key={method.id}
+                          type="button"
+                          onClick={() => selectSettlementMethod(method.id)}
+                          className={`h-11 rounded-md border text-sm font-extrabold ${
+                            settlementMethod === method.id
+                              ? "border-[#111827] bg-[#111827] text-white"
+                              : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
+                          }`}
+                        >
+                          {method.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
+                      <div className="mb-2 grid grid-cols-2 gap-3">
+                        <label>
+                          <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                            Энэ мөрийн дүн
+                          </span>
+                          <input
+                            value={
+                              settlementPaymentAmount
+                                ? formatNumber(settlementPaymentAmount)
+                                : ""
+                            }
+                            onChange={(event) =>
+                              setSettlementAmountInput(event.target.value)
+                            }
+                            type="text"
+                            inputMode="numeric"
+                            placeholder={formatNumber(settlementRemaining)}
+                            className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                          />
+                        </label>
+                        <div>
+                          <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                            Үлдэгдэл
+                          </span>
+                          <div
+                            className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
+                              settlementDraftOverRemaining
+                                ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
+                                : "border-[#d1d5db] bg-white"
+                            }`}
+                          >
+                            {formatNumber(settlementRemaining)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSettlementPaymentAmount(settlementRemaining)
+                          }
+                          className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                        >
+                          Үлдэгдэл
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSettlementPaymentAmount(0)}
+                          className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                        >
+                          Auto
+                        </button>
+                        <button
+                          type="button"
+                          onClick={addSettlementLine}
+                          disabled={!canAddSettlementLine}
+                          className="h-10 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                        >
+                          Мөр нэмэх
+                        </button>
+                      </div>
+                    </div>
+
+                    {settlementCashRequired && (
+                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
+                        <div className="mb-2 grid grid-cols-2 gap-3">
+                          <label>
+                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                              Авсан мөнгө
+                            </span>
+                            <input
+                              value={
+                                settlementCashReceived
+                                  ? formatNumber(settlementCashReceived)
+                                  : ""
+                              }
+                              onChange={(event) =>
+                                setSettlementCashInput(event.target.value)
+                              }
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="0"
+                              className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                            />
+                          </label>
+                          <div>
+                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                              Хариулт
+                            </span>
+                            <div
+                              className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
+                                settlementCashShort > 0
+                                  ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
+                                  : "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                              }`}
+                            >
+                              {settlementCashShort > 0
+                                ? `-${formatNumber(settlementCashShort)}`
+                                : formatNumber(settlementChangeDue)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSettlementCashReceived(settlementDraftAmount)
+                            }
+                            className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                          >
+                            Яг дүн
+                          </button>
+                          {CASH_DENOMINATIONS.map((amount) => (
+                            <button
+                              key={amount}
+                              type="button"
+                              onClick={() =>
+                                setSettlementCashReceived(
+                                  (current) => current + amount,
+                                )
+                              }
+                              className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                            >
+                              +{formatNumber(amount)}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setSettlementCashReceived(0)}
+                            className="h-10 rounded-md border border-[#fecaca] bg-white text-sm font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
+                          >
+                            Арилгах
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {settlementQPayRequired && (
+                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold text-[#6b7280]">
+                              QPay мөрийн дүн
+                            </p>
+                            <p className="text-lg font-black">
+                              {formatMNT(settlementDraftAmount)}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={createSettlementQPayInvoice}
+                            disabled={
+                              settlementQPayStatus === "creating" ||
+                              settlementDraftAmount <= 0 ||
+                              settlementDraftOverRemaining
+                            }
+                            className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-extrabold hover:bg-[#eef2ff] disabled:opacity-40"
+                          >
+                            QR үүсгэх
+                          </button>
+                        </div>
+                        {settlementQPayInvoice && (
+                          <button
+                            type="button"
+                            onClick={() => setSettlementQPayWindowOpen(true)}
+                            className="mb-2 h-10 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc]"
+                          >
+                            QR цонх нээх
+                          </button>
+                        )}
+                        {settlementQPayMessage && (
+                          <div
+                            className={`rounded-md px-3 py-2 text-sm font-bold ${
+                              settlementQPayStatus === "error"
+                                ? "bg-[#fef2f2] text-[#b91c1c]"
+                                : settlementQPayStatus === "paid"
+                                  ? "bg-[#ecfdf5] text-[#047857]"
+                                  : "bg-white text-[#374151]"
+                            }`}
+                          >
+                            {settlementQPayMessage}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {settlementMessage && (
+                      <div
+                        className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
+                          settlementStatus === "error"
+                            ? "bg-[#fef2f2] text-[#b91c1c]"
+                            : "bg-[#ecfdf5] text-[#047857]"
+                        }`}
+                      >
+                        {settlementMessage}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={settleSelectedCharge}
+                      disabled={!canSettleCharge}
+                      className="h-14 w-full rounded-md bg-[#047857] text-base font-black text-white hover:bg-[#065f46] disabled:bg-[#9ca3af]"
+                    >
+                      {settlementSubmitLabel}
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </aside>
       </main>
+
+      {voidModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="flex max-h-[88dvh] w-full max-w-[760px] flex-col rounded-md border border-[#cbd5e1] bg-white shadow-xl">
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-[#e5e7eb] px-4">
+              <h3 className="text-sm font-black">Буцаалт / хүчингүй</h3>
+              <button
+                type="button"
+                onClick={() => setVoidModalOpen(false)}
+                className="h-8 w-8 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
+                aria-label="Буцаалтын цонх хаах"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_300px]">
+              <div className="min-h-0 overflow-y-auto border-b border-[#e5e7eb] p-3 md:border-b-0 md:border-r">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-xs font-bold text-[#6b7280]">
+                    Өнөөдрийн борлуулалт
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void loadVoidableSales()}
+                    className="h-9 rounded-md border border-[#cbd5e1] bg-white px-3 text-xs font-black hover:bg-[#f8fafc]"
+                  >
+                    Шинэчлэх
+                  </button>
+                </div>
+
+                {voidStatus === "loading" ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-24 rounded-md border border-[#e5e7eb] bg-[#f8fafc]"
+                      />
+                    ))}
+                  </div>
+                ) : recentSales.length === 0 ? (
+                  <div className="flex min-h-48 items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Буцаах боломжтой борлуулалт алга.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {recentSales.map((sale) => (
+                      <button
+                        key={sale.transactionId}
+                        type="button"
+                        onClick={() => setSelectedVoidTransactionId(sale.transactionId)}
+                        className={`w-full rounded-md border p-3 text-left hover:border-[#2563eb] ${
+                          selectedVoidTransactionId === sale.transactionId
+                            ? "border-[#111827] ring-2 ring-[#111827]"
+                            : "border-[#d1d5db]"
+                        }`}
+                      >
+                        <div className="mb-1 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-black">
+                              {sale.transactionId}
+                            </p>
+                            <p className="text-xs font-semibold text-[#6b7280]">
+                              {sale.timestamp} · {sale.staff}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-base font-black">
+                            {formatMNT(sale.total)}
+                          </span>
+                        </div>
+                        <p className="break-words text-sm font-semibold text-[#374151]">
+                          {sale.itemSummary || sale.paymentMethod}
+                        </p>
+                        <p className="mt-2 text-xs font-bold text-[#6b7280]">
+                          {sale.paymentMethod} · {sale.paidStatus}
+                          {sale.roomOrGuest ? ` · ${sale.roomOrGuest}` : ""}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 p-4">
+                {selectedVoidSale ? (
+                  <>
+                    <div className="mb-3 rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-3">
+                      <p className="text-xs font-bold text-[#6b7280]">
+                        Сонгосон
+                      </p>
+                      <p className="text-base font-black">
+                        {selectedVoidSale.transactionId}
+                      </p>
+                      <p className="mt-1 break-words text-sm font-semibold">
+                        {selectedVoidSale.itemSummary || selectedVoidSale.paymentMethod}
+                      </p>
+                      <div className="mt-2 flex items-center justify-between text-sm">
+                        <span className="font-bold text-[#6b7280]">Буцаах дүн</span>
+                        <span className="font-black">
+                          {formatMNT(selectedVoidSale.refundableAmount)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {selectedVoidSale.refundableAmount > 0 && (
+                      <div className="mb-3">
+                        <p className="mb-2 text-xs font-bold text-[#6b7280]">
+                          Буцаах хэлбэр
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {["Бэлэн", "Карт", "QPay"].map((method) => (
+                            <button
+                              key={method}
+                              type="button"
+                              onClick={() => setVoidRefundMethod(method)}
+                              className={`h-10 rounded-md border text-sm font-black ${
+                                voidRefundMethod === method
+                                  ? "border-[#111827] bg-[#111827] text-white"
+                                  : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
+                              }`}
+                            >
+                              {method}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <label className="mb-3 block">
+                      <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                        Шалтгаан
+                      </span>
+                      <input
+                        value={voidReason}
+                        onChange={(event) => setVoidReason(event.target.value)}
+                        type="text"
+                        placeholder="ж: буруу бараа, давхар бичсэн"
+                        className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                      />
+                    </label>
+
+                    {voidMessage && (
+                      <div
+                        className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
+                          voidStatus === "error"
+                            ? "bg-[#fef2f2] text-[#b91c1c]"
+                            : "bg-[#ecfdf5] text-[#047857]"
+                        }`}
+                      >
+                        {voidMessage}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={submitVoidSale}
+                      disabled={!canSubmitVoid}
+                      className="h-12 w-full rounded-md bg-[#b91c1c] text-base font-black text-white hover:bg-[#991b1b] disabled:bg-[#9ca3af]"
+                    >
+                      {voidStatus === "saving"
+                        ? "Хадгалж байна"
+                        : "Буцаалт хадгалах"}
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex min-h-48 items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Борлуулалт сонгоно уу.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dayModalMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-[440px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
+            <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
+              <h3 className="text-sm font-black">
+                {dayModalMode === "open" ? "Өдөр нээх" : "Өдрийн хаалт"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDayModalMode(null)}
+                className="h-8 w-8 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
+                aria-label="Өдрийн цонх хаах"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="mb-3 grid grid-cols-2 gap-3">
+                <div className="rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-2">
+                  <p className="text-xs font-bold text-[#6b7280]">Огноо</p>
+                  <p className="text-base font-black">{businessDate}</p>
+                </div>
+                <div className="rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-2">
+                  <p className="text-xs font-bold text-[#6b7280]">Ажилтан</p>
+                  <p className="text-base font-black">{staffName}</p>
+                </div>
+              </div>
+
+              {dayModalMode === "close" && (
+                <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
+                    <p className="font-bold text-[#6b7280]">Эхлэх мөнгө</p>
+                    <p className="text-lg font-black">
+                      {formatMNT(daySession?.startingCash ?? 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
+                    <p className="font-bold text-[#6b7280]">Бэлэн төлбөр</p>
+                    <p className="text-lg font-black">
+                      {formatMNT(dayTotals.cashPaymentTotal)}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
+                    <p className="font-bold text-[#6b7280]">Карт / QPay</p>
+                    <p className="text-lg font-black">
+                      {formatMNT(dayTotals.cardPaymentTotal + dayTotals.qpayPaymentTotal)}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
+                    <p className="font-bold text-[#6b7280]">Өр/таб</p>
+                    <p className="text-lg font-black">
+                      {formatMNT(dayTotals.roomChargeTotal)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <label className="mb-3 block">
+                <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                  {dayModalMode === "open"
+                    ? "Эхлэх бэлэн мөнгө"
+                    : "Тоолсон бэлэн мөнгө"}
+                </span>
+                <input
+                  value={dayCashAmount ? formatNumber(dayCashAmount) : ""}
+                  onChange={(event) => setDayCashInput(event.target.value)}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0"
+                  className="h-12 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-xl font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                />
+              </label>
+
+              <div className="mb-3 grid grid-cols-3 gap-2">
+                {CASH_DENOMINATIONS.map((amount) => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => setDayCashAmount((current) => current + amount)}
+                    className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                  >
+                    +{formatNumber(amount)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setDayCashAmount(0)}
+                  className="h-10 rounded-md border border-[#fecaca] bg-white text-sm font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
+                >
+                  Арилгах
+                </button>
+              </div>
+
+              {dayModalMode === "close" && (
+                <div className="mb-3 rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-bold text-[#6b7280]">Байх ёстой</span>
+                    <span className="font-black">
+                      {formatMNT(dayTotals.expectedCash)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-3 text-base">
+                    <span className="font-bold text-[#6b7280]">Зөрүү</span>
+                    <span
+                      className={`font-black ${
+                        dayCashDifference === 0
+                          ? "text-[#047857]"
+                          : dayCashDifference < 0
+                            ? "text-[#b91c1c]"
+                            : "text-[#c2410c]"
+                      }`}
+                    >
+                      {formatMNT(dayCashDifference)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <label className="mb-3 block">
+                <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                  Тайлбар {dayCloseHasVariance ? "(заавал)" : ""}
+                </span>
+                <input
+                  value={dayNotes}
+                  onChange={(event) => setDayNotes(event.target.value)}
+                  type="text"
+                  placeholder={
+                    dayModalMode === "open"
+                      ? "ж: Өглөөний касс"
+                      : "ж: Мөнгө дутсан / илүү гарсан шалтгаан"
+                  }
+                  className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                />
+              </label>
+
+              {dayMessage && (
+                <div
+                  className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
+                    dayStatus === "error"
+                      ? "bg-[#fef2f2] text-[#b91c1c]"
+                      : "bg-[#ecfdf5] text-[#047857]"
+                  }`}
+                >
+                  {dayMessage}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={submitDaySession}
+                disabled={!canSubmitDaySession}
+                className={`h-12 w-full rounded-md text-base font-black text-white disabled:bg-[#9ca3af] ${
+                  dayModalMode === "open"
+                    ? "bg-[#047857] hover:bg-[#065f46]"
+                    : "bg-[#b91c1c] hover:bg-[#991b1b]"
+                }`}
+              >
+                {dayStatus === "saving"
+                  ? "Хадгалж байна"
+                  : dayModalMode === "open"
+                    ? "Өдөр нээх"
+                    : "Хаалт хадгалах"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {qpayRequired && qpayWindowOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
@@ -1119,7 +2962,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 </div>
               ) : (
                 <div className="mb-3 rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-8 text-center text-sm font-bold text-[#6b7280]">
-                  QR үүсгээд хэрэглэгчээр уншуулна.
+                  QR автоматаар үүсэж байна.
                 </div>
               )}
 
@@ -1141,10 +2984,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 <button
                   type="button"
                   onClick={createQPayInvoice}
-                  disabled={cartTotal <= 0 || qpayStatus === "creating"}
+                  disabled={
+                    cartTotal <= 0 ||
+                    qpayStatus === "creating" ||
+                    Boolean(qpayInvoice)
+                  }
                   className="h-11 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc] disabled:opacity-40"
                 >
-                  {qpayStatus === "creating" ? "Үүсгэж байна" : "QR үүсгэх"}
+                  {qpayStatus === "creating"
+                    ? "Үүсгэж байна"
+                    : qpayInvoice
+                      ? "QR бэлэн"
+                      : "QR үүсгэх"}
                 </button>
                 <button
                   type="button"
@@ -1153,6 +3004,120 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   className="h-11 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
                 >
                   {qpayStatus === "checking" ? "Шалгаж байна" : "Төлбөр шалгах"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {settlementQPayRequired && settlementQPayWindowOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-[360px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
+            <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
+              <h3 className="text-sm font-black">QPay өр/таб төлбөр</h3>
+              <button
+                type="button"
+                onClick={() => setSettlementQPayWindowOpen(false)}
+                className="h-8 w-8 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
+                aria-label="QPay цонх хаах"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <span className="text-xs font-bold text-[#6b7280]">
+                  Мөрийн дүн
+                </span>
+                <span className="text-2xl font-black">
+                  {formatMNT(settlementDraftAmount)}
+                </span>
+              </div>
+
+              {settlementQPayInvoice ? (
+                <div className="mb-3 flex flex-col items-center gap-3">
+                  {settlementQPayInvoice.qrCode ? (
+                    <Image
+                      src={getQrImageSource(settlementQPayInvoice.qrCode)}
+                      alt="QPay QR"
+                      width={176}
+                      height={176}
+                      unoptimized
+                      className="h-44 w-44 rounded-md border border-[#e5e7eb] object-contain p-2"
+                    />
+                  ) : (
+                    <div className="flex h-44 w-44 items-center justify-center rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-3 text-center text-xs font-bold text-[#6b7280]">
+                      QR зураг ирсэнгүй. Богино холбоос эсвэл QR текст ашиглана уу.
+                    </div>
+                  )}
+                  <div className="w-full rounded-md bg-[#f8fafc] px-3 py-2 text-xs font-semibold text-[#374151]">
+                    <p className="break-all">
+                      Invoice: {settlementQPayInvoice.invoiceId}
+                    </p>
+                    {settlementQPayInvoice.shortUrl && (
+                      <a
+                        href={settlementQPayInvoice.shortUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 block break-all text-[#2563eb] underline"
+                      >
+                        {settlementQPayInvoice.shortUrl}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-3 rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-8 text-center text-sm font-bold text-[#6b7280]">
+                  QR автоматаар үүсэж байна.
+                </div>
+              )}
+
+              {settlementQPayMessage && (
+                <div
+                  className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
+                    settlementQPayStatus === "paid"
+                      ? "bg-[#ecfdf5] text-[#047857]"
+                      : settlementQPayStatus === "error"
+                        ? "bg-[#fef2f2] text-[#b91c1c]"
+                        : "bg-[#eff6ff] text-[#1d4ed8]"
+                  }`}
+                >
+                  {settlementQPayMessage}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={createSettlementQPayInvoice}
+                  disabled={
+                    settlementDraftAmount <= 0 ||
+                    settlementDraftOverRemaining ||
+                    settlementQPayStatus === "creating" ||
+                    Boolean(settlementQPayInvoice)
+                  }
+                  className="h-11 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc] disabled:opacity-40"
+                >
+                  {settlementQPayStatus === "creating"
+                    ? "Үүсгэж байна"
+                    : settlementQPayInvoice
+                      ? "QR бэлэн"
+                    : "QR үүсгэх"}
+                </button>
+                <button
+                  type="button"
+                  onClick={checkSettlementQPayPayment}
+                  disabled={
+                    !settlementQPayInvoice ||
+                    settlementQPayStatus === "checking"
+                  }
+                  className="h-11 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                >
+                  {settlementQPayStatus === "checking"
+                    ? "Шалгаж байна"
+                    : "Төлбөр шалгах"}
                 </button>
               </div>
             </div>

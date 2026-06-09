@@ -41,6 +41,12 @@ const SALES_LOG_SHEET_TITLES = [
   'sales_log',
 ].filter(Boolean) as string[];
 
+const PAYMENTS_LOG_SHEET_TITLES = [
+  process.env.GOOGLE_PAYMENTS_SHEET_TITLE,
+  'Payments_Log',
+  'payments_log',
+].filter(Boolean) as string[];
+
 const SALES_LOG_HEADERS = [
   'transaction_id',
   'timestamp',
@@ -55,6 +61,19 @@ const SALES_LOG_HEADERS = [
   'change_due',
   'item_count',
   'item_summary',
+  'qpay_invoice_id',
+  'notes',
+];
+
+const PAYMENTS_LOG_HEADERS = [
+  'payment_id',
+  'transaction_id',
+  'timestamp',
+  'staff',
+  'payment_method',
+  'amount',
+  'cash_received',
+  'change_due',
   'qpay_invoice_id',
   'notes',
 ];
@@ -146,6 +165,18 @@ async function getOrCreateSalesLogSheet(doc: SheetDoc) {
   return doc.addSheet({
     title: SALES_LOG_SHEET_TITLES[0] ?? 'Sales_Log',
     headerValues: SALES_LOG_HEADERS,
+  });
+}
+
+async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
+  for (const title of PAYMENTS_LOG_SHEET_TITLES) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return sheet;
+  }
+
+  return doc.addSheet({
+    title: PAYMENTS_LOG_SHEET_TITLES[0] ?? 'Payments_Log',
+    headerValues: PAYMENTS_LOG_HEADERS,
   });
 }
 
@@ -262,6 +293,7 @@ export async function POST(request: Request) {
     const doc = await loadSpreadsheet();
     const logSheet = findSheet(doc, LOG_SHEET_TITLES, 'inventory log');
     const salesLogSheet = await getOrCreateSalesLogSheet(doc);
+    const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
 
     // Lock the timestamp to Ulaanbaatar time regardless of where Vercel's servers are
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
@@ -310,11 +342,27 @@ export async function POST(request: Request) {
       qpayInvoiceId || '',
       '',
     ];
+    const shouldAppendPayment = (paidStatus || 'paid').toLowerCase() !== 'unpaid';
+    const paymentRow = [
+      `PAY-${Math.floor(100000 + Math.random() * 900000)}`,
+      transactionId,
+      timestamp,
+      staffName || 'Staff',
+      method || '',
+      saleTotal,
+      cashReceived ?? '',
+      changeDue ?? '',
+      qpayInvoiceId || '',
+      'Initial sale payment',
+    ];
 
     // Fire the data into Google Sheets
     await Promise.all([
       logSheet.addRows(newRows),
       salesLogSheet.addRows([salesRow]),
+      shouldAppendPayment
+        ? paymentsLogSheet.addRows([paymentRow])
+        : Promise.resolve(),
     ]);
 
     return NextResponse.json({
