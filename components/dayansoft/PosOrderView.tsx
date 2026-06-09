@@ -6,7 +6,7 @@ import {
   FALLBACK_CATALOG,
   STAFF,
 } from "@/lib/pos/data";
-import { formatMNT, formatNumber } from "@/lib/pos/utils";
+import { formatNumber } from "@/lib/pos/utils";
 import type { CartLine, CatalogItem, ItemCategory } from "@/lib/pos/types";
 
 interface PosOrderViewProps {
@@ -73,7 +73,7 @@ export function PosOrderView({
       setNumpadValue("");
       return;
     }
-  if (key === "⌫") {
+    if (key === "⌫") {
       setNumpadValue((v) => v.slice(0, -1));
       return;
     }

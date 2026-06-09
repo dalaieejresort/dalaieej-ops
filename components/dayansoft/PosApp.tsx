@@ -85,7 +85,11 @@ export function PosApp() {
   }, []);
 
   useEffect(() => {
-    fetchCatalog();
+    const timer = window.setTimeout(() => {
+      void fetchCatalog();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [fetchCatalog]);
 
   function openPos(label: string) {

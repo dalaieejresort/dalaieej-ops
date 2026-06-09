@@ -16,5 +16,16 @@ body {
   color: #222;
   font-family: var(--font-sans);
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
   touch-action: manipulation;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+button,
+select {
+  user-select: none;
 }

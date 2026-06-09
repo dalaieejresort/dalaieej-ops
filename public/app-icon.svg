@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Dalai Eej POS">
+  <rect width="512" height="512" rx="64" fill="#047857"/>
+  <path d="M96 176c48-48 96-72 144-72 32 0 64 12 96 36 24 18 48 27 72 27 18 0 36-5 54-15v72c-21 8-42 12-63 12-35 0-69-12-102-36-29-21-58-32-87-32-37 0-75 19-114 58z" fill="#d1fae5"/>
+  <rect x="92" y="264" width="324" height="128" rx="20" fill="#ffffff"/>
+  <rect x="124" y="296" width="72" height="60" rx="10" fill="#111827"/>
+  <rect x="220" y="296" width="72" height="60" rx="10" fill="#111827"/>
+  <rect x="316" y="296" width="72" height="60" rx="10" fill="#111827"/>
+  <path d="M128 424h256" stroke="#ffffff" stroke-width="24" stroke-linecap="round"/>
+</svg>
