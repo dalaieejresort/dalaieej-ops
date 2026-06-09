@@ -1637,7 +1637,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 : "text-[#374151] hover:bg-white"
             }`}
           >
-            Өр/Таб
+            Өр
             {unpaidCharges.length > 0 ? ` (${unpaidCharges.length})` : ""}
           </button>
         </div>
@@ -1831,7 +1831,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </div>
                 ) : chargeGroups.length === 0 ? (
                   <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
-                    Одоогоор хаагдаагүй өр/таб алга.
+                    Одоогоор хаагдаагүй өр алга.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
@@ -2175,7 +2175,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 {!selectedChargeGroup ? (
                   <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
-                    Хаах өр/таб сонгоно уу.
+                    Хаах өр сонгоно уу.
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -3016,7 +3016,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-[360px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
             <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
-              <h3 className="text-sm font-black">QPay өр/таб төлбөр</h3>
+              <h3 className="text-sm font-black">QPay өр төлбөр</h3>
               <button
                 type="button"
                 onClick={() => setSettlementQPayWindowOpen(false)}
