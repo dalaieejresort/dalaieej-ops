@@ -316,8 +316,15 @@ export function PosOrderView({
                 }}
               >
                 <span className="text-sm leading-tight">{item.name}</span>
-                <span className="self-end rounded bg-[#555] px-1.5 py-0.5 text-xs font-bold text-white">
-                  {formatNumber(item.price)} ₮
+                <span className="flex flex-col items-end gap-1 self-end">
+                  <span className="rounded bg-[#555] px-1.5 py-0.5 text-xs font-bold text-white">
+                    Амрагч {formatNumber(item.price)} ₮
+                  </span>
+                  {item.staffPrice && item.staffPrice > 0 ? (
+                    <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-bold text-[#1f2937]">
+                      Ажилчин {formatNumber(item.staffPrice)} ₮
+                    </span>
+                  ) : null}
                 </span>
               </button>
             ))}

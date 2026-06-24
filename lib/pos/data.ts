@@ -1,6 +1,6 @@
 import type { CatalogItem, TableDef, TableOrder, ZoneTab } from "./types";
 
-export const STAFF = ["Анхбаяр", "Оюунбаатар", "Батболд"];
+export const STAFF = ["Амгаланбаяр", "Оюунбаатар", "Батболд"];
 
 export const ZONE_TABS: ZoneTab[] = [
   { id: "all", label: "(Бүгд)", occupied: 7, total: 34, color: "#c4a882" },

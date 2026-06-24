@@ -12,6 +12,7 @@ type CatalogResponseItem = {
   name: string;
   category?: string;
   price: number;
+  staffPrice?: number;
   stock?: number;
 };
 
@@ -286,6 +287,7 @@ function normalizeCatalogRow(row: CatalogResponseItem): CatalogItem {
     sku: row.sku,
     name: row.name,
     price: row.price,
+    staffPrice: row.staffPrice,
     stock: row.stock,
     category: normalizeCategory(row.category, row.name),
   };
@@ -1840,8 +1842,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           <span className="text-xs font-medium text-[#6b7280]">
                             {item.sku}
                           </span>
-                          <span className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857]">
-                            {formatNumber(item.price)}
+                          <span className="flex flex-col items-end gap-1">
+                            <span className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857]">
+                              Амрагч {formatNumber(item.price)}
+                            </span>
+                            {item.staffPrice && item.staffPrice > 0 ? (
+                              <span className="rounded bg-[#eef2ff] px-2 py-0.5 text-[11px] font-extrabold text-[#3730a3]">
+                                Ажилчин {formatNumber(item.staffPrice)}
+                              </span>
+                            ) : null}
                           </span>
                         </span>
                       </button>

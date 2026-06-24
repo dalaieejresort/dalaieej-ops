@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FALLBACK_CATALOG } from "@/lib/pos/data";
+import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
 import type {
   AppView,
   CartLine,
@@ -56,24 +56,26 @@ function normalizeCategory(category: unknown, name: string): ItemCategory {
   return sheetCategory || inferCategory(name);
 }
 
+const DEFAULT_STAFF = STAFF[0] ?? "Staff";
+
 export function PosApp() {
   const [view, setView] = useState<AppView>("orders");
   const [tableLabel, setTableLabel] = useState("3 ширээ");
-  const [staff, setStaff] = useState("Анхбаяр");
+  const [staff, setStaff] = useState(DEFAULT_STAFF);
   const [cart, setCart] = useState<CartLine[]>([
     {
       id: "line-1",
       name: "Төмс",
       price: 18000,
       quantity: 1,
-      staff: "Анхбаяр",
+      staff: DEFAULT_STAFF,
     },
     {
       id: "line-2",
       name: "Gem tower",
       price: 34200,
       quantity: 1,
-      staff: "Анхбаяр",
+      staff: DEFAULT_STAFF,
     },
   ]);
   const [selectedLineId, setSelectedLineId] = useState<string | null>("line-2");
@@ -92,11 +94,13 @@ export function PosApp() {
             name: string;
             category?: string;
             price: number;
+            staffPrice?: number;
           }) => ({
             id: row.sku,
             sku: row.sku,
             name: row.name,
             price: row.price,
+            staffPrice: row.staffPrice,
             category: normalizeCategory(row.category, row.name),
           })),
         );

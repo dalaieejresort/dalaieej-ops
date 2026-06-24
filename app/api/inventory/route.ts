@@ -95,7 +95,7 @@ const CATALOG_COLUMNS = {
     'Category (Ангилал)',
     'Ангилал',
   ],
-  price: [
+  guestPrice: [
     'Guest Price (Амрагчдын үнэ)',
     'Амрагчдын үнэ',
     'price',
@@ -103,8 +103,14 @@ const CATALOG_COLUMNS = {
     'Unit Cost',
     'Unit Cost (Нэгж үнэ ₮)',
     'Нэгж үнэ ₮',
+  ],
+  staffPrice: [
+    'Staff Price',
+    'Employee Price',
     'Employee Price (Ажчилчдын үнэ)',
     'Ажчилчдын үнэ',
+    'Employee Price (Ажилчдын үнэ)',
+    'Ажилчдын үнэ',
   ],
   stock: [
     'stock',
@@ -261,13 +267,19 @@ export async function GET() {
     const rows = await catalogSheet.getRows();
 
     // Clean up the Google Sheets data into a simple JSON array for your React frontend
-    const products = rows.map(row => ({
-      sku: String(getFirstValue(row, CATALOG_COLUMNS.sku)),
-      name: String(getFirstValue(row, CATALOG_COLUMNS.name)),
-      category: String(getFirstValue(row, CATALOG_COLUMNS.category)),
-      price: toNumber(getFirstValue(row, CATALOG_COLUMNS.price)),
-      stock: toNumber(getFirstValue(row, CATALOG_COLUMNS.stock)),
-    }));
+    const products = rows.map(row => {
+      const guestPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.guestPrice));
+      const staffPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.staffPrice));
+
+      return {
+        sku: String(getFirstValue(row, CATALOG_COLUMNS.sku)),
+        name: String(getFirstValue(row, CATALOG_COLUMNS.name)),
+        category: String(getFirstValue(row, CATALOG_COLUMNS.category)),
+        price: guestPrice || staffPrice,
+        staffPrice: staffPrice || undefined,
+        stock: toNumber(getFirstValue(row, CATALOG_COLUMNS.stock)),
+      };
+    });
 
     // Stock-tracked items need stock; food/menu items are made to order and stay sellable.
     const validProducts = products.filter(
