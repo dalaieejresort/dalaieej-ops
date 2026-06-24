@@ -1,13 +1,6 @@
 export type AppView = "orders" | "seatplan" | "pos";
 
-export type ItemCategory =
-  | "menu"
-  | "beer"
-  | "soft"
-  | "cocktail"
-  | "food"
-  | "dessert"
-  | "gift";
+export type ItemCategory = string;
 
 export interface CatalogItem {
   id: string;
@@ -25,6 +18,7 @@ export interface CartLine {
   sku?: string;
   name: string;
   price: number;
+  category?: ItemCategory;
   quantity: number;
   staff: string;
   discount?: number;

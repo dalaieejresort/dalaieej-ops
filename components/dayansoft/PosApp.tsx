@@ -23,6 +23,18 @@ function inferCategory(name: string): ItemCategory {
   if (n.includes("коктейл") || n.includes("mojito") || n.includes("мохито"))
     return "cocktail";
   if (
+    n.includes("цай") ||
+    n.includes("tea") ||
+    n.includes("кофе") ||
+    n.includes("coffee") ||
+    n.includes("americano") ||
+    n.includes("espresso") ||
+    n.includes("latte") ||
+    n.includes("капучино") ||
+    n.includes("cappuccino")
+  )
+    return "Халуун ундаа";
+  if (
     n.includes("cola") ||
     n.includes("fanta") ||
     n.includes("ундаа") ||
@@ -37,6 +49,11 @@ function inferCategory(name: string): ItemCategory {
   )
     return "beer";
   return "food";
+}
+
+function normalizeCategory(category: unknown, name: string): ItemCategory {
+  const sheetCategory = String(category ?? "").trim();
+  return sheetCategory || inferCategory(name);
 }
 
 export function PosApp() {
@@ -70,12 +87,17 @@ export function PosApp() {
       const data = await res.json();
       if (Array.isArray(data)) {
         setCatalog(
-          data.map((row: { sku: string; name: string; price: number }) => ({
+          data.map((row: {
+            sku: string;
+            name: string;
+            category?: string;
+            price: number;
+          }) => ({
             id: row.sku,
             sku: row.sku,
             name: row.name,
             price: row.price,
-            category: inferCategory(row.name),
+            category: normalizeCategory(row.category, row.name),
           })),
         );
       }
@@ -123,6 +145,7 @@ export function PosApp() {
           sku: item.sku,
           name: item.name,
           price: item.price,
+          category: item.category,
           quantity: 1,
           staff,
         },
@@ -153,6 +176,7 @@ export function PosApp() {
           items: cart.map((l) => ({
             sku: l.sku ?? l.id,
             name: l.name,
+            category: l.category,
             qty: l.quantity,
           })),
           method,

@@ -10,6 +10,7 @@ import styles from "./DayansoftSkin.module.css";
 type CatalogResponseItem = {
   sku: string;
   name: string;
+  category?: string;
   price: number;
   stock?: number;
 };
@@ -131,7 +132,7 @@ type PrintableSale = {
   qpayInvoiceId: string;
 };
 
-const CATEGORY_LABELS: Record<ItemCategory | "all", string> = {
+const CATEGORY_LABELS: Record<string, string> = {
   all: "Бүгд",
   food: "Хоол",
   beer: "Бар",
@@ -142,7 +143,7 @@ const CATEGORY_LABELS: Record<ItemCategory | "all", string> = {
   menu: "Меню",
 };
 
-const CATEGORY_ACCENTS: Record<ItemCategory | "all", string> = {
+const CATEGORY_ACCENTS: Record<string, string> = {
   all: "#111827",
   food: "#2f6f73",
   beer: "#8a5a12",
@@ -151,6 +152,22 @@ const CATEGORY_ACCENTS: Record<ItemCategory | "all", string> = {
   dessert: "#be4b75",
   gift: "#047857",
   menu: "#374151",
+  Тамхи: "#64748b",
+  Ундаа: "#2563eb",
+  Пиво: "#8a5a12",
+  Вино: "#9f1239",
+  Архи: "#4338ca",
+  "Цай, кофе": "#166534",
+  "Халуун ундаа": "#c2410c",
+  печень: "#854d0e",
+  "Европ, Ази хоол": "#2f6f73",
+  Хачир: "#6b7280",
+  "Монгол хоол": "#991b1b",
+  Шөл: "#c2410c",
+  "Цагаан хоол": "#166534",
+  "Хүүхдийн хоол": "#ea580c",
+  "Өдрийн онцлох хоол": "#dc2626",
+  "Түрээс, цагийн": "#1d4ed8",
 };
 
 const PAYMENT_METHODS = [
@@ -169,7 +186,17 @@ const SETTLEMENT_METHODS = [
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
-const KITCHEN_CATEGORIES = new Set<ItemCategory>(["food", "dessert"]);
+const KITCHEN_CATEGORIES = new Set<ItemCategory>([
+  "food",
+  "dessert",
+  "Европ, Ази хоол",
+  "Хачир",
+  "Монгол хоол",
+  "Шөл",
+  "Цагаан хоол",
+  "Хүүхдийн хоол",
+  "Өдрийн онцлох хоол",
+]);
 const ROOM_NUMBERS = Array.from({ length: 18 }, (_, index) =>
   String(index + 1),
 );
@@ -194,6 +221,20 @@ function inferCategory(name: string): ItemCategory {
     normalized.includes("мохито")
   ) {
     return "cocktail";
+  }
+
+  if (
+    normalized.includes("цай") ||
+    normalized.includes("tea") ||
+    normalized.includes("кофе") ||
+    normalized.includes("coffee") ||
+    normalized.includes("americano") ||
+    normalized.includes("espresso") ||
+    normalized.includes("latte") ||
+    normalized.includes("капучино") ||
+    normalized.includes("cappuccino")
+  ) {
+    return "Халуун ундаа";
   }
 
   if (
@@ -226,6 +267,19 @@ function inferCategory(name: string): ItemCategory {
   return "food";
 }
 
+function normalizeCategory(category: unknown, name: string): ItemCategory {
+  const sheetCategory = String(category ?? "").trim();
+  return sheetCategory || inferCategory(name);
+}
+
+function getCategoryLabel(category: ItemCategory | "all") {
+  return CATEGORY_LABELS[category] ?? category;
+}
+
+function getCategoryAccent(category: ItemCategory | "all") {
+  return CATEGORY_ACCENTS[category] ?? "#374151";
+}
+
 function normalizeCatalogRow(row: CatalogResponseItem): CatalogItem {
   return {
     id: row.sku,
@@ -233,7 +287,7 @@ function normalizeCatalogRow(row: CatalogResponseItem): CatalogItem {
     name: row.name,
     price: row.price,
     stock: row.stock,
-    category: inferCategory(row.name),
+    category: normalizeCategory(row.category, row.name),
   };
 }
 
@@ -721,7 +775,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   const categories = useMemo(() => {
     const unique = Array.from(new Set(products.map((item) => item.category)));
-    return ["all", ...unique] as Array<ItemCategory | "all">;
+    return ["all", ...unique];
   }, [products]);
 
   const cartTotal = cart.reduce(
@@ -1558,6 +1612,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           items: cart.map((line) => ({
             sku: line.sku ?? line.id,
             name: line.name,
+            category: line.category,
             qty: line.quantity,
             unitPrice: line.price,
           })),
@@ -1741,11 +1796,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         }`}
                         style={
                           activeCategory === category
-                            ? { backgroundColor: CATEGORY_ACCENTS[category] }
+                            ? { backgroundColor: getCategoryAccent(category) }
                             : undefined
                         }
                       >
-                        {CATEGORY_LABELS[category]}
+                        {getCategoryLabel(category)}
                       </button>
                     ))}
                   </div>

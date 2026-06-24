@@ -22,13 +22,22 @@ interface PosOrderViewProps {
   onPay: () => void;
 }
 
-const SUB_CATEGORIES: { id: ItemCategory | "all"; label: string; color: string }[] = [
-  { id: "menu", label: "Меню", color: "#9b7bb8" },
-  { id: "food", label: "Хоол", color: "#6b9e5a" },
-  { id: "beer", label: "Шар айраг", color: "#6b9e5a" },
-  { id: "soft", label: "Ундаа", color: "#6b9e5a" },
-  { id: "cocktail", label: "Коктейль", color: "#6b9e5a" },
-];
+const CATEGORY_LABELS: Record<string, string> = {
+  all: "Бүгд",
+  food: "Хоол",
+  beer: "Шар айраг",
+  soft: "Ундаа",
+  cocktail: "Коктейль",
+  menu: "Меню",
+};
+
+function getCategoryLabel(category: ItemCategory | "all") {
+  return CATEGORY_LABELS[category] ?? category;
+}
+
+function getCategoryColor(category: ItemCategory | "all") {
+  return CATEGORY_COLORS[category] ?? "#6b9e5a";
+}
 
 export function PosOrderView({
   catalog,
@@ -50,7 +59,7 @@ export function PosOrderView({
 
   const filteredItems = useMemo(() => {
     let list = items.filter((i) => !i.isCategory);
-    if (activeCategory !== "all" && activeCategory !== "menu") {
+    if (activeCategory !== "all") {
       list = list.filter((i) => i.category === activeCategory);
     }
     if (search.trim()) {
@@ -59,6 +68,13 @@ export function PosOrderView({
     }
     return list;
   }, [items, activeCategory, search]);
+
+  const categories = useMemo(() => {
+    const unique = Array.from(
+      new Set(items.filter((item) => !item.isCategory).map((item) => item.category)),
+    );
+    return ["all", ...unique];
+  }, [items]);
 
   const categoryTiles = items.filter((i) => i.isCategory);
   const sellableTiles = filteredItems;
@@ -259,18 +275,17 @@ export function PosOrderView({
         </div>
 
         <div className="shrink-0 flex gap-1 overflow-x-auto border-b border-[#ccc] bg-white p-2">
-          {SUB_CATEGORIES.map((cat) => (
+          {categories.map((category) => (
             <button
-              key={cat.id}
+              key={category}
               type="button"
-              onClick={() => setActiveCategory(cat.id)}
+              onClick={() => setActiveCategory(category)}
               className={`shrink-0 rounded px-4 py-2 text-sm font-semibold text-white ${
-                activeCategory === cat.id ? "ring-2 ring-black/30" : "opacity-90"
+                activeCategory === category ? "ring-2 ring-black/30" : "opacity-90"
               }`}
-              style={{ backgroundColor: cat.color }}
+              style={{ backgroundColor: getCategoryColor(category) }}
             >
-              {cat.label}
-              {cat.id === "menu" ? " ›" : ""}
+              {getCategoryLabel(category)}
             </button>
           ))}
         </div>
@@ -297,7 +312,7 @@ export function PosOrderView({
                 className="relative flex min-h-[90px] flex-col justify-between rounded border border-[#999]/30 p-2 text-left font-semibold text-[#333] shadow-sm active:scale-[0.98]"
                 style={{
                   backgroundColor:
-                    CATEGORY_COLORS[item.category] ?? "#d4c4a8",
+                    getCategoryColor(item.category),
                 }}
               >
                 <span className="text-sm leading-tight">{item.name}</span>

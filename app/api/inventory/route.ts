@@ -1,11 +1,13 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
+import { isUnlimitedInventoryCategory } from '@/lib/pos/inventory';
 
 type InventoryPostBody = {
   items?: Array<{
     sku?: string;
     name?: string;
+    category?: string;
     qty?: number;
     unitPrice?: number;
   }>;
@@ -87,12 +89,22 @@ const CATALOG_COLUMNS = {
     'Item Name (Барааны нэр)',
     'Барааны нэр',
   ],
+  category: [
+    'category',
+    'Category',
+    'Category (Ангилал)',
+    'Ангилал',
+  ],
   price: [
+    'Guest Price (Амрагчдын үнэ)',
+    'Амрагчдын үнэ',
     'price',
     'unit_cost',
     'Unit Cost',
     'Unit Cost (Нэгж үнэ ₮)',
     'Нэгж үнэ ₮',
+    'Employee Price (Ажчилчдын үнэ)',
+    'Ажчилчдын үнэ',
   ],
   stock: [
     'stock',
@@ -252,12 +264,15 @@ export async function GET() {
     const products = rows.map(row => ({
       sku: String(getFirstValue(row, CATALOG_COLUMNS.sku)),
       name: String(getFirstValue(row, CATALOG_COLUMNS.name)),
+      category: String(getFirstValue(row, CATALOG_COLUMNS.category)),
       price: toNumber(getFirstValue(row, CATALOG_COLUMNS.price)),
       stock: toNumber(getFirstValue(row, CATALOG_COLUMNS.stock)),
     }));
 
-    // Filter out any empty rows just in case
-    const validProducts = products.filter(p => p.sku);
+    // Stock-tracked items need stock; food/menu items are made to order and stay sellable.
+    const validProducts = products.filter(
+      p => p.sku && (p.stock > 0 || isUnlimitedInventoryCategory(p.category)),
+    );
 
     return NextResponse.json(validProducts);
   } catch (error) {
@@ -292,8 +307,16 @@ export async function POST(request: Request) {
 
     const doc = await loadSpreadsheet();
     const logSheet = findSheet(doc, LOG_SHEET_TITLES, 'inventory log');
+    const catalogSheet = findSheet(doc, CATALOG_SHEET_TITLES, 'inventory catalogue');
     const salesLogSheet = await getOrCreateSalesLogSheet(doc);
     const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
+    const catalogRows = await catalogSheet.getRows();
+    const unlimitedInventorySkus = new Set(
+      catalogRows
+        .filter(row => isUnlimitedInventoryCategory(getFirstValue(row, CATALOG_COLUMNS.category)))
+        .map(row => String(getFirstValue(row, CATALOG_COLUMNS.sku)).trim())
+        .filter(Boolean),
+    );
 
     // Lock the timestamp to Ulaanbaatar time regardless of where Vercel's servers are
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
@@ -307,8 +330,13 @@ export async function POST(request: Request) {
       .map(item => `${item.name ?? item.sku ?? 'Item'} x${item.qty ?? 1}`)
       .join(', ');
 
-    // Map every item in the shopping cart to its own row for the log
-    const newRows = items.map(item => {
+    const inventoryItems = items.filter(item => {
+      const sku = String(item.sku ?? '').trim();
+      return !isUnlimitedInventoryCategory(item.category) && !unlimitedInventorySkus.has(sku);
+    });
+
+    // Map stock-tracked cart items to inventory ledger rows. Food stays in Sales_Log only.
+    const newRows = inventoryItems.map(item => {
       // Using an array guarantees the data perfectly matches your 10 columns 
       // from left to right, ignoring header typos.
       return [
@@ -358,7 +386,7 @@ export async function POST(request: Request) {
 
     // Fire the data into Google Sheets
     await Promise.all([
-      logSheet.addRows(newRows),
+      newRows.length > 0 ? logSheet.addRows(newRows) : Promise.resolve(),
       salesLogSheet.addRows([salesRow]),
       shouldAppendPayment
         ? paymentsLogSheet.addRows([paymentRow])
@@ -367,7 +395,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Logged ${newRows.length} items and 1 sale.`,
+      message: `Logged ${newRows.length} inventory items and 1 sale.`,
       transactionId,
     });
   } catch (error) {
