@@ -3,7 +3,12 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
-import type { CartLine, CatalogItem, ItemCategory } from "@/lib/pos/types";
+import type {
+  CartLine,
+  CatalogItem,
+  ItemCategory,
+  PriceMode,
+} from "@/lib/pos/types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
 import styles from "./DayansoftSkin.module.css";
 
@@ -81,6 +86,13 @@ type RecentSale = {
 type RegisterMode = "sale" | "charges";
 type SettlementMethod = "cash" | "card" | "qpay";
 type SettlementStatus = "idle" | "saving" | "success" | "error";
+
+const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
+const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
+
+function isRegisterMode(value: string | null): value is RegisterMode {
+  return value === "sale" || value === "charges";
+}
 
 type SettlementPaymentLine = {
   id: string;
@@ -296,6 +308,24 @@ function normalizeCatalogRow(row: CatalogResponseItem): CatalogItem {
 function getDisplayProducts(catalog: CatalogItem[]) {
   const source = catalog.length > 0 ? catalog : FALLBACK_CATALOG;
   return source.filter((item) => !item.isCategory && item.price > 0);
+}
+
+function hasStaffPrice(item: CatalogItem) {
+  return typeof item.staffPrice === "number" && item.staffPrice > 0;
+}
+
+function getPriceForMode(item: CatalogItem, priceMode: PriceMode) {
+  return priceMode === "staff" && hasStaffPrice(item)
+    ? item.staffPrice ?? item.price
+    : item.price;
+}
+
+function getCartLineId(item: CatalogItem, priceMode: PriceMode) {
+  return `${item.sku ?? item.id}:${priceMode}`;
+}
+
+function getPriceModeLabel(priceMode?: PriceMode) {
+  return priceMode === "staff" ? "Ажилчин үнэ" : "Амрагч үнэ";
 }
 
 function escapeHtml(value: string) {
@@ -642,6 +672,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [settlementQPayWindowOpen, setSettlementQPayWindowOpen] =
     useState(false);
   const selectedChargeGroupKeyRef = useRef("");
+  const uiPreferencesLoadedRef = useRef(false);
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -747,6 +778,38 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }, [loadCatalog, loadDayStatus, loadUnpaidCharges]);
 
   useEffect(() => {
+    const storedMode = window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
+    const storedCategory = window.localStorage.getItem(
+      REGISTER_CATEGORY_STORAGE_KEY,
+    );
+
+    const readyTimer = window.setTimeout(() => {
+      if (isRegisterMode(storedMode)) {
+        setRegisterMode(storedMode);
+        if (storedMode === "charges") {
+          void loadUnpaidCharges();
+        }
+      }
+      if (storedCategory) {
+        setActiveCategory(storedCategory);
+      }
+      uiPreferencesLoadedRef.current = true;
+    }, 0);
+
+    return () => window.clearTimeout(readyTimer);
+  }, [loadUnpaidCharges]);
+
+  useEffect(() => {
+    if (!uiPreferencesLoadedRef.current) return;
+    window.localStorage.setItem(REGISTER_MODE_STORAGE_KEY, registerMode);
+  }, [registerMode]);
+
+  useEffect(() => {
+    if (!uiPreferencesLoadedRef.current) return;
+    window.localStorage.setItem(REGISTER_CATEGORY_STORAGE_KEY, activeCategory);
+  }, [activeCategory]);
+
+  useEffect(() => {
     function syncFullscreenState() {
       setIsFullscreen(Boolean(document.fullscreenElement));
     }
@@ -779,6 +842,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     const unique = Array.from(new Set(products.map((item) => item.category)));
     return ["all", ...unique];
   }, [products]);
+
+  useEffect(() => {
+    if (
+      products.length > 0 &&
+      activeCategory !== "all" &&
+      !categories.includes(activeCategory)
+    ) {
+      const resetTimer = window.setTimeout(() => setActiveCategory("all"), 0);
+      return () => window.clearTimeout(resetTimer);
+    }
+  }, [activeCategory, categories, products.length]);
 
   const cartTotal = cart.reduce(
     (sum, line) => sum + line.price * line.quantity,
@@ -887,16 +961,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       ? "Төлбөр хаах"
       : "Хэсэгчилсэн төлбөр бичих";
 
-  function addToCart(item: CatalogItem) {
+  function addToCart(item: CatalogItem, priceMode: PriceMode = "guest") {
     setSaleStatus("idle");
     setSaleMessage("");
     setLastSale(null);
     resetQPayPayment();
+    const lineId = getCartLineId(item, priceMode);
+    const linePrice = getPriceForMode(item, priceMode);
     setCart((current) => {
-      const existing = current.find((line) => line.sku === item.sku);
+      const existing = current.find((line) => line.id === lineId);
       if (existing) {
         return current.map((line) =>
-          line.sku === item.sku
+          line.id === lineId
             ? { ...line, quantity: line.quantity + 1 }
             : line,
         );
@@ -905,10 +981,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return [
         ...current,
         {
-          id: item.sku ?? item.id,
+          id: lineId,
           sku: item.sku,
           name: item.name,
-          price: item.price,
+          price: linePrice,
+          priceMode,
           category: item.category,
           quantity: 1,
           staff: staffName,
@@ -1828,32 +1905,44 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 ) : (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                     {visibleProducts.map((item) => (
-                      <button
+                      <div
                         key={item.id}
                         data-testid="product-tile"
-                        type="button"
-                        onClick={() => addToCart(item)}
-                        className="flex h-32 flex-col justify-between rounded-md border border-[#d1d5db] bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow active:scale-[0.99]"
+                        className="flex h-36 flex-col justify-between rounded-md border border-[#d1d5db] bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow"
                       >
-                        <span className="break-words text-sm font-bold leading-snug text-[#111827]">
-                          {item.name}
-                        </span>
-                        <span className="flex items-end justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => addToCart(item, "guest")}
+                          className="min-h-0 flex-1 text-left"
+                        >
+                          <span className="break-words text-sm font-bold leading-snug text-[#111827]">
+                            {item.name}
+                          </span>
+                        </button>
+                        <div className="flex items-end justify-between gap-2">
                           <span className="text-xs font-medium text-[#6b7280]">
                             {item.sku}
                           </span>
-                          <span className="flex flex-col items-end gap-1">
-                            <span className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857]">
+                          <div className="flex flex-col items-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => addToCart(item, "guest")}
+                              className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857] hover:bg-[#d1fae5] active:scale-[0.98]"
+                            >
                               Амрагч {formatNumber(item.price)}
-                            </span>
-                            {item.staffPrice && item.staffPrice > 0 ? (
-                              <span className="rounded bg-[#eef2ff] px-2 py-0.5 text-[11px] font-extrabold text-[#3730a3]">
-                                Ажилчин {formatNumber(item.staffPrice)}
-                              </span>
+                            </button>
+                            {hasStaffPrice(item) ? (
+                              <button
+                                type="button"
+                                onClick={() => addToCart(item, "staff")}
+                                className="rounded bg-[#eef2ff] px-2 py-1 text-[11px] font-extrabold text-[#3730a3] hover:bg-[#e0e7ff] active:scale-[0.98]"
+                              >
+                                Ажилчин {formatNumber(item.staffPrice ?? 0)}
+                              </button>
                             ) : null}
-                          </span>
-                        </span>
-                      </button>
+                          </div>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -1991,6 +2080,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         <p className="mt-0.5 text-xs font-medium text-[#6b7280]">
                           {formatNumber(line.price)} x {line.quantity}
                         </p>
+                        <p className="mt-0.5 text-xs font-extrabold text-[#3730a3]">
+                          {getPriceModeLabel(line.priceMode)}
+                        </p>
                       </div>
                       <p className="shrink-0 text-sm font-extrabold">
                         {formatNumber(line.price * line.quantity)}
@@ -2037,21 +2129,21 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-[#d1d5db] p-4">
-            <div className="mb-3 flex items-end justify-between gap-3">
-              <span className="text-sm font-semibold text-[#6b7280]">Нийт</span>
-              <span className="text-3xl font-black tracking-normal">
+          <div className="shrink-0 border-t border-[#d1d5db] p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold text-[#6b7280]">Нийт</span>
+              <span className="text-2xl font-black tracking-normal">
                 {formatMNT(cartTotal)}
               </span>
             </div>
 
-            <div className="mb-3 grid grid-cols-2 gap-2">
+            <div className="mb-2 grid grid-cols-4 gap-1.5">
               {PAYMENT_METHODS.map((method) => (
                 <button
                   key={method.id}
                   type="button"
                   onClick={() => selectPaymentMethod(method.id)}
-                  className={`h-11 rounded-md border text-sm font-extrabold ${
+                  className={`h-9 rounded-md border px-1 text-[11px] font-extrabold leading-tight ${
                     paymentMethod === method.id
                       ? "border-[#111827] bg-[#111827] text-white"
                       : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
@@ -2063,10 +2155,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             </div>
 
             {cashRequired && (
-              <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                <div className="mb-2 grid grid-cols-2 gap-3">
+              <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
+                <div className="mb-1.5 grid grid-cols-2 gap-2">
                   <label>
-                    <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                    <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
                       Авсан мөнгө
                     </span>
                     <input
@@ -2075,15 +2167,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       type="text"
                       inputMode="numeric"
                       placeholder="0"
-                      className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                      className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-right text-sm font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
                   </label>
                   <div>
-                    <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                    <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
                       Хариулт
                     </span>
                     <div
-                      className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
+                      className={`flex h-9 items-center justify-end rounded-md border px-2 text-sm font-black ${
                         cashShort > 0
                           ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
                           : "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
@@ -2096,11 +2188,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-1.5">
                   <button
                     type="button"
                     onClick={() => setCashReceived(cartTotal)}
-                    className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                    className="h-8 rounded-md border border-[#cbd5e1] bg-white text-[11px] font-extrabold hover:bg-[#eef2ff]"
                   >
                     Яг дүн
                   </button>
@@ -2111,7 +2203,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       onClick={() =>
                         setCashReceived((current) => current + amount)
                       }
-                      className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                      className="h-8 rounded-md border border-[#cbd5e1] bg-white text-[11px] font-extrabold hover:bg-[#eef2ff]"
                     >
                       +{formatNumber(amount)}
                     </button>
@@ -2119,7 +2211,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   <button
                     type="button"
                     onClick={() => setCashReceived(0)}
-                    className="h-10 rounded-md border border-[#fecaca] bg-white text-sm font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
+                    className="h-8 rounded-md border border-[#fecaca] bg-white text-[11px] font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
                   >
                     Арилгах
                   </button>
@@ -2128,17 +2220,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             )}
 
             {roomRequired && (
-              <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                <span className="mb-2 block text-xs font-bold text-[#6b7280]">
+              <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
+                <span className="mb-1 block text-[11px] font-bold text-[#6b7280]">
                   Өрөөний дугаар
                 </span>
-                <div className="mb-3 grid grid-cols-6 gap-2">
+                <div className="mb-2 grid grid-cols-6 gap-1.5">
                   {ROOM_NUMBERS.map((number) => (
                     <button
                       key={number}
                       type="button"
                       onClick={() => setChargeReference(number)}
-                      className={`h-9 rounded-md border text-sm font-extrabold ${
+                      className={`h-8 rounded-md border text-xs font-extrabold ${
                         roomNumber === number
                           ? "border-[#111827] bg-[#111827] text-white"
                           : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
@@ -2149,7 +2241,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   ))}
                 </div>
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                  <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
                     Эсвэл нэр / утас / тайлбар
                   </span>
                   <input
@@ -2160,7 +2252,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     type="text"
                     inputMode="text"
                     placeholder="ж: Энхээ 99112233, lunch guest"
-                    className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-base font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                    className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-sm font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                   />
                 </label>
               </div>
@@ -2173,7 +2265,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   setQPayWindowOpen(true);
                   void createQPayInvoice();
                 }}
-                className="mb-3 h-11 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc]"
+                className="mb-2 h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
               >
                 QPay QR цонх нээх
               </button>
@@ -2181,7 +2273,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
             {saleMessage && (
               <div
-                className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
+                className={`mb-2 rounded-md px-2 py-1.5 text-xs font-bold ${
                   saleStatus === "error"
                     ? "bg-[#fef2f2] text-[#b91c1c]"
                     : "bg-[#ecfdf5] text-[#047857]"
@@ -2192,12 +2284,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             )}
 
             {lastSale && (
-              <div className="mb-3 grid grid-cols-2 gap-2">
+              <div className="mb-2 grid grid-cols-2 gap-1.5">
                 {getKitchenItems(lastSale).length > 0 && (
                   <button
                     type="button"
                     onClick={() => printKitchenSheet(lastSale)}
-                    className="h-11 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc]"
+                    className="h-9 rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
                   >
                     Гал тогоо хэвлэх
                   </button>
@@ -2205,7 +2297,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 <button
                   type="button"
                   onClick={() => printReceipt(lastSale)}
-                  className="h-11 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc]"
+                  className="h-9 rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
                 >
                   Баримт хэвлэх
                 </button>
@@ -2217,7 +2309,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               data-testid="complete-sale"
               onClick={completeSale}
               disabled={!canCompleteSale}
-              className="h-14 w-full rounded-md bg-[#047857] text-base font-black text-white hover:bg-[#065f46] disabled:bg-[#9ca3af]"
+              className="h-12 w-full rounded-md bg-[#047857] text-sm font-black text-white hover:bg-[#065f46] disabled:bg-[#9ca3af]"
             >
               {completeSaleLabel}
             </button>

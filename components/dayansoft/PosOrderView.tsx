@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CATEGORY_COLORS,
   FALLBACK_CATALOG,
   STAFF,
 } from "@/lib/pos/data";
 import { formatNumber } from "@/lib/pos/utils";
-import type { CartLine, CatalogItem, ItemCategory } from "@/lib/pos/types";
+import type {
+  CartLine,
+  CatalogItem,
+  ItemCategory,
+  PriceMode,
+} from "@/lib/pos/types";
 
 interface PosOrderViewProps {
   catalog: CatalogItem[];
@@ -17,7 +22,7 @@ interface PosOrderViewProps {
   cart: CartLine[];
   selectedLineId: string | null;
   onSelectLine: (id: string | null) => void;
-  onAddItem: (item: CatalogItem) => void;
+  onAddItem: (item: CatalogItem, priceMode?: PriceMode) => void;
   onUpdateQuantity: (id: string, qty: number) => void;
   onPay: () => void;
 }
@@ -30,6 +35,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   cocktail: "Коктейль",
   menu: "Меню",
 };
+const POS_CATEGORY_STORAGE_KEY = "dalaieej.dayansoft.category";
 
 function getCategoryLabel(category: ItemCategory | "all") {
   return CATEGORY_LABELS[category] ?? category;
@@ -37,6 +43,14 @@ function getCategoryLabel(category: ItemCategory | "all") {
 
 function getCategoryColor(category: ItemCategory | "all") {
   return CATEGORY_COLORS[category] ?? "#6b9e5a";
+}
+
+function hasStaffPrice(item: CatalogItem) {
+  return typeof item.staffPrice === "number" && item.staffPrice > 0;
+}
+
+function getPriceModeLabel(priceMode?: PriceMode) {
+  return priceMode === "staff" ? "Ажилчин үнэ" : "Амрагч үнэ";
 }
 
 export function PosOrderView({
@@ -54,6 +68,7 @@ export function PosOrderView({
   const [activeCategory, setActiveCategory] = useState<ItemCategory | "all">("all");
   const [search, setSearch] = useState("");
   const [numpadValue, setNumpadValue] = useState("");
+  const categoryPreferenceLoadedRef = useRef(false);
 
   const items = catalog.length > 0 ? catalog : FALLBACK_CATALOG;
 
@@ -75,6 +90,34 @@ export function PosOrderView({
     );
     return ["all", ...unique];
   }, [items]);
+
+  useEffect(() => {
+    const storedCategory = window.localStorage.getItem(POS_CATEGORY_STORAGE_KEY);
+    const readyTimer = window.setTimeout(() => {
+      if (storedCategory) {
+        setActiveCategory(storedCategory);
+      }
+      categoryPreferenceLoadedRef.current = true;
+    }, 0);
+
+    return () => window.clearTimeout(readyTimer);
+  }, []);
+
+  useEffect(() => {
+    if (!categoryPreferenceLoadedRef.current) return;
+    window.localStorage.setItem(POS_CATEGORY_STORAGE_KEY, activeCategory);
+  }, [activeCategory]);
+
+  useEffect(() => {
+    if (
+      items.some((item) => !item.isCategory) &&
+      activeCategory !== "all" &&
+      !categories.includes(activeCategory)
+    ) {
+      const resetTimer = window.setTimeout(() => setActiveCategory("all"), 0);
+      return () => window.clearTimeout(resetTimer);
+    }
+  }, [activeCategory, categories, items]);
 
   const categoryTiles = items.filter((i) => i.isCategory);
   const sellableTiles = filteredItems;
@@ -136,7 +179,7 @@ export function PosOrderView({
                         <div
                           className={`text-xs ${selected ? "text-white/80" : "text-[#888]"}`}
                         >
-                          {line.staff}
+                          {line.staff} · {getPriceModeLabel(line.priceMode)}
                         </div>
                       </td>
                       <td className="w-12 px-2 py-2 text-center text-lg font-bold">
@@ -305,28 +348,40 @@ export function PosOrderView({
               </button>
             ))}
             {sellableTiles.map((item) => (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => onAddItem(item)}
                 className="relative flex min-h-[90px] flex-col justify-between rounded border border-[#999]/30 p-2 text-left font-semibold text-[#333] shadow-sm active:scale-[0.98]"
                 style={{
                   backgroundColor:
                     getCategoryColor(item.category),
                 }}
               >
-                <span className="text-sm leading-tight">{item.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onAddItem(item, "guest")}
+                  className="min-h-0 flex-1 text-left text-sm font-semibold leading-tight"
+                >
+                  {item.name}
+                </button>
                 <span className="flex flex-col items-end gap-1 self-end">
-                  <span className="rounded bg-[#555] px-1.5 py-0.5 text-xs font-bold text-white">
+                  <button
+                    type="button"
+                    onClick={() => onAddItem(item, "guest")}
+                    className="rounded bg-[#555] px-1.5 py-0.5 text-xs font-bold text-white active:scale-[0.98]"
+                  >
                     Амрагч {formatNumber(item.price)} ₮
-                  </span>
-                  {item.staffPrice && item.staffPrice > 0 ? (
-                    <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-bold text-[#1f2937]">
-                      Ажилчин {formatNumber(item.staffPrice)} ₮
-                    </span>
+                  </button>
+                  {hasStaffPrice(item) ? (
+                    <button
+                      type="button"
+                      onClick={() => onAddItem(item, "staff")}
+                      className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-bold text-[#1f2937] active:scale-[0.98]"
+                    >
+                      Ажилчин {formatNumber(item.staffPrice ?? 0)} ₮
+                    </button>
                   ) : null}
                 </span>
-              </button>
+              </div>
             ))}
           </div>
         </div>

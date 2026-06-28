@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
 import type {
   AppView,
   CartLine,
   CatalogItem,
   ItemCategory,
+  PriceMode,
   TableDef,
   TableOrder,
 } from "@/lib/pos/types";
@@ -57,6 +58,11 @@ function normalizeCategory(category: unknown, name: string): ItemCategory {
 }
 
 const DEFAULT_STAFF = STAFF[0] ?? "Staff";
+const POS_VIEW_STORAGE_KEY = "dalaieej.dayansoft.view";
+
+function isAppView(value: string | null): value is AppView {
+  return value === "orders" || value === "seatplan" || value === "pos";
+}
 
 export function PosApp() {
   const [view, setView] = useState<AppView>("orders");
@@ -82,6 +88,7 @@ export function PosApp() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [showPayment, setShowPayment] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const viewPreferenceLoadedRef = useRef(false);
 
   const fetchCatalog = useCallback(async () => {
     try {
@@ -118,6 +125,23 @@ export function PosApp() {
     return () => window.clearTimeout(timer);
   }, [fetchCatalog]);
 
+  useEffect(() => {
+    const storedView = window.localStorage.getItem(POS_VIEW_STORAGE_KEY);
+    const readyTimer = window.setTimeout(() => {
+      if (isAppView(storedView)) {
+        setView(storedView);
+      }
+      viewPreferenceLoadedRef.current = true;
+    }, 0);
+
+    return () => window.clearTimeout(readyTimer);
+  }, []);
+
+  useEffect(() => {
+    if (!viewPreferenceLoadedRef.current) return;
+    window.localStorage.setItem(POS_VIEW_STORAGE_KEY, view);
+  }, [view]);
+
   function openPos(label: string) {
     setTableLabel(label);
     setView("pos");
@@ -131,13 +155,17 @@ export function PosApp() {
     openPos(table.label);
   }
 
-  function addToCart(item: CatalogItem) {
-    const lineId = `${item.id}-${Date.now()}`;
+  function addToCart(item: CatalogItem, priceMode: PriceMode = "guest") {
+    const lineId = `${item.sku ?? item.id}:${priceMode}`;
+    const linePrice =
+      priceMode === "staff" && item.staffPrice && item.staffPrice > 0
+        ? item.staffPrice
+        : item.price;
     setCart((prev) => {
-      const existing = prev.find((l) => l.name === item.name);
+      const existing = prev.find((l) => l.id === lineId);
       if (existing) {
         return prev.map((l) =>
-          l.name === item.name
+          l.id === lineId
             ? { ...l, quantity: l.quantity + 1 }
             : l,
         );
@@ -148,7 +176,8 @@ export function PosApp() {
           id: lineId,
           sku: item.sku,
           name: item.name,
-          price: item.price,
+          price: linePrice,
+          priceMode,
           category: item.category,
           quantity: 1,
           staff,
@@ -182,6 +211,7 @@ export function PosApp() {
             name: l.name,
             category: l.category,
             qty: l.quantity,
+            unitPrice: l.price,
           })),
           method,
           staffName: staff,
