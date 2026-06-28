@@ -8,6 +8,7 @@ export interface CatalogItem {
   sku?: string;
   name: string;
   price: number;
+  guestPrice?: number;
   staffPrice?: number;
   category: ItemCategory;
   stock?: number;

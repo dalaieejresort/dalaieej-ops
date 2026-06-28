@@ -49,6 +49,18 @@ function hasStaffPrice(item: CatalogItem) {
   return typeof item.staffPrice === "number" && item.staffPrice > 0;
 }
 
+function hasGuestPrice(item: CatalogItem) {
+  if (typeof item.guestPrice === "number") {
+    return item.guestPrice > 0;
+  }
+
+  return item.price > 0 && !hasStaffPrice(item);
+}
+
+function getDefaultPriceMode(item: CatalogItem): PriceMode {
+  return hasGuestPrice(item) || !hasStaffPrice(item) ? "guest" : "staff";
+}
+
 function getPriceModeLabel(priceMode?: PriceMode) {
   return priceMode === "staff" ? "Ажилчин үнэ" : "Амрагч үнэ";
 }
@@ -358,19 +370,21 @@ export function PosOrderView({
               >
                 <button
                   type="button"
-                  onClick={() => onAddItem(item, "guest")}
+                  onClick={() => onAddItem(item, getDefaultPriceMode(item))}
                   className="min-h-0 flex-1 text-left text-sm font-semibold leading-tight"
                 >
                   {item.name}
                 </button>
                 <span className="flex flex-col items-end gap-1 self-end">
-                  <button
-                    type="button"
-                    onClick={() => onAddItem(item, "guest")}
-                    className="rounded bg-[#555] px-1.5 py-0.5 text-xs font-bold text-white active:scale-[0.98]"
-                  >
-                    Амрагч {formatNumber(item.price)} ₮
-                  </button>
+                  {hasGuestPrice(item) ? (
+                    <button
+                      type="button"
+                      onClick={() => onAddItem(item, "guest")}
+                      className="rounded bg-[#555] px-1.5 py-0.5 text-xs font-bold text-white active:scale-[0.98]"
+                    >
+                      Амрагч {formatNumber(item.guestPrice ?? item.price)} ₮
+                    </button>
+                  ) : null}
                   {hasStaffPrice(item) ? (
                     <button
                       type="button"

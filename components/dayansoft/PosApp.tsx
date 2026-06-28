@@ -101,12 +101,14 @@ export function PosApp() {
             name: string;
             category?: string;
             price: number;
+            guestPrice?: number;
             staffPrice?: number;
           }) => ({
             id: row.sku,
             sku: row.sku,
             name: row.name,
             price: row.price,
+            guestPrice: row.guestPrice,
             staffPrice: row.staffPrice,
             category: normalizeCategory(row.category, row.name),
           })),
@@ -156,11 +158,20 @@ export function PosApp() {
   }
 
   function addToCart(item: CatalogItem, priceMode: PriceMode = "guest") {
-    const lineId = `${item.sku ?? item.id}:${priceMode}`;
+    const hasGuestPrice =
+      typeof item.guestPrice === "number"
+        ? item.guestPrice > 0
+        : item.price > 0 && !(item.staffPrice && item.staffPrice > 0);
+    const hasStaffPrice = Boolean(item.staffPrice && item.staffPrice > 0);
+    const resolvedPriceMode =
+      priceMode === "guest" && !hasGuestPrice && hasStaffPrice
+        ? "staff"
+        : priceMode;
+    const lineId = `${item.sku ?? item.id}:${resolvedPriceMode}`;
     const linePrice =
-      priceMode === "staff" && item.staffPrice && item.staffPrice > 0
+      resolvedPriceMode === "staff" && item.staffPrice && item.staffPrice > 0
         ? item.staffPrice
-        : item.price;
+        : item.guestPrice ?? item.price;
     setCart((prev) => {
       const existing = prev.find((l) => l.id === lineId);
       if (existing) {
@@ -177,7 +188,7 @@ export function PosApp() {
           sku: item.sku,
           name: item.name,
           price: linePrice,
-          priceMode,
+          priceMode: resolvedPriceMode,
           category: item.category,
           quantity: 1,
           staff,

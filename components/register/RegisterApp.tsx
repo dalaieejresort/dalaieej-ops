@@ -17,6 +17,7 @@ type CatalogResponseItem = {
   name: string;
   category?: string;
   price: number;
+  guestPrice?: number;
   staffPrice?: number;
   stock?: number;
 };
@@ -174,13 +175,21 @@ const CATEGORY_ACCENTS: Record<string, string> = {
   "Халуун ундаа": "#c2410c",
   печень: "#854d0e",
   "Европ, Ази хоол": "#2f6f73",
+  "\"I\" хоол": "#c2410c",
+  "\"II\" хоол": "#2f6f73",
   Хачир: "#6b7280",
   "Монгол хоол": "#991b1b",
   Шөл: "#c2410c",
   "Цагаан хоол": "#166534",
   "Хүүхдийн хоол": "#ea580c",
   "Өдрийн онцлох хоол": "#dc2626",
+  Сет: "#7c2d12",
+  Түрээс: "#1d4ed8",
   "Түрээс, цагийн": "#1d4ed8",
+  Түрээсийн: "#1d4ed8",
+  "Түрээсийн бараа": "#1d4ed8",
+  "Түрээсийн зүйлс": "#1d4ed8",
+  Үйлчилгээ: "#475569",
 };
 
 const PAYMENT_METHODS = [
@@ -299,6 +308,7 @@ function normalizeCatalogRow(row: CatalogResponseItem): CatalogItem {
     sku: row.sku,
     name: row.name,
     price: row.price,
+    guestPrice: row.guestPrice,
     staffPrice: row.staffPrice,
     stock: row.stock,
     category: normalizeCategory(row.category, row.name),
@@ -314,10 +324,22 @@ function hasStaffPrice(item: CatalogItem) {
   return typeof item.staffPrice === "number" && item.staffPrice > 0;
 }
 
+function hasGuestPrice(item: CatalogItem) {
+  if (typeof item.guestPrice === "number") {
+    return item.guestPrice > 0;
+  }
+
+  return item.price > 0 && !hasStaffPrice(item);
+}
+
+function getDefaultPriceMode(item: CatalogItem): PriceMode {
+  return hasGuestPrice(item) || !hasStaffPrice(item) ? "guest" : "staff";
+}
+
 function getPriceForMode(item: CatalogItem, priceMode: PriceMode) {
   return priceMode === "staff" && hasStaffPrice(item)
     ? item.staffPrice ?? item.price
-    : item.price;
+    : item.guestPrice ?? item.price;
 }
 
 function getCartLineId(item: CatalogItem, priceMode: PriceMode) {
@@ -961,13 +983,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       ? "Төлбөр хаах"
       : "Хэсэгчилсэн төлбөр бичих";
 
-  function addToCart(item: CatalogItem, priceMode: PriceMode = "guest") {
+  function addToCart(item: CatalogItem, priceMode: PriceMode = getDefaultPriceMode(item)) {
     setSaleStatus("idle");
     setSaleMessage("");
     setLastSale(null);
     resetQPayPayment();
-    const lineId = getCartLineId(item, priceMode);
-    const linePrice = getPriceForMode(item, priceMode);
+    const resolvedPriceMode =
+      priceMode === "guest" && !hasGuestPrice(item) && hasStaffPrice(item)
+        ? "staff"
+        : priceMode;
+    const lineId = getCartLineId(item, resolvedPriceMode);
+    const linePrice = getPriceForMode(item, resolvedPriceMode);
     setCart((current) => {
       const existing = current.find((line) => line.id === lineId);
       if (existing) {
@@ -985,7 +1011,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           sku: item.sku,
           name: item.name,
           price: linePrice,
-          priceMode,
+          priceMode: resolvedPriceMode,
           category: item.category,
           quantity: 1,
           staff: staffName,
@@ -1912,7 +1938,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       >
                         <button
                           type="button"
-                          onClick={() => addToCart(item, "guest")}
+                          onClick={() => addToCart(item)}
                           className="min-h-0 flex-1 text-left"
                         >
                           <span className="break-words text-sm font-bold leading-snug text-[#111827]">
@@ -1924,13 +1950,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             {item.sku}
                           </span>
                           <div className="flex flex-col items-end gap-1">
-                            <button
-                              type="button"
-                              onClick={() => addToCart(item, "guest")}
-                              className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857] hover:bg-[#d1fae5] active:scale-[0.98]"
-                            >
-                              Амрагч {formatNumber(item.price)}
-                            </button>
+                            {hasGuestPrice(item) ? (
+                              <button
+                                type="button"
+                                onClick={() => addToCart(item, "guest")}
+                                className="rounded bg-[#ecfdf5] px-2 py-1 text-sm font-extrabold text-[#047857] hover:bg-[#d1fae5] active:scale-[0.98]"
+                              >
+                                Амрагч {formatNumber(item.guestPrice ?? item.price)}
+                              </button>
+                            ) : null}
                             {hasStaffPrice(item) ? (
                               <button
                                 type="button"

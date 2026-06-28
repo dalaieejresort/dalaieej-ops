@@ -73,13 +73,21 @@ export const CATEGORY_COLORS: Record<string, string> = {
   "Халуун ундаа": "#fed7aa",
   печень: "#fde68a",
   "Европ, Ази хоол": "#ccfbf1",
+  "\"I\" хоол": "#fed7aa",
+  "\"II\" хоол": "#ccfbf1",
   Хачир: "#e5e7eb",
   "Монгол хоол": "#fecaca",
   Шөл: "#fed7aa",
   "Цагаан хоол": "#dcfce7",
   "Хүүхдийн хоол": "#ffedd5",
   "Өдрийн онцлох хоол": "#fee2e2",
+  Сет: "#fed7aa",
+  Түрээс: "#dbeafe",
   "Түрээс, цагийн": "#dbeafe",
+  Түрээсийн: "#dbeafe",
+  "Түрээсийн бараа": "#dbeafe",
+  "Түрээсийн зүйлс": "#dbeafe",
+  Үйлчилгээ: "#e2e8f0",
 };
 
 export const PAYMENT_METHODS = [

@@ -276,6 +276,7 @@ export async function GET() {
         name: String(getFirstValue(row, CATALOG_COLUMNS.name)),
         category: String(getFirstValue(row, CATALOG_COLUMNS.category)),
         price: guestPrice || staffPrice,
+        guestPrice: guestPrice || undefined,
         staffPrice: staffPrice || undefined,
         stock: toNumber(getFirstValue(row, CATALOG_COLUMNS.stock)),
       };
