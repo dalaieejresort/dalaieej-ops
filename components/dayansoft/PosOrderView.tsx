@@ -24,6 +24,7 @@ interface PosOrderViewProps {
   onSelectLine: (id: string | null) => void;
   onAddItem: (item: CatalogItem, priceMode?: PriceMode) => void;
   onUpdateQuantity: (id: string, qty: number) => void;
+  onRemoveSelectedLine: () => void;
   onPay: () => void;
 }
 
@@ -75,6 +76,7 @@ export function PosOrderView({
   onSelectLine,
   onAddItem,
   onUpdateQuantity,
+  onRemoveSelectedLine,
   onPay,
 }: PosOrderViewProps) {
   const [activeCategory, setActiveCategory] = useState<ItemCategory | "all">("all");
@@ -215,17 +217,32 @@ export function PosOrderView({
 
         <div className="shrink-0 border-t border-[#bbb] bg-[#e0e0e0]">
           <div className="flex flex-wrap gap-1 border-b border-[#ccc] p-1">
-            {["Салгах", "Нэгтгэх", "Цуцлах", "Ширээ", "Tags", "Тооцоо"].map(
-              (label) => (
-                <button
-                  key={label}
-                  type="button"
-                  className="rounded border border-[#aaa] bg-[#f0f0f0] px-2 py-1 text-xs hover:bg-white"
-                >
-                  {label}
-                </button>
-              ),
-            )}
+            {["Салгах", "Нэгтгэх"].map((label) => (
+              <button
+                key={label}
+                type="button"
+                className="rounded border border-[#aaa] bg-[#f0f0f0] px-2 py-1 text-xs hover:bg-white"
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={onRemoveSelectedLine}
+              disabled={!selectedLineId}
+              className="rounded border border-[#fca5a5] bg-[#fff1f2] px-2 py-1 text-xs font-bold text-[#b91c1c] hover:bg-white disabled:opacity-40"
+            >
+              Цуцлах
+            </button>
+            {["Ширээ", "Tags", "Тооцоо"].map((label) => (
+              <button
+                key={label}
+                type="button"
+                className="rounded border border-[#aaa] bg-[#f0f0f0] px-2 py-1 text-xs hover:bg-white"
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <div className="grid grid-cols-[1fr_auto_1fr] gap-1 p-2">

@@ -194,7 +194,7 @@ const CATEGORY_ACCENTS: Record<string, string> = {
 
 const PAYMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
-  { id: "card", label: "Карт" },
+  { id: "card", label: "Карт/терминал" },
   { id: "qpay", label: "QPay" },
   { id: "room", label: "Өрөө/Зочин" },
 ] as const;
@@ -203,7 +203,7 @@ type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
 
 const SETTLEMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
-  { id: "card", label: "Карт" },
+  { id: "card", label: "Карт/терминал" },
   { id: "qpay", label: "QPay" },
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
@@ -648,6 +648,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     PAYMENT_METHODS[0].id,
   );
   const [cashReceived, setCashReceived] = useState(0);
+  const [cardTerminalApproved, setCardTerminalApproved] = useState(false);
   const [roomNumber, setRoomNumber] = useState("");
   const [saleStatus, setSaleStatus] = useState<SaleStatus>("idle");
   const [saleMessage, setSaleMessage] = useState("");
@@ -683,6 +684,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [settlementPaymentAmount, setSettlementPaymentAmount] = useState(0);
   const [settlementLines, setSettlementLines] = useState<SettlementPaymentLine[]>([]);
   const [settlementCashReceived, setSettlementCashReceived] = useState(0);
+  const [settlementCardTerminalApproved, setSettlementCardTerminalApproved] =
+    useState(false);
   const [settlementStatus, setSettlementStatus] =
     useState<SettlementStatus>("idle");
   const [settlementMessage, setSettlementMessage] = useState("");
@@ -884,6 +887,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     PAYMENT_METHODS.find((method) => method.id === paymentMethod) ??
     PAYMENT_METHODS[0];
   const cashRequired = paymentMethod === "cash";
+  const cardRequired = paymentMethod === "card";
   const cashShort = Math.max(cartTotal - cashReceived, 0);
   const changeDue = Math.max(cashReceived - cartTotal, 0);
   const roomRequired = paymentMethod === "room";
@@ -910,6 +914,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     cart.length > 0 &&
     saleStatus !== "saving" &&
     (!cashRequired || cashShort === 0) &&
+    (!cardRequired || cardTerminalApproved) &&
     (!roomRequired || roomNumber.trim().length > 0) &&
     (!qpayRequired || qpayPaid);
   const completeSaleLabel = saleStatus === "saving"
@@ -918,6 +923,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       ? "Өдрөө нээнэ үү"
       : roomRequired
       ? "Өрөө/зочинд бичих"
+      : cardRequired
+        ? cardTerminalApproved
+          ? "Карт борлуулалт хадгалах"
+          : "Терминал баталгаажуулна уу"
       : qpayRequired
         ? qpayPaid
           ? "QPay борлуулалт хадгалах"
@@ -957,6 +966,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const settlementDraftOverRemaining =
     settlementDraftAmount > settlementRemaining;
   const settlementCashRequired = settlementMethod === "cash";
+  const settlementCardRequired = settlementMethod === "card";
   const settlementQPayRequired = settlementMethod === "qpay";
   const settlementCashShort = settlementCashRequired
     ? Math.max(settlementDraftAmount - settlementCashReceived, 0)
@@ -972,6 +982,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     settlementDraftAmount > 0 &&
     !settlementDraftOverRemaining &&
     (!settlementCashRequired || settlementCashShort === 0) &&
+    (!settlementCardRequired || settlementCardTerminalApproved) &&
     (!settlementQPayRequired || settlementQPayStatus === "paid");
   const canSettleCharge =
     selectedCharges.length > 0 &&
@@ -987,6 +998,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleStatus("idle");
     setSaleMessage("");
     setLastSale(null);
+    setCardTerminalApproved(false);
     resetQPayPayment();
     const resolvedPriceMode =
       priceMode === "guest" && !hasGuestPrice(item) && hasStaffPrice(item)
@@ -1021,6 +1033,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   function updateQuantity(id: string, quantity: number) {
+    setCardTerminalApproved(false);
     resetQPayPayment();
     setCart((current) =>
       current
@@ -1031,6 +1044,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   function selectPaymentMethod(method: PaymentMethodId) {
     setPaymentMethod(method);
+    setCardTerminalApproved(false);
     if (method === "qpay") {
       setQPayWindowOpen(true);
       void createQPayInvoice();
@@ -1274,6 +1288,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   function resetSettlementDraft() {
     setSettlementPaymentAmount(0);
     setSettlementCashReceived(0);
+    setSettlementCardTerminalApproved(false);
     resetSettlementQPayPayment();
   }
 
@@ -1289,6 +1304,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementStatus("idle");
     setSettlementMessage("");
     setSettlementCashReceived(0);
+    setSettlementCardTerminalApproved(false);
     resetSettlementQPayPayment();
     if (method === "qpay") {
       setSettlementQPayWindowOpen(true);
@@ -1299,6 +1315,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   function setSettlementAmountInput(value: string) {
     const amount = Number(value.replace(/[^\d]/g, ""));
     setSettlementPaymentAmount(Number.isFinite(amount) ? amount : 0);
+    setSettlementCardTerminalApproved(false);
     resetSettlementQPayPayment();
     if (settlementMethod === "qpay") {
       setSettlementQPayWindowOpen(true);
@@ -1329,6 +1346,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       if (settlementCashRequired && settlementCashShort > 0) {
         setSettlementStatus("error");
         setSettlementMessage(`${formatMNT(settlementCashShort)} дутуу байна`);
+        return;
+      }
+
+      if (settlementCardRequired && !settlementCardTerminalApproved) {
+        setSettlementStatus("error");
+        setSettlementMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
         return;
       }
 
@@ -1681,6 +1704,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage(`${formatMNT(cashShort)} дутуу байна`);
       return;
     }
+    if (cardRequired && !cardTerminalApproved) {
+      setSaleStatus("error");
+      setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
+      return;
+    }
     if (roomRequired && roomNumber.trim().length === 0) {
       setSaleStatus("error");
       setSaleMessage("Өрөө, нэр эсвэл утас оруулна уу");
@@ -1741,6 +1769,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
       setCart([]);
       setCashReceived(0);
+      setCardTerminalApproved(false);
       setRoomNumber("");
       resetQPayPayment();
       setLastSale(completedSale);
@@ -2247,6 +2276,47 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               </div>
             )}
 
+            {cardRequired && (
+              <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold text-[#6b7280]">
+                      Терминалын дүн
+                    </p>
+                    <p className="text-lg font-black">
+                      {formatMNT(cartTotal)}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-sm px-2 py-1 text-[11px] font-black ${
+                      cardTerminalApproved
+                        ? "bg-[#ecfdf5] text-[#047857]"
+                        : "bg-white text-[#6b7280]"
+                    }`}
+                  >
+                    {cardTerminalApproved ? "Баталгаажсан" : "Хүлээгдэж байна"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCardTerminalApproved((current) => !current);
+                    if (saleStatus === "error") {
+                      setSaleStatus("idle");
+                      setSaleMessage("");
+                    }
+                  }}
+                  className={`h-9 w-full rounded-md border text-xs font-extrabold ${
+                    cardTerminalApproved
+                      ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                      : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
+                  }`}
+                >
+                  Терминал дээр төлөгдсөн
+                </button>
+              </div>
+            )}
+
             {roomRequired && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <span className="mb-1 block text-[11px] font-bold text-[#6b7280]">
@@ -2574,16 +2644,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
-                          onClick={() =>
-                            setSettlementPaymentAmount(settlementRemaining)
-                          }
+                          onClick={() => {
+                            setSettlementPaymentAmount(settlementRemaining);
+                            setSettlementCardTerminalApproved(false);
+                          }}
                           className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                         >
                           Үлдэгдэл
                         </button>
                         <button
                           type="button"
-                          onClick={() => setSettlementPaymentAmount(0)}
+                          onClick={() => {
+                            setSettlementPaymentAmount(0);
+                            setSettlementCardTerminalApproved(false);
+                          }}
                           className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                         >
                           Auto
@@ -2671,6 +2745,51 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             Арилгах
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {settlementCardRequired && (
+                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold text-[#6b7280]">
+                              Терминалын дүн
+                            </p>
+                            <p className="text-lg font-black">
+                              {formatMNT(settlementDraftAmount)}
+                            </p>
+                          </div>
+                          <span
+                            className={`rounded-sm px-2 py-1 text-xs font-black ${
+                              settlementCardTerminalApproved
+                                ? "bg-[#ecfdf5] text-[#047857]"
+                                : "bg-white text-[#6b7280]"
+                            }`}
+                          >
+                            {settlementCardTerminalApproved
+                              ? "Баталгаажсан"
+                              : "Хүлээгдэж байна"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettlementCardTerminalApproved(
+                              (current) => !current,
+                            );
+                            if (settlementStatus === "error") {
+                              setSettlementStatus("idle");
+                              setSettlementMessage("");
+                            }
+                          }}
+                          className={`h-10 w-full rounded-md border text-sm font-extrabold ${
+                            settlementCardTerminalApproved
+                              ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                              : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
+                          }`}
+                        >
+                          Терминал дээр төлөгдсөн
+                        </button>
                       </div>
                     )}
 

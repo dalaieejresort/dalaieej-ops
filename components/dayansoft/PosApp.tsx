@@ -68,23 +68,8 @@ export function PosApp() {
   const [view, setView] = useState<AppView>("orders");
   const [tableLabel, setTableLabel] = useState("3 ширээ");
   const [staff, setStaff] = useState(DEFAULT_STAFF);
-  const [cart, setCart] = useState<CartLine[]>([
-    {
-      id: "line-1",
-      name: "Төмс",
-      price: 18000,
-      quantity: 1,
-      staff: DEFAULT_STAFF,
-    },
-    {
-      id: "line-2",
-      name: "Gem tower",
-      price: 34200,
-      quantity: 1,
-      staff: DEFAULT_STAFF,
-    },
-  ]);
-  const [selectedLineId, setSelectedLineId] = useState<string | null>("line-2");
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [showPayment, setShowPayment] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -206,6 +191,12 @@ export function PosApp() {
     );
   }
 
+  function removeSelectedLine() {
+    if (!selectedLineId) return;
+    setCart((prev) => prev.filter((line) => line.id !== selectedLineId));
+    setSelectedLineId(null);
+  }
+
   const cartTotal = cart.reduce(
     (sum, line) => sum + line.price * line.quantity - (line.discount ?? 0),
     0,
@@ -277,6 +268,7 @@ export function PosApp() {
           onSelectLine={setSelectedLineId}
           onAddItem={addToCart}
           onUpdateQuantity={updateQuantity}
+          onRemoveSelectedLine={removeSelectedLine}
           onPay={() => setShowPayment(true)}
         />
       )}
