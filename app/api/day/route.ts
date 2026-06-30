@@ -32,6 +32,11 @@ type DayTotals = {
   expectedCash: number;
 };
 
+type DayItemTotal = {
+  name: string;
+  quantity: number;
+};
+
 const DAY_SESSION_SHEET_TITLES = [
   process.env.GOOGLE_DAY_SESSION_SHEET_TITLE,
   'Day_Sessions',
@@ -297,14 +302,12 @@ function serializeSession(row: SheetRow | null) {
   };
 }
 
-function getDayTotals(
+function getDaySalesRows(
   salesRows: Array<{ get: (columnName: string) => unknown }>,
-  paymentRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  startingCash: number,
   sessionWindow?: { openedAt?: string; closedAt?: string },
-): DayTotals {
-  const daySalesRows = salesRows.filter(
+) {
+  return salesRows.filter(
     row =>
       businessDateFromTimestamp(row.get('timestamp')) === businessDate &&
       isInsideSessionWindow(
@@ -313,6 +316,13 @@ function getDayTotals(
         sessionWindow?.closedAt,
       ),
   );
+}
+
+function getDayPaymentRows(
+  paymentRows: Array<{ get: (columnName: string) => unknown }>,
+  businessDate: string,
+  sessionWindow?: { openedAt?: string; closedAt?: string },
+) {
   const dayPaymentRows = paymentRows.filter(
     row =>
       businessDateFromTimestamp(row.get('timestamp')) === businessDate &&
@@ -322,6 +332,19 @@ function getDayTotals(
         sessionWindow?.closedAt,
       ),
   );
+
+  return dayPaymentRows;
+}
+
+function getDayTotals(
+  salesRows: Array<{ get: (columnName: string) => unknown }>,
+  paymentRows: Array<{ get: (columnName: string) => unknown }>,
+  businessDate: string,
+  startingCash: number,
+  sessionWindow?: { openedAt?: string; closedAt?: string },
+): DayTotals {
+  const daySalesRows = getDaySalesRows(salesRows, businessDate, sessionWindow);
+  const dayPaymentRows = getDayPaymentRows(paymentRows, businessDate, sessionWindow);
   const totals: DayTotals = {
     salesTotal: 0,
     paymentTotal: 0,
@@ -357,6 +380,44 @@ function getDayTotals(
 
   totals.expectedCash = startingCash + totals.cashPaymentTotal;
   return totals;
+}
+
+function parseItemSummary(summary: string) {
+  const items: DayItemTotal[] = [];
+  const pattern = /(.+?)\s+x(\d+(?:\.\d+)?)(?:,\s*|$)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(summary)) !== null) {
+    const name = match[1]?.trim();
+    const quantity = Number(match[2]);
+
+    if (name && Number.isFinite(quantity) && quantity > 0) {
+      items.push({ name, quantity });
+    }
+  }
+
+  return items;
+}
+
+function getDayItemTotals(
+  salesRows: Array<{ get: (columnName: string) => unknown }>,
+  businessDate: string,
+  sessionWindow?: { openedAt?: string; closedAt?: string },
+) {
+  const totals = new Map<string, number>();
+  const daySalesRows = getDaySalesRows(salesRows, businessDate, sessionWindow);
+
+  for (const row of daySalesRows) {
+    if (getCell(row, 'paid_status').toLowerCase() === 'voided') continue;
+
+    for (const item of parseItemSummary(getCell(row, 'item_summary'))) {
+      totals.set(item.name, (totals.get(item.name) ?? 0) + item.quantity);
+    }
+  }
+
+  return Array.from(totals.entries())
+    .map(([name, quantity]) => ({ name, quantity }))
+    .sort((first, second) => second.quantity - first.quantity || first.name.localeCompare(second.name));
 }
 
 function dayErrorMessage(error: unknown, fallback: string) {
@@ -405,24 +466,33 @@ async function getDayContext(businessDate: string) {
   ]);
   const sessionRow = getLatestSession(dayRows, businessDate);
   const startingCash = sessionRow ? toNumber(sessionRow.get('starting_cash')) : 0;
-  const totals = getDayTotals(salesRows, paymentRows, businessDate, startingCash, {
+  const sessionWindow = {
     openedAt: sessionRow ? getCell(sessionRow, 'opened_at') : undefined,
     closedAt: sessionRow ? getCell(sessionRow, 'closed_at') : undefined,
-  });
+  };
+  const totals = getDayTotals(
+    salesRows,
+    paymentRows,
+    businessDate,
+    startingCash,
+    sessionWindow,
+  );
+  const itemTotals = getDayItemTotals(salesRows, businessDate, sessionWindow);
 
-  return { daySheet, dayRows, sessionRow, totals };
+  return { daySheet, dayRows, sessionRow, totals, itemTotals };
 }
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
-    const { sessionRow, totals } = await getDayContext(businessDate);
+    const { sessionRow, totals, itemTotals } = await getDayContext(businessDate);
 
     return NextResponse.json({
       businessDate,
       session: serializeSession(sessionRow),
       totals,
+      itemTotals,
     });
   } catch (error) {
     console.error(`Day GET Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -443,7 +513,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'action must be open or close' }, { status: 400 });
     }
 
-    const { daySheet, sessionRow, totals } = await getDayContext(businessDate);
+    const { daySheet, sessionRow, totals, itemTotals } = await getDayContext(businessDate);
     const timestamp = nowTimestamp();
 
     if (action === 'open') {
@@ -454,6 +524,7 @@ export async function POST(request: Request) {
           businessDate,
           session: serializeSession(sessionRow),
           totals,
+          itemTotals,
         });
       }
 
@@ -494,6 +565,7 @@ export async function POST(request: Request) {
         businessDate,
         session: serializeSession(newRow as SheetRow),
         totals: getDayTotals([], [], businessDate, startingCash),
+        itemTotals: [],
       });
     }
 
@@ -538,6 +610,7 @@ export async function POST(request: Request) {
         ...totals,
         expectedCash: totals.expectedCash,
       },
+      itemTotals,
     });
   } catch (error) {
     console.error(`Day POST Error: ${error instanceof Error ? error.message : String(error)}`);

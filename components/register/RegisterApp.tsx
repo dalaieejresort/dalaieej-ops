@@ -49,6 +49,11 @@ type DayTotals = {
   expectedCash: number;
 };
 
+type DayItemTotal = {
+  name: string;
+  quantity: number;
+};
+
 type DaySession = {
   businessDate: string;
   openedAt: string;
@@ -171,6 +176,8 @@ const CATEGORY_ACCENTS: Record<string, string> = {
   Пиво: "#8a5a12",
   Вино: "#9f1239",
   Архи: "#4338ca",
+  Коктейль: "#7c3aed",
+  Коктейл: "#7c3aed",
   "Цай, кофе": "#166534",
   "Халуун ундаа": "#c2410c",
   печень: "#854d0e",
@@ -674,6 +681,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [dayMessage, setDayMessage] = useState("");
   const [daySession, setDaySession] = useState<DaySession | null>(null);
   const [dayTotals, setDayTotals] = useState<DayTotals>(EMPTY_DAY_TOTALS);
+  const [dayItemTotals, setDayItemTotals] = useState<DayItemTotal[]>([]);
   const [dayModalMode, setDayModalMode] = useState<DayModalMode>(null);
   const [dayCashAmount, setDayCashAmount] = useState(0);
   const [dayNotes, setDayNotes] = useState("");
@@ -782,6 +790,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         | {
             session?: DaySession | null;
             totals?: DayTotals;
+            itemTotals?: DayItemTotal[];
             error?: string;
           }
         | null;
@@ -792,10 +801,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
       setDaySession(data?.session ?? null);
       setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
+      setDayItemTotals(data?.itemTotals ?? []);
       setDayStatus("ready");
     } catch (error) {
       setDaySession(null);
       setDayTotals(EMPTY_DAY_TOTALS);
+      setDayItemTotals([]);
       setDayStatus("error");
       setDayMessage(
         error instanceof Error ? error.message : "Өдрийн төлөв авч чадсангүй",
@@ -906,6 +917,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const qpayPaid = qpayStatus === "paid";
   const dayOpen = daySession?.status === "open";
   const dayClosed = daySession?.status === "closed";
+  const dayNonCashPaymentTotal =
+    dayTotals.cardPaymentTotal + dayTotals.qpayPaymentTotal;
   const dayCashDifference = dayCashAmount - dayTotals.expectedCash;
   const dayCloseHasVariance =
     dayModalMode === "close" && dayCashDifference !== 0;
@@ -1165,6 +1178,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         | {
             session?: DaySession | null;
             totals?: DayTotals;
+            itemTotals?: DayItemTotal[];
             error?: string;
           }
         | null;
@@ -1175,6 +1189,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
       setDaySession(data?.session ?? null);
       setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
+      setDayItemTotals(data?.itemTotals ?? []);
       setDayModalMode(null);
       setDayCashAmount(0);
       setDayNotes("");
@@ -3122,7 +3137,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
       {dayModalMode && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-[440px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
+          <div className="w-full max-w-[560px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
             <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
               <h3 className="text-sm font-black">
                 {dayModalMode === "open" ? "Өдөр нээх" : "Өдрийн хаалт"}
@@ -3150,30 +3165,114 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               </div>
 
               {dayModalMode === "close" && (
-                <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
-                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
-                    <p className="font-bold text-[#6b7280]">Эхлэх мөнгө</p>
-                    <p className="text-lg font-black">
-                      {formatMNT(daySession?.startingCash ?? 0)}
-                    </p>
+                <div className="mb-3 grid gap-3">
+                  <div className="overflow-hidden rounded-md border border-[#cbd5e1]">
+                    <table className="w-full border-collapse text-sm">
+                      <thead className="bg-[#f8fafc]">
+                        <tr>
+                          <th className="w-12 border-b border-r border-[#cbd5e1] px-2 py-2 text-left text-xs font-black text-[#6b7280]">
+                            #
+                          </th>
+                          <th className="border-b border-r border-[#cbd5e1] px-2 py-2 text-left text-xs font-black text-[#6b7280]">
+                            Үзүүлэлт
+                          </th>
+                          <th className="border-b border-[#cbd5e1] px-2 py-2 text-right text-xs font-black text-[#6b7280]">
+                            Дүн
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          ["1", "Нийт борлуулалт", dayTotals.salesTotal],
+                          ["2", "Бэлэн төлбөр", dayTotals.cashPaymentTotal],
+                          ["3", "Карт / QPay", dayNonCashPaymentTotal],
+                          ["4", "Байшин/зочинд бичсэн", dayTotals.roomChargeTotal],
+                          ["5", "Эхлэх бэлэн мөнгө", daySession?.startingCash ?? 0],
+                          ["6", "Бэлнээр байх ёстой", dayTotals.expectedCash],
+                          ["7", "Тоолсон бэлэн мөнгө", dayCashAmount],
+                        ].map(([number, label, amount]) => (
+                          <tr key={number}>
+                            <td className="border-b border-r border-[#e5e7eb] px-2 py-2 font-bold text-[#6b7280]">
+                              {number}
+                            </td>
+                            <td className="border-b border-r border-[#e5e7eb] px-2 py-2 font-bold">
+                              {label}
+                            </td>
+                            <td className="border-b border-[#e5e7eb] px-2 py-2 text-right font-black">
+                              {formatMNT(Number(amount))}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="bg-[#f8fafc]">
+                          <td className="border-r border-[#cbd5e1] px-2 py-2 font-black text-[#6b7280]">
+                            8
+                          </td>
+                          <td className="border-r border-[#cbd5e1] px-2 py-2 font-black">
+                            Зөрүү
+                          </td>
+                          <td
+                            className={`px-2 py-2 text-right font-black ${
+                              dayCashDifference === 0
+                                ? "text-[#047857]"
+                                : dayCashDifference < 0
+                                  ? "text-[#b91c1c]"
+                                  : "text-[#c2410c]"
+                            }`}
+                          >
+                            {formatMNT(dayCashDifference)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
-                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
-                    <p className="font-bold text-[#6b7280]">Бэлэн төлбөр</p>
-                    <p className="text-lg font-black">
-                      {formatMNT(dayTotals.cashPaymentTotal)}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
-                    <p className="font-bold text-[#6b7280]">Карт / QPay</p>
-                    <p className="text-lg font-black">
-                      {formatMNT(dayTotals.cardPaymentTotal + dayTotals.qpayPaymentTotal)}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-[#e5e7eb] px-3 py-2">
-                    <p className="font-bold text-[#6b7280]">Өр</p>
-                    <p className="text-lg font-black">
-                      {formatMNT(dayTotals.roomChargeTotal)}
-                    </p>
+
+                  <div className="overflow-hidden rounded-md border border-[#cbd5e1]">
+                    <div className="border-b border-[#cbd5e1] bg-[#f8fafc] px-2 py-2 text-xs font-black text-[#6b7280]">
+                      Бараагаар зарагдсан тоо
+                    </div>
+                    <div className="max-h-44 overflow-y-auto">
+                      <table className="w-full border-collapse text-sm">
+                        <thead className="bg-white">
+                          <tr>
+                            <th className="w-12 border-b border-r border-[#e5e7eb] px-2 py-2 text-left text-xs font-black text-[#6b7280]">
+                              #
+                            </th>
+                            <th className="border-b border-r border-[#e5e7eb] px-2 py-2 text-left text-xs font-black text-[#6b7280]">
+                              Бараа
+                            </th>
+                            <th className="w-20 border-b border-[#e5e7eb] px-2 py-2 text-right text-xs font-black text-[#6b7280]">
+                              Тоо
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dayItemTotals.length > 0 ? (
+                            dayItemTotals.map((item, index) => (
+                              <tr key={item.name}>
+                                <td className="border-b border-r border-[#e5e7eb] px-2 py-2 font-bold text-[#6b7280]">
+                                  {index + 1}
+                                </td>
+                                <td className="border-b border-r border-[#e5e7eb] px-2 py-2 font-bold">
+                                  {item.name}
+                                </td>
+                                <td className="border-b border-[#e5e7eb] px-2 py-2 text-right font-black">
+                                  {formatNumber(item.quantity)}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={3}
+                                className="px-2 py-3 text-center text-xs font-bold text-[#6b7280]"
+                              >
+                                Одоогоор зарагдсан бараа алга.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -3213,31 +3312,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   Арилгах
                 </button>
               </div>
-
-              {dayModalMode === "close" && (
-                <div className="mb-3 rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
-                  <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-bold text-[#6b7280]">Байх ёстой</span>
-                    <span className="font-black">
-                      {formatMNT(dayTotals.expectedCash)}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-base">
-                    <span className="font-bold text-[#6b7280]">Зөрүү</span>
-                    <span
-                      className={`font-black ${
-                        dayCashDifference === 0
-                          ? "text-[#047857]"
-                          : dayCashDifference < 0
-                            ? "text-[#b91c1c]"
-                            : "text-[#c2410c]"
-                      }`}
-                    >
-                      {formatMNT(dayCashDifference)}
-                    </span>
-                  </div>
-                </div>
-              )}
 
               <label className="mb-3 block">
                 <span className="mb-1 block text-xs font-bold text-[#6b7280]">

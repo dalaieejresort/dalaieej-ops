@@ -21,6 +21,9 @@ export const UNLIMITED_INVENTORY_CATEGORIES = new Set<string>([
   "Цай",
   "Кофе",
   "Халуун ундаа",
+  "cocktail",
+  "Коктейль",
+  "Коктейл",
   "Сет",
   "Түрээс",
   "Түрээс, цагийн",
@@ -57,6 +60,8 @@ export function isUnlimitedInventoryCategory(category: unknown) {
     normalized.includes("rental") ||
     normalized.includes("халуун ундаа") ||
     normalized.includes("hot drink") ||
+    normalized.includes("cocktail") ||
+    normalized.includes("коктей") ||
     normalized.includes("үйлчилгээ") ||
     normalized.includes("service")
   );
