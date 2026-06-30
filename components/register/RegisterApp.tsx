@@ -196,7 +196,7 @@ const PAYMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
   { id: "card", label: "Карт/терминал" },
   { id: "qpay", label: "QPay" },
-  { id: "room", label: "Өрөө/Зочин" },
+  { id: "room", label: "Байшин/Зочин" },
 ] as const;
 
 type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
@@ -520,7 +520,7 @@ function kitchenSheetBody(sale: PrintableSale) {
       <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
       ${
         sale.roomNumber
-          ? `<div class="row"><strong>Өрөө/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
+          ? `<div class="row"><strong>Байшин/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
           : ""
       }
     </div>
@@ -550,7 +550,7 @@ function receiptBody(sale: PrintableSale) {
       <div class="row"><strong>Төлбөр</strong><span>${escapeHtml(sale.paymentLabel)}</span></div>
       ${
         sale.roomNumber
-          ? `<div class="row"><strong>Өрөө/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
+          ? `<div class="row"><strong>Байшин/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
           : ""
       }
     </div>
@@ -602,11 +602,11 @@ function createLocalPaymentId() {
 }
 
 function getChargeGroupKey(charge: UnpaidCharge) {
-  return (charge.roomOrGuest || "Өрөө/Зочин").trim().toLowerCase();
+  return (charge.roomOrGuest || "Байшин/Зочин").trim().toLowerCase();
 }
 
 function getChargeGroupLabel(charge: UnpaidCharge) {
-  return charge.roomOrGuest || "Өрөө/Зочин";
+  return charge.roomOrGuest || "Байшин/Зочин";
 }
 
 function buildChargeGroups(charges: UnpaidCharge[]) {
@@ -933,7 +933,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     : !dayOpen
       ? "Өдрөө нээнэ үү"
       : roomRequired
-      ? "Өрөө/зочинд бичих"
+      ? "Байшин/зочинд бичих"
       : cardRequired
         ? cardTerminalApproved
           ? "Карт борлуулалт хадгалах"
@@ -1758,7 +1758,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
     if (roomRequired && roomNumber.trim().length === 0) {
       setSaleStatus("error");
-      setSaleMessage("Өрөө, нэр эсвэл утас оруулна уу");
+      setSaleMessage("Байшин, нэр эсвэл утас оруулна уу");
       return;
     }
     if (qpayRequired && !qpayPaid) {
@@ -2095,7 +2095,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   <div>
                     <h2 className="text-base font-black">Өр төлбөрүүд</h2>
                     <p className="text-xs font-semibold text-[#6b7280]">
-                      Өрөө, нэр, утсаар бичсэн төлөгдөөгүй борлуулалт
+                      Байшин, нэр, утсаар бичсэн төлөгдөөгүй борлуулалт
                     </p>
                   </div>
                   <button
@@ -2403,7 +2403,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             {roomRequired && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <span className="mb-1 block text-[11px] font-bold text-[#6b7280]">
-                  Өрөөний дугаар
+                  Байшингийн дугаар
                 </span>
                 <div className="mb-2 grid grid-cols-6 gap-1.5">
                   {ROOM_NUMBERS.map((number) => (
