@@ -1975,7 +1975,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       onChange={(event) => setQuery(event.target.value)}
                       type="search"
                       placeholder="Бараа эсвэл код хайх"
-                      className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-base outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                      className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-base font-semibold text-[#111827] outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
                   </label>
 
@@ -2010,7 +2010,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       onChange={(event) => setCustomItemName(event.target.value)}
                       type="text"
                       placeholder="Гараар нэмэх: нэр / тайлбар"
-                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold text-[#111827] outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
                   </label>
                   <label>
@@ -2025,7 +2025,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       type="text"
                       inputMode="numeric"
                       placeholder="Дүн"
-                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-sm font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-sm font-semibold text-[#111827] tabular-nums outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
                   </label>
                   <button
