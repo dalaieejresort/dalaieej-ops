@@ -347,6 +347,7 @@ function getCartLineId(item: CatalogItem, priceMode: PriceMode) {
 }
 
 function getPriceModeLabel(priceMode?: PriceMode) {
+  if (!priceMode) return "Гараар";
   return priceMode === "staff" ? "Ажилчин үнэ" : "Амрагч үнэ";
 }
 
@@ -506,6 +507,90 @@ function getKitchenItems(sale: PrintableSale) {
   return sale.items.filter((item) => KITCHEN_CATEGORIES.has(item.category));
 }
 
+function kitchenSheetBody(sale: PrintableSale) {
+  const kitchenItems = getKitchenItems(sale);
+  if (kitchenItems.length === 0) return "";
+
+  return `<div class="kitchen">
+    <h1>ГАЛ ТОГОО</h1>
+    <h2>Захиалгын хуудас</h2>
+    <div class="meta">
+      <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
+      <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
+      <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
+      ${
+        sale.roomNumber
+          ? `<div class="row"><strong>Өрөө/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
+          : ""
+      }
+    </div>
+    <div class="items">
+      ${kitchenItems
+        .map(
+          (item) => `<div class="item">
+            <div class="item-main">
+              <span class="qty">${item.quantity}x</span>
+              <span class="name">${escapeHtml(item.name)}</span>
+            </div>
+          </div>`,
+        )
+        .join("")}
+    </div>
+    <div class="note">Гал тогоонд хэвлэв</div>
+    </div>`;
+}
+
+function receiptBody(sale: PrintableSale) {
+  return `<h1>DALAI EEJ</h1>
+    <h2>Төлбөрийн баримт</h2>
+    <div class="meta">
+      <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
+      <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
+      <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
+      <div class="row"><strong>Төлбөр</strong><span>${escapeHtml(sale.paymentLabel)}</span></div>
+      ${
+        sale.roomNumber
+          ? `<div class="row"><strong>Өрөө/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
+          : ""
+      }
+    </div>
+    <div class="items">
+      ${sale.items
+        .map(
+          (item) => `<div class="item">
+            <div class="item-main">
+              <span>${item.quantity}x</span>
+              <span class="name">${escapeHtml(item.name)}</span>
+              <span class="price">${formatNumber(item.price * item.quantity)}</span>
+            </div>
+          </div>`,
+        )
+        .join("")}
+    </div>
+    <div class="row total"><span>Нийт</span><span>${formatMNT(sale.total)}</span></div>
+    ${
+      sale.cashReceived
+        ? `<div class="row"><span>Авсан</span><strong>${formatMNT(sale.cashReceived)}</strong></div>
+           <div class="row"><span>Хариулт</span><strong>${formatMNT(sale.changeDue)}</strong></div>`
+        : ""
+    }
+    <div class="note">Баярлалаа</div>`;
+}
+
+function printReceipt(sale: PrintableSale) {
+  return printHtml("Баримт", receiptBody(sale));
+}
+
+function printReceiptAndKitchenSheet(sale: PrintableSale) {
+  const kitchenBody = kitchenSheetBody(sale);
+  if (!kitchenBody) return printReceipt(sale);
+
+  return printHtml(
+    "Баримт ба гал тогоо",
+    `${receiptBody(sale)}<div class="cut"></div>${kitchenBody}`,
+  );
+}
+
 function getQrImageSource(qrCode: string) {
   if (!qrCode) return "";
   if (qrCode.startsWith("data:")) return qrCode;
@@ -555,82 +640,6 @@ function buildChargeGroups(charges: UnpaidCharge[]) {
   );
 }
 
-function printKitchenSheet(sale: PrintableSale) {
-  const kitchenItems = getKitchenItems(sale);
-  if (kitchenItems.length === 0) return false;
-
-  return printHtml(
-    "Гал тогоо",
-    `<div class="kitchen">
-    <h1>ГАЛ ТОГОО</h1>
-    <h2>Захиалгын хуудас</h2>
-    <div class="meta">
-      <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
-      <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
-      <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
-      ${
-        sale.roomNumber
-          ? `<div class="row"><strong>Өрөө/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
-          : ""
-      }
-    </div>
-    <div class="items">
-      ${kitchenItems
-        .map(
-          (item) => `<div class="item">
-            <div class="item-main">
-              <span class="qty">${item.quantity}x</span>
-              <span class="name">${escapeHtml(item.name)}</span>
-            </div>
-          </div>`,
-        )
-        .join("")}
-    </div>
-    <div class="note">Гал тогоонд хэвлэв</div>
-    </div>`,
-  );
-}
-
-function printReceipt(sale: PrintableSale) {
-  return printHtml(
-    "Баримт",
-    `<h1>DALAI EEJ</h1>
-    <h2>Төлбөрийн баримт</h2>
-    <div class="meta">
-      <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
-      <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
-      <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
-      <div class="row"><strong>Төлбөр</strong><span>${escapeHtml(sale.paymentLabel)}</span></div>
-      ${
-        sale.roomNumber
-          ? `<div class="row"><strong>Өрөө/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
-          : ""
-      }
-    </div>
-    <div class="items">
-      ${sale.items
-        .map(
-          (item) => `<div class="item">
-            <div class="item-main">
-              <span>${item.quantity}x</span>
-              <span class="name">${escapeHtml(item.name)}</span>
-              <span class="price">${formatNumber(item.price * item.quantity)}</span>
-            </div>
-          </div>`,
-        )
-        .join("")}
-    </div>
-    <div class="row total"><span>Нийт</span><span>${formatMNT(sale.total)}</span></div>
-    ${
-      sale.cashReceived
-        ? `<div class="row"><span>Авсан</span><strong>${formatMNT(sale.cashReceived)}</strong></div>
-           <div class="row"><span>Хариулт</span><strong>${formatMNT(sale.changeDue)}</strong></div>`
-        : ""
-    }
-    <div class="note">Баярлалаа</div>`,
-  );
-}
-
 interface RegisterAppProps {
   businessDate: string;
 }
@@ -649,6 +658,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   );
   const [cashReceived, setCashReceived] = useState(0);
   const [cardTerminalApproved, setCardTerminalApproved] = useState(false);
+  const [customItemName, setCustomItemName] = useState("");
+  const [customItemAmount, setCustomItemAmount] = useState(0);
   const [roomNumber, setRoomNumber] = useState("");
   const [saleStatus, setSaleStatus] = useState<SaleStatus>("idle");
   const [saleMessage, setSaleMessage] = useState("");
@@ -1040,6 +1051,42 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         .map((line) => (line.id === id ? { ...line, quantity } : line))
         .filter((line) => line.quantity > 0),
     );
+  }
+
+  function setCustomAmountInput(value: string) {
+    const amount = Number(value.replace(/[^\d]/g, ""));
+    setCustomItemAmount(Number.isFinite(amount) ? amount : 0);
+  }
+
+  function addCustomAmountToCart() {
+    const amount = Math.round(customItemAmount);
+    if (amount <= 0) {
+      setSaleStatus("error");
+      setSaleMessage("Гараар нэмэх дүнгээ оруулна уу");
+      return;
+    }
+
+    setSaleStatus("idle");
+    setSaleMessage("");
+    setLastSale(null);
+    setCardTerminalApproved(false);
+    resetQPayPayment();
+
+    const name = customItemName.trim() || "Гараар нэмсэн төлбөр";
+    const id = `custom-${Date.now()}`;
+    setCart((current) => [
+      ...current,
+      {
+        id,
+        name,
+        price: amount,
+        category: "Үйлчилгээ",
+        quantity: 1,
+        staff: staffName,
+      },
+    ]);
+    setCustomItemName("");
+    setCustomItemAmount(0);
   }
 
   function selectPaymentMethod(method: PaymentMethodId) {
@@ -1801,7 +1848,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     <div className={`${styles.dayansoftPos} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
       <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-4 py-3">
         <div>
-          <h1 className="text-lg font-bold leading-tight">Dalai Eej Register</h1>
+          <h1 className="text-lg font-bold leading-tight">Dalai Eej POS</h1>
           <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
         </div>
 
@@ -1901,7 +1948,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
-        <section className="flex min-h-0 flex-col border-r border-[#d1d5db]">
+        <section className="flex min-h-[360px] flex-col border-r border-[#d1d5db] lg:min-h-0">
           {registerMode === "sale" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
@@ -1938,6 +1985,42 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_120px]">
+                  <label>
+                    <span className="sr-only">Гараар нэмэх нэр</span>
+                    <input
+                      value={customItemName}
+                      onChange={(event) => setCustomItemName(event.target.value)}
+                      type="text"
+                      placeholder="Гараар нэмэх: нэр / тайлбар"
+                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                    />
+                  </label>
+                  <label>
+                    <span className="sr-only">Гараар нэмэх дүн</span>
+                    <input
+                      value={
+                        customItemAmount ? formatNumber(customItemAmount) : ""
+                      }
+                      onChange={(event) =>
+                        setCustomAmountInput(event.target.value)
+                      }
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Дүн"
+                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-sm font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={addCustomAmountToCart}
+                    disabled={customItemAmount <= 0}
+                    className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-extrabold hover:bg-[#eef2ff] disabled:opacity-40"
+                  >
+                    Нэмэх
+                  </button>
                 </div>
               </div>
 
@@ -2382,22 +2465,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             )}
 
             {lastSale && (
-              <div className="mb-2 grid grid-cols-2 gap-1.5">
-                {getKitchenItems(lastSale).length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => printKitchenSheet(lastSale)}
-                    className="h-9 rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
-                  >
-                    Гал тогоо хэвлэх
-                  </button>
-                )}
+              <div className="mb-2">
                 <button
                   type="button"
-                  onClick={() => printReceipt(lastSale)}
-                  className="h-9 rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
+                  onClick={() => printReceiptAndKitchenSheet(lastSale)}
+                  className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
                 >
-                  Баримт хэвлэх
+                  {getKitchenItems(lastSale).length > 0
+                    ? "Баримт + гал тогоо хэвлэх"
+                    : "Баримт хэвлэх"}
                 </button>
               </div>
             )}

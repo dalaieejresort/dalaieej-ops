@@ -42,12 +42,6 @@ export function ActionModal({ onClose, onAction }: ActionModalProps) {
           <span>Dalai Eej POS</span>
         </div>
 
-        <div
-          className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden opacity-[0.04]"
-          aria-hidden
-        >
-          <span className="text-[120px] font-bold">dayansoft</span>
-        </div>
       </div>
     </div>
   );

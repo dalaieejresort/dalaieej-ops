@@ -29,8 +29,8 @@ export function PosHeader({
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
           <span className="text-lg text-[#f5a623]">▶</span>
-          <span className="text-lg font-semibold tracking-tight text-[#888]">
-            dayan<span className="text-[#aaa]">soft</span>
+          <span className="text-lg font-semibold tracking-tight text-[#ddd]">
+            Dalai Eej POS
           </span>
         </div>
         {view === "pos" ? (

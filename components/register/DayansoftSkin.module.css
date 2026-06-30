@@ -1,15 +1,17 @@
 .dayansoftPos {
-  --pos-orange: #e19b18;
-  --pos-orange-dark: #e19b18;
-  --pos-orange-soft: #ebcfb3;
+  --pos-header: #2b2b2b;
+  --pos-toolbar: #3a3a3a;
+  --pos-orange: #f5a623;
+  --pos-orange-dark: #d98b12;
+  --pos-orange-soft: #d4c4a8;
   --pos-purple: #940094;
-  --pos-blue: #1177d7;
-  --pos-blue-dark: #1177d7;
-  --pos-mid-blue: #1177d7;
-  --pos-sky: #9eceff;
-  --pos-border: #a9a9a9;
-  --pos-panel: #eeeef2;
-  --pos-window: #eeeef2;
+  --pos-blue: #3b9dd4;
+  --pos-blue-dark: #2d8fc8;
+  --pos-mid-blue: #3b9dd4;
+  --pos-sky: #b9e3ff;
+  --pos-border: #a7a7a7;
+  --pos-panel: #f1f1f1;
+  --pos-window: #e8e8e8;
   background: var(--pos-window) !important;
   color: #151515;
   font-family: Arial, var(--font-sans);
@@ -33,15 +35,27 @@
 
 .dayansoftPos :global(header) {
   min-height: 3.25rem;
-  background: var(--pos-orange) !important;
-  border-color: var(--pos-orange) !important;
-  color: #171717;
+  background: var(--pos-header) !important;
+  border-color: var(--pos-header) !important;
+  color: #f7f7f7;
 }
 
 .dayansoftPos :global(header h1),
+.dayansoftPos :global(header .text-\[\#111827\]) {
+  color: #fff !important;
+}
+
 .dayansoftPos :global(header p),
-.dayansoftPos :global(header .text-\[\#6b7280\]) {
-  color: #171717 !important;
+.dayansoftPos :global(header .text-\[\#6b7280\]),
+.dayansoftPos :global(header .text-\[\#374151\]) {
+  color: #c9c9c9 !important;
+}
+
+.dayansoftPos :global(header button),
+.dayansoftPos :global(header select) {
+  background: var(--pos-toolbar) !important;
+  border-color: #555 !important;
+  color: #f7f7f7 !important;
 }
 
 .dayansoftPos :global(main) {
@@ -138,7 +152,7 @@
   color: #fff !important;
 }
 
-.dayansoftPos :global(button[data-testid="product-tile"]) {
+.dayansoftPos :global([data-testid="product-tile"]) {
   height: 7rem !important;
   padding: 0.55rem !important;
   background: var(--pos-orange-soft) !important;
@@ -146,9 +160,20 @@
   color: #151515 !important;
 }
 
-.dayansoftPos :global(button[data-testid="product-tile"]:hover) {
+.dayansoftPos :global([data-testid="product-tile"]:hover) {
   background: var(--pos-orange-soft) !important;
   border-color: var(--pos-orange-soft) !important;
+}
+
+.dayansoftPos :global([data-testid="product-tile"] > button) {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: #151515 !important;
+}
+
+.dayansoftPos :global([data-testid="product-tile"] > button span) {
+  color: #151515 !important;
+  font-size: 0.9rem;
 }
 
 .dayansoftPos :global([data-testid="product-tile"] span:last-child span:last-child) {
@@ -203,8 +228,8 @@
 
 .dayansoftPos > :global(header),
 .dayansoftPos > :global(header.bg-white) {
-  background: var(--pos-orange) !important;
-  background-color: var(--pos-orange) !important;
+  background: var(--pos-header) !important;
+  background-color: var(--pos-header) !important;
   background-image: none !important;
-  border-color: var(--pos-orange) !important;
+  border-color: var(--pos-header) !important;
 }
