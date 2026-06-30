@@ -33,6 +33,14 @@ export const UNLIMITED_INVENTORY_CATEGORIES = new Set<string>([
   "Үйлчилгээ",
 ]);
 
+export const UNLIMITED_INVENTORY_SKUS = new Set<string>([
+  "INV-0188", // Hennessy Very Special (VS) Shot, 50мл
+]);
+
+function normalizeInventorySku(sku: unknown) {
+  return String(sku ?? "").trim().toLocaleUpperCase("en-US");
+}
+
 function normalizeInventoryCategory(category: unknown) {
   return String(category ?? "")
     .normalize("NFKC")
@@ -65,4 +73,8 @@ export function isUnlimitedInventoryCategory(category: unknown) {
     normalized.includes("үйлчилгээ") ||
     normalized.includes("service")
   );
+}
+
+export function isUnlimitedInventorySku(sku: unknown) {
+  return UNLIMITED_INVENTORY_SKUS.has(normalizeInventorySku(sku));
 }

@@ -1,7 +1,10 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
-import { isUnlimitedInventoryCategory } from '@/lib/pos/inventory';
+import {
+  isUnlimitedInventoryCategory,
+  isUnlimitedInventorySku,
+} from '@/lib/pos/inventory';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -284,7 +287,11 @@ export async function GET() {
 
     // Stock-tracked items need stock; food/menu items are made to order and stay sellable.
     const validProducts = products.filter(
-      p => p.sku && (p.stock > 0 || isUnlimitedInventoryCategory(p.category)),
+      p =>
+        p.sku &&
+        (p.stock > 0 ||
+          isUnlimitedInventoryCategory(p.category) ||
+          isUnlimitedInventorySku(p.sku)),
     );
 
     return NextResponse.json(validProducts);
@@ -326,7 +333,11 @@ export async function POST(request: Request) {
     const catalogRows = await catalogSheet.getRows();
     const unlimitedInventorySkus = new Set(
       catalogRows
-        .filter(row => isUnlimitedInventoryCategory(getFirstValue(row, CATALOG_COLUMNS.category)))
+        .filter(row => {
+          const sku = getFirstValue(row, CATALOG_COLUMNS.sku);
+          const category = getFirstValue(row, CATALOG_COLUMNS.category);
+          return isUnlimitedInventoryCategory(category) || isUnlimitedInventorySku(sku);
+        })
         .map(row => String(getFirstValue(row, CATALOG_COLUMNS.sku)).trim())
         .filter(Boolean),
     );
@@ -345,7 +356,11 @@ export async function POST(request: Request) {
 
     const inventoryItems = items.filter(item => {
       const sku = String(item.sku ?? '').trim();
-      return !isUnlimitedInventoryCategory(item.category) && !unlimitedInventorySkus.has(sku);
+      return (
+        !isUnlimitedInventoryCategory(item.category) &&
+        !isUnlimitedInventorySku(sku) &&
+        !unlimitedInventorySkus.has(sku)
+      );
     });
 
     // Map stock-tracked cart items to inventory ledger rows. Food stays in Sales_Log only.
