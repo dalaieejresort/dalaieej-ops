@@ -201,7 +201,7 @@ const CATEGORY_ACCENTS: Record<string, string> = {
 
 const PAYMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
-  { id: "card", label: "Карт/терминал" },
+  { id: "card", label: "Карт" },
   { id: "qpay", label: "QPay" },
   { id: "room", label: "Байшин/Зочин" },
 ] as const;
@@ -210,7 +210,7 @@ type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
 
 const SETTLEMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
-  { id: "card", label: "Карт/терминал" },
+  { id: "card", label: "Карт" },
   { id: "qpay", label: "QPay" },
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
