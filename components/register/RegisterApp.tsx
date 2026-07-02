@@ -857,9 +857,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, []);
 
-  const loadDayStatus = useCallback(async () => {
-    setDayStatus("loading");
-    setDayMessage("");
+  const loadDayStatus = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setDayStatus("loading");
+      setDayMessage("");
+    }
 
     try {
       const response = await fetch(
@@ -884,6 +887,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setDayItemTotals(data?.itemTotals ?? []);
       setDayStatus("ready");
     } catch (error) {
+      if (silent) return;
+
       setDaySession(null);
       setDayTotals(EMPTY_DAY_TOTALS);
       setDayItemTotals([]);
@@ -903,6 +908,27 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
     return () => window.clearTimeout(timer);
   }, [loadCatalog, loadDayStatus, loadUnpaidCharges]);
+
+  useEffect(() => {
+    const refreshDayStatus = () => {
+      void loadDayStatus({ silent: true });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshDayStatus();
+      }
+    };
+    const interval = window.setInterval(refreshDayStatus, 15000);
+
+    window.addEventListener("focus", refreshDayStatus);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshDayStatus);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadDayStatus]);
 
   useEffect(() => {
     const storedMode = window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
