@@ -216,17 +216,6 @@ const SETTLEMENT_METHODS = [
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
-const KITCHEN_CATEGORIES = new Set<ItemCategory>([
-  "food",
-  "dessert",
-  "Европ, Ази хоол",
-  "Хачир",
-  "Монгол хоол",
-  "Шөл",
-  "Цагаан хоол",
-  "Хүүхдийн хоол",
-  "Өдрийн онцлох хоол",
-]);
 const ROOM_NUMBERS = Array.from({ length: 18 }, (_, index) =>
   String(index + 1),
 );
@@ -524,21 +513,14 @@ function printHtml(title: string, body: string, reservedWindow?: Window | false)
   return true;
 }
 
-function getKitchenItems(sale: PrintableSale) {
-  return sale.items.filter((item) => KITCHEN_CATEGORIES.has(item.category));
-}
-
-function kitchenSheetBody(sale: PrintableSale) {
-  const kitchenItems = getKitchenItems(sale);
-  if (kitchenItems.length === 0) return "";
-
-  return `<div class="kitchen">
-    <h1>ГАЛ ТОГОО</h1>
-    <h2>Захиалгын хуудас</h2>
+function billBody(sale: PrintableSale) {
+  return `<h1>DALAI EEJ</h1>
+    <h2>Билл</h2>
     <div class="meta">
       <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
       <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
       <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
+      <div class="row"><strong>Төлөв</strong><span>${sale.isPaid ? "Төлөгдсөн" : "Төлбөр хүлээгдэж байна"}</span></div>
       ${
         sale.roomNumber
           ? `<div class="row"><strong>Байшин/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
@@ -546,19 +528,20 @@ function kitchenSheetBody(sale: PrintableSale) {
       }
     </div>
     <div class="items">
-      ${kitchenItems
+      ${sale.items
         .map(
           (item) => `<div class="item">
             <div class="item-main">
-              <span class="qty">${item.quantity}x</span>
+              <span>${item.quantity}x</span>
               <span class="name">${escapeHtml(item.name)}</span>
+              <span class="price">${formatNumber(item.price * item.quantity)}</span>
             </div>
           </div>`,
         )
         .join("")}
     </div>
-    <div class="note">Гал тогоонд хэвлэв</div>
-    </div>`;
+    <div class="row total"><span>Нийт</span><span>${formatMNT(sale.total)}</span></div>
+    <div class="note">Билл</div>`;
 }
 
 function receiptBody(sale: PrintableSale) {
@@ -602,11 +585,8 @@ function printReceipt(sale: PrintableSale, reservedWindow?: Window | false) {
   return printHtml("Баримт", receiptBody(sale), reservedWindow);
 }
 
-function printKitchenSheet(sale: PrintableSale) {
-  const kitchenBody = kitchenSheetBody(sale);
-  if (!kitchenBody) return false;
-
-  return printHtml("Захиалгын хуудас", kitchenBody);
+function printBill(sale: PrintableSale) {
+  return printHtml("Билл", billBody(sale));
 }
 
 function getSettlementPaymentLabel(lines: SettlementPaymentLine[]) {
@@ -1123,9 +1103,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     : settlementRemaining === 0
       ? "Төлбөр хаах"
       : "Хэсэгчилсэн төлбөр бичих";
-  const lastSaleKitchenItemCount = lastSale ? getKitchenItems(lastSale).length : 0;
-  const canPrintLastSaleKitchenSheet = lastSaleKitchenItemCount > 0;
-
   function addToCart(item: CatalogItem, priceMode: PriceMode = getDefaultPriceMode(item)) {
     setSaleStatus("idle");
     setSaleMessage("");
@@ -1972,7 +1949,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         void loadUnpaidCharges();
       }
       void loadDayStatus();
-      const kitchenItems = getKitchenItems(completedSale);
       setSaleMessage(
         [
           `${formatMNT(cartTotal)} хадгаллаа`,
@@ -1981,9 +1957,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               ? "Баримт автоматаар хэвлэгдэж байна"
               : "Баримтын цонх нээгдсэнгүй"
             : "",
-          kitchenItems.length > 0
-            ? "Захиалгын хуудсыг хэвлэх товчоор гаргана уу"
-            : "",
+          "Билл хэвлэх товчоор гаргана уу",
         ]
           .filter(Boolean)
           .join(" · "),
@@ -2619,17 +2593,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               </div>
             )}
 
-            {lastSale && (canPrintLastSaleKitchenSheet || lastSale.isPaid) && (
+            {lastSale && (
               <div className="mb-2 grid gap-2">
-                {canPrintLastSaleKitchenSheet && (
-                  <button
-                    type="button"
-                    onClick={() => printKitchenSheet(lastSale)}
-                    className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
-                  >
-                    Захиалгын хуудас хэвлэх
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => printBill(lastSale)}
+                  className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
+                >
+                  Билл хэвлэх
+                </button>
                 {lastSale.isPaid && (
                   <button
                     type="button"
