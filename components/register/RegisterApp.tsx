@@ -143,6 +143,7 @@ type PrintableSale = {
   createdAt: Date;
   items: RegisterCartLine[];
   total: number;
+  isPaid: boolean;
   paymentLabel: string;
   staffName: string;
   roomNumber: string;
@@ -499,10 +500,23 @@ function printablePage(title: string, body: string) {
 </html>`;
 }
 
-function printHtml(title: string, body: string) {
+function openPrintWindow() {
   const printWindow = window.open("", "_blank", "width=420,height=720");
   if (!printWindow) return false;
 
+  return printWindow;
+}
+
+function closePrintWindow(printWindow: Window | false) {
+  if (!printWindow || printWindow.closed) return;
+  printWindow.close();
+}
+
+function printHtml(title: string, body: string, reservedWindow?: Window | false) {
+  const printWindow = reservedWindow ?? openPrintWindow();
+  if (!printWindow) return false;
+
+  printWindow.document.open();
   printWindow.document.write(printablePage(title, body));
   printWindow.document.close();
   printWindow.focus();
@@ -584,18 +598,84 @@ function receiptBody(sale: PrintableSale) {
     <div class="note">Баярлалаа</div>`;
 }
 
-function printReceipt(sale: PrintableSale) {
-  return printHtml("Баримт", receiptBody(sale));
+function printReceipt(sale: PrintableSale, reservedWindow?: Window | false) {
+  return printHtml("Баримт", receiptBody(sale), reservedWindow);
 }
 
-function printReceiptAndKitchenSheet(sale: PrintableSale) {
+function printKitchenSheet(sale: PrintableSale) {
   const kitchenBody = kitchenSheetBody(sale);
-  if (!kitchenBody) return printReceipt(sale);
+  if (!kitchenBody) return false;
 
-  return printHtml(
-    "Баримт ба гал тогоо",
-    `${receiptBody(sale)}<div class="cut"></div>${kitchenBody}`,
-  );
+  return printHtml("Захиалгын хуудас", kitchenBody);
+}
+
+function getSettlementPaymentLabel(lines: SettlementPaymentLine[]) {
+  return lines
+    .map((line) => {
+      const invoice = line.qpayInvoiceId ? ` ${line.qpayInvoiceId}` : "";
+      return `${line.methodLabel}${invoice} ${formatNumber(line.amount)}`;
+    })
+    .join(" + ");
+}
+
+function buildSettlementReceiptSale(
+  charges: UnpaidCharge[],
+  paymentsByTransaction: Map<string, Array<{ amount: number }>>,
+  lines: SettlementPaymentLine[],
+  staffName: string,
+  roomLabel: string,
+): PrintableSale {
+  const total = lines.reduce((sum, line) => sum + line.amount, 0);
+  const items = charges.flatMap((charge): RegisterCartLine[] => {
+    const paidAmount = (
+      paymentsByTransaction.get(charge.transactionId) ?? []
+    ).reduce((sum, payment) => sum + payment.amount, 0);
+
+    if (paidAmount <= 0) return [];
+
+    return [
+      {
+        id: charge.transactionId,
+        sku: charge.transactionId,
+        name: charge.itemSummary || charge.transactionId,
+        price: paidAmount,
+        category: "Үйлчилгээ",
+        quantity: 1,
+        staff: staffName,
+      },
+    ];
+  });
+  const singleCashLine =
+    lines.length === 1 && lines[0].method === "cash" ? lines[0] : null;
+
+  return {
+    id: `PAY-${Date.now().toString().slice(-6)}`,
+    createdAt: new Date(),
+    items:
+      items.length > 0
+        ? items
+        : [
+            {
+              id: "settlement",
+              name: "Өр төлбөр",
+              price: total,
+              category: "Үйлчилгээ",
+              quantity: 1,
+              staff: staffName,
+            },
+          ],
+    total,
+    isPaid: true,
+    paymentLabel: getSettlementPaymentLabel(lines),
+    staffName,
+    roomNumber: roomLabel,
+    cashReceived: singleCashLine?.cashReceived ?? 0,
+    changeDue: singleCashLine?.changeDue ?? 0,
+    qpayInvoiceId: lines
+      .map((line) => line.qpayInvoiceId)
+      .filter(Boolean)
+      .join(", "),
+  };
 }
 
 function getQrImageSource(qrCode: string) {
@@ -1017,6 +1097,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     : settlementRemaining === 0
       ? "Төлбөр хаах"
       : "Хэсэгчилсэн төлбөр бичих";
+  const lastSaleKitchenItemCount = lastSale ? getKitchenItems(lastSale).length : 0;
+  const canPrintLastSaleKitchenSheet = lastSaleKitchenItemCount > 0;
 
   function addToCart(item: CatalogItem, priceMode: PriceMode = getDefaultPriceMode(item)) {
     setSaleStatus("idle");
@@ -1551,6 +1633,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     if (selectedCharges.length === 0 || settlementStatus === "saving") return;
     if (settlementLines.length === 0) return;
 
+    const receiptWindow = openPrintWindow();
     setSettlementStatus("saving");
     setSettlementMessage("");
 
@@ -1598,6 +1681,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         throw new Error("Төлбөр бичих сонгосон мөр алга байна");
       }
 
+      const settlementReceipt = buildSettlementReceiptSale(
+        selectedCharges,
+        paymentsByTransaction,
+        settlementLines,
+        staffName,
+        selectedChargeGroup?.label ?? selectedCharges[0]?.roomOrGuest ?? "",
+      );
+
       for (const [transactionId, payments] of paymentsByTransaction) {
         const response = await fetch("/api/sales", {
           method: "PATCH",
@@ -1617,16 +1708,23 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         }
       }
 
+      const receiptPrinted = printReceipt(settlementReceipt, receiptWindow);
       setSettlementStatus("success");
       setSettlementMessage(
-        settlementRemaining === 0
-          ? `${selectedChargeGroup?.label ?? "Өр"} төлбөр хаагдлаа`
-          : `${selectedChargeGroup?.label ?? "Өр"} хэсэгчилсэн төлбөр бичигдлээ`,
+        [
+          settlementRemaining === 0
+            ? `${selectedChargeGroup?.label ?? "Өр"} төлбөр хаагдлаа`
+            : `${selectedChargeGroup?.label ?? "Өр"} хэсэгчилсэн төлбөр бичигдлээ`,
+          receiptPrinted
+            ? "Баримт автоматаар хэвлэгдэж байна"
+            : "Баримтын цонх нээгдсэнгүй",
+        ].join(" · "),
       );
       setSettlementLines([]);
       resetSettlementDraft();
       await loadUnpaidCharges();
     } catch (error) {
+      closePrintWindow(receiptWindow);
       setSettlementStatus("error");
       setSettlementMessage(
         error instanceof Error ? error.message : "Өр төлбөр хааж чадсангүй",
@@ -1783,6 +1881,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return;
     }
 
+    const shouldAutoPrintReceipt = !roomRequired;
+    const receiptWindow = shouldAutoPrintReceipt ? openPrintWindow() : false;
+
     setSaleStatus("saving");
     setSaleMessage("");
     const nextSaleSequence = saleSequence + 1;
@@ -1791,6 +1892,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       createdAt: new Date(),
       items: cart,
       total: cartTotal,
+      isPaid: !roomRequired,
       paymentLabel: getPaymentLogLabel(),
       staffName,
       roomNumber: roomRequired ? roomNumber.trim() : "",
@@ -1836,6 +1938,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       resetQPayPayment();
       setLastSale(completedSale);
       setSaleSequence(nextSaleSequence);
+      const receiptPrinted = shouldAutoPrintReceipt
+        ? printReceipt(completedSale, receiptWindow)
+        : false;
       setSaleStatus("success");
       if (roomRequired) {
         void loadUnpaidCharges();
@@ -1843,13 +1948,22 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       void loadDayStatus();
       const kitchenItems = getKitchenItems(completedSale);
       setSaleMessage(
-        `${formatMNT(cartTotal)} хадгаллаа${
+        [
+          `${formatMNT(cartTotal)} хадгаллаа`,
+          shouldAutoPrintReceipt
+            ? receiptPrinted
+              ? "Баримт автоматаар хэвлэгдэж байна"
+              : "Баримтын цонх нээгдсэнгүй"
+            : "",
           kitchenItems.length > 0
-            ? " · Гал тогооны хуудсыг хэвлэх товчоор гаргана уу"
-            : ""
-        }`,
+            ? "Захиалгын хуудсыг хэвлэх товчоор гаргана уу"
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
       );
     } catch (error) {
+      closePrintWindow(receiptWindow);
       setSaleStatus("error");
       setSaleMessage(
         error instanceof Error
@@ -2479,17 +2593,26 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               </div>
             )}
 
-            {lastSale && (
-              <div className="mb-2">
-                <button
-                  type="button"
-                  onClick={() => printReceiptAndKitchenSheet(lastSale)}
-                  className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
-                >
-                  {getKitchenItems(lastSale).length > 0
-                    ? "Баримт + гал тогоо хэвлэх"
-                    : "Баримт хэвлэх"}
-                </button>
+            {lastSale && (canPrintLastSaleKitchenSheet || lastSale.isPaid) && (
+              <div className="mb-2 grid gap-2">
+                {canPrintLastSaleKitchenSheet && (
+                  <button
+                    type="button"
+                    onClick={() => printKitchenSheet(lastSale)}
+                    className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
+                  >
+                    Захиалгын хуудас хэвлэх
+                  </button>
+                )}
+                {lastSale.isPaid && (
+                  <button
+                    type="button"
+                    onClick={() => printReceipt(lastSale)}
+                    className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
+                  >
+                    Баримт дахин хэвлэх
+                  </button>
+                )}
               </div>
             )}
 
