@@ -85,11 +85,15 @@ type RecentSale = {
   total: number;
   paidAmount: number;
   refundableAmount: number;
+  itemCount?: number;
   itemSummary: string;
+  qpayInvoiceId?: string;
+  cashReceived?: number;
+  changeDue?: number;
   notes: string;
 };
 
-type RegisterMode = "sale" | "charges";
+type RegisterMode = "sale" | "charges" | "history";
 type SettlementMethod = "cash" | "card" | "qpay";
 type SettlementStatus = "idle" | "saving" | "success" | "error";
 
@@ -97,7 +101,7 @@ const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
 
 function isRegisterMode(value: string | null): value is RegisterMode {
-  return value === "sale" || value === "charges";
+  return value === "sale" || value === "charges" || value === "history";
 }
 
 type SettlementPaymentLine = {
@@ -795,6 +799,36 @@ function buildSettlementReceiptSale(
   };
 }
 
+function parseSaleTimestamp(timestamp: string) {
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
+  return {
+    id: sale.transactionId,
+    createdAt: parseSaleTimestamp(sale.timestamp),
+    items: [
+      {
+        id: sale.transactionId,
+        name: sale.itemSummary || sale.transactionId,
+        price: sale.total,
+        category: "Үйлчилгээ",
+        quantity: 1,
+        staff: sale.staff,
+      },
+    ],
+    total: sale.total,
+    isPaid: true,
+    paymentLabel: sale.paymentMethod,
+    staffName: sale.staff,
+    roomNumber: sale.roomOrGuest,
+    cashReceived: sale.cashReceived ?? 0,
+    changeDue: sale.changeDue ?? 0,
+    qpayInvoiceId: sale.qpayInvoiceId ?? "",
+  };
+}
+
 function getQrImageSource(qrCode: string) {
   if (!qrCode) return "";
   if (qrCode.startsWith("data:")) return qrCode;
@@ -890,6 +924,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [voidReason, setVoidReason] = useState("");
   const [voidRefundMethod, setVoidRefundMethod] = useState("Бэлэн");
   const [registerMode, setRegisterMode] = useState<RegisterMode>("sale");
+  const [historySales, setHistorySales] = useState<RecentSale[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<CatalogStatus>("loading");
+  const [historyMessage, setHistoryMessage] = useState("");
+  const [selectedHistoryTransactionId, setSelectedHistoryTransactionId] =
+    useState("");
   const [unpaidCharges, setUnpaidCharges] = useState<UnpaidCharge[]>([]);
   const [chargesStatus, setChargesStatus] = useState<CatalogStatus>("loading");
   const [chargesMessage, setChargesMessage] = useState("");
@@ -974,6 +1013,41 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, []);
 
+  const loadSalesHistory = useCallback(async () => {
+    setHistoryStatus("loading");
+    setHistoryMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/sales?businessDate=${encodeURIComponent(businessDate)}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json().catch(() => null)) as
+        | { history?: RecentSale[]; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Төлөгдсөн түүх авч чадсангүй");
+      }
+
+      const history = Array.isArray(data?.history) ? data.history : [];
+      setHistorySales(history);
+      setSelectedHistoryTransactionId((current) =>
+        history.some((sale) => sale.transactionId === current)
+          ? current
+          : history[0]?.transactionId ?? "",
+      );
+      setHistoryStatus("ready");
+    } catch (error) {
+      setHistorySales([]);
+      setSelectedHistoryTransactionId("");
+      setHistoryStatus("sample");
+      setHistoryMessage(
+        error instanceof Error ? error.message : "Төлөгдсөн түүх авч чадсангүй",
+      );
+    }
+  }, [businessDate]);
+
   const loadDayStatus = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
     if (!silent) {
@@ -1020,11 +1094,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     const timer = window.setTimeout(() => {
       void loadCatalog();
       void loadUnpaidCharges();
+      void loadSalesHistory();
       void loadDayStatus();
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [loadCatalog, loadDayStatus, loadUnpaidCharges]);
+  }, [loadCatalog, loadDayStatus, loadSalesHistory, loadUnpaidCharges]);
 
   useEffect(() => {
     const refreshDayStatus = () => {
@@ -1058,6 +1133,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         setRegisterMode(storedMode);
         if (storedMode === "charges") {
           void loadUnpaidCharges();
+        } else if (storedMode === "history") {
+          void loadSalesHistory();
         }
       }
       if (storedCategory) {
@@ -1067,7 +1144,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }, 0);
 
     return () => window.clearTimeout(readyTimer);
-  }, [loadUnpaidCharges]);
+  }, [loadSalesHistory, loadUnpaidCharges]);
 
   useEffect(() => {
     if (!uiPreferencesLoadedRef.current) return;
@@ -1151,6 +1228,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (!dayCloseHasVariance || dayNotes.trim().length > 0);
   const selectedVoidSale =
     recentSales.find((sale) => sale.transactionId === selectedVoidTransactionId) ??
+    null;
+  const selectedHistorySale =
+    historySales.find((sale) => sale.transactionId === selectedHistoryTransactionId) ??
     null;
   const canSubmitVoid =
     voidStatus !== "saving" &&
@@ -1517,6 +1597,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         loadVoidableSales(),
         loadDayStatus(),
         loadUnpaidCharges(),
+        loadSalesHistory(),
       ]);
       setVoidStatus("success");
       setVoidMessage(
@@ -1542,6 +1623,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMessage("");
     if (mode === "charges") {
       void loadUnpaidCharges();
+    } else if (mode === "history") {
+      void loadSalesHistory();
     }
   }
 
@@ -1862,7 +1945,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       );
       setSettlementLines([]);
       resetSettlementDraft();
-      await loadUnpaidCharges();
+      await Promise.all([loadUnpaidCharges(), loadSalesHistory()]);
     } catch (error) {
       closePrintWindow(receiptWindow);
       setSettlementStatus("error");
@@ -2119,6 +2202,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       if (roomRequired) {
         void loadUnpaidCharges();
       }
+      void loadSalesHistory();
       void loadDayStatus();
       setSaleMessage(
         [
@@ -2181,6 +2265,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             Өр
             {unpaidCharges.length > 0 ? ` (${unpaidCharges.length})` : ""}
           </button>
+          <button
+            type="button"
+            onClick={() => selectRegisterMode("history")}
+            className={`h-9 rounded px-3 text-sm font-extrabold ${
+              registerMode === "history"
+                ? "bg-[#111827] text-white"
+                : "text-[#374151] hover:bg-white"
+            }`}
+          >
+            Түүх
+            {historySales.length > 0 ? ` (${historySales.length})` : ""}
+          </button>
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -2236,6 +2332,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             onClick={() => {
               void loadCatalog();
               void loadUnpaidCharges();
+              void loadSalesHistory();
               void loadDayStatus();
             }}
             className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
@@ -2393,7 +2490,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 )}
               </div>
             </>
-          ) : (
+          ) : registerMode === "charges" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -2475,6 +2572,85 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             .map((charge) => charge.transactionId)
                             .slice(0, 3)
                             .join(", ")}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-black">Төлөгдсөн түүх</h2>
+                    <p className="text-xs font-semibold text-[#6b7280]">
+                      Өнөөдрийн төлбөр хийгдсэн борлуулалт, баримт дахин хэвлэх
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadSalesHistory()}
+                    className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold hover:bg-[#f8fafc]"
+                  >
+                    Шинэчлэх
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {historyStatus === "loading" ? (
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-28 rounded-md border border-[#e5e7eb] bg-white"
+                      />
+                    ))}
+                  </div>
+                ) : historyMessage ? (
+                  <div className="rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-bold text-[#92400e]">
+                    {historyMessage}
+                  </div>
+                ) : historySales.length === 0 ? (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Өнөөдөр төлөгдсөн борлуулалт алга.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {historySales.map((sale) => (
+                      <button
+                        key={sale.transactionId}
+                        type="button"
+                        onClick={() =>
+                          setSelectedHistoryTransactionId(sale.transactionId)
+                        }
+                        className={`rounded-md border bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow ${
+                          selectedHistoryTransactionId === sale.transactionId
+                            ? "border-[#111827] ring-2 ring-[#111827]"
+                            : "border-[#d1d5db]"
+                        }`}
+                      >
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-words text-base font-black">
+                              {sale.transactionId}
+                            </p>
+                            <p className="text-xs font-semibold text-[#6b7280]">
+                              {sale.timestamp} · {sale.staff}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-lg font-black text-[#047857]">
+                            {formatMNT(sale.total)}
+                          </span>
+                        </div>
+                        <p className="break-words text-sm font-semibold text-[#374151]">
+                          {sale.itemSummary || sale.paymentMethod}
+                        </p>
+                        <p className="mt-2 text-xs font-bold text-[#6b7280]">
+                          {sale.paymentMethod} · Төлсөн {formatMNT(sale.paidAmount)}
+                          {sale.roomOrGuest ? ` · ${sale.roomOrGuest}` : ""}
                         </p>
                       </button>
                     ))}
@@ -2811,7 +2987,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             </button>
           </div>
             </>
-          ) : (
+          ) : registerMode === "charges" ? (
             <>
               <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
                 <h2 className="text-base font-bold">Өр хаах</h2>
@@ -3262,6 +3438,117 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     </button>
                   </>
                 )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
+                <h2 className="text-base font-bold">Түүх дэлгэрэнгүй</h2>
+                <button
+                  type="button"
+                  onClick={() => void loadSalesHistory()}
+                  className="rounded-md border border-[#cbd5e1] px-3 py-1.5 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc]"
+                >
+                  Шинэчлэх
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {!selectedHistorySale ? (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Төлөгдсөн борлуулалт сонгоно уу.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
+                      <p className="break-words text-lg font-black">
+                        {selectedHistorySale.transactionId}
+                      </p>
+                      <p className="mt-1 break-words text-xs font-bold text-[#6b7280]">
+                        {selectedHistorySale.timestamp} ·{" "}
+                        {selectedHistorySale.staff || "Staff"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                      <div className="flex items-end justify-between gap-3">
+                        <span className="text-sm font-semibold text-[#6b7280]">
+                          Нийт төлсөн
+                        </span>
+                        <span className="text-3xl font-black tracking-normal">
+                          {formatMNT(selectedHistorySale.paidAmount)}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <p className="text-xs font-bold text-[#6b7280]">
+                            Борлуулалтын дүн
+                          </p>
+                          <p className="font-black">
+                            {formatMNT(selectedHistorySale.total)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-[#6b7280]">
+                            Бараа
+                          </p>
+                          <p className="font-black">
+                            {selectedHistorySale.itemCount ?? 1}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                      <p className="text-xs font-bold text-[#6b7280]">
+                        Төлбөрийн хэлбэр
+                      </p>
+                      <p className="mt-1 break-words text-sm font-black">
+                        {selectedHistorySale.paymentMethod || "Төлсөн"}
+                      </p>
+                      {selectedHistorySale.qpayInvoiceId && (
+                        <p className="mt-2 break-words text-xs font-bold text-[#6b7280]">
+                          QPay: {selectedHistorySale.qpayInvoiceId}
+                        </p>
+                      )}
+                      {selectedHistorySale.roomOrGuest && (
+                        <p className="mt-2 break-words text-xs font-bold text-[#6b7280]">
+                          Байшин / зочин: {selectedHistorySale.roomOrGuest}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                      <p className="text-xs font-bold text-[#6b7280]">
+                        Борлуулалт
+                      </p>
+                      <p className="mt-1 break-words text-sm font-black">
+                        {selectedHistorySale.itemSummary ||
+                          selectedHistorySale.transactionId}
+                      </p>
+                      {selectedHistorySale.notes && (
+                        <p className="mt-2 break-words text-xs font-bold text-[#6b7280]">
+                          {selectedHistorySale.notes}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 border-t border-[#d1d5db] p-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedHistorySale) {
+                      printReceipt(buildHistoryReceiptSale(selectedHistorySale));
+                    }
+                  }}
+                  disabled={!selectedHistorySale}
+                  className="h-14 w-full rounded-md bg-[#047857] text-base font-black text-white hover:bg-[#065f46] disabled:bg-[#9ca3af]"
+                >
+                  Баримт дахин хэвлэх
+                </button>
               </div>
             </>
           )}

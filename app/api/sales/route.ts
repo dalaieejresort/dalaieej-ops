@@ -154,6 +154,68 @@ function getPaymentTotals(rows: Array<{ get: (columnName: string) => unknown }>)
   return totals;
 }
 
+function getPaymentSummaries(rows: Array<{ get: (columnName: string) => unknown }>) {
+  const summaries = new Map<string, string[]>();
+
+  for (const row of rows) {
+    const transactionId = getCell(row, 'transaction_id');
+    if (!transactionId) continue;
+
+    const amount = toNumber(row.get('amount'));
+    if (amount <= 0) continue;
+
+    const method = getCell(row, 'payment_method') || 'Төлбөр';
+    const current = summaries.get(transactionId) ?? [];
+    current.push(`${method} ${amount}`);
+    summaries.set(transactionId, current);
+  }
+
+  return new Map(
+    Array.from(summaries.entries()).map(([transactionId, labels]) => [
+      transactionId,
+      labels.join(' + '),
+    ]),
+  );
+}
+
+function normalizeBusinessDate(value: unknown) {
+  const text = String(value ?? '').trim();
+  if (text) return text;
+
+  return new Intl.DateTimeFormat('mn-MN', {
+    timeZone: 'Asia/Ulaanbaatar',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(new Date())
+    .replace(/\//g, '.');
+}
+
+function businessDateFromTimestamp(value: unknown) {
+  const timestamp = String(value ?? '').trim();
+  const match = timestamp.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+
+  if (match) {
+    const [, month, day, year] = match;
+    return `${year}.${month.padStart(2, '0')}.${day.padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(timestamp);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Intl.DateTimeFormat('mn-MN', {
+      timeZone: 'Asia/Ulaanbaatar',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .format(parsed)
+      .replace(/\//g, '.');
+  }
+
+  return '';
+}
+
 function createPaymentId() {
   return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 }
@@ -196,8 +258,10 @@ function salesErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
     const doc = await loadSpreadsheet();
     const salesLogSheet = await getOrCreateSalesLogSheet(doc);
     const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
@@ -206,6 +270,7 @@ export async function GET() {
       paymentsLogSheet.getRows(),
     ]);
     const paymentTotals = getPaymentTotals(paymentRows);
+    const paymentSummaries = getPaymentSummaries(paymentRows);
     const unpaidCharges = salesRows
       .filter(row => getCell(row, 'paid_status').toLowerCase() === 'unpaid')
       .map(row => {
@@ -234,12 +299,46 @@ export async function GET() {
       })
       .filter(charge => charge.balance > 0)
       .filter(charge => charge.transactionId);
+    const history = salesRows
+      .filter(row => businessDateFromTimestamp(row.get('timestamp')) === businessDate)
+      .map(row => {
+        const transactionId = getCell(row, 'transaction_id');
+        const total = toNumber(row.get('total'));
+        const recordedPaidAmount = paymentTotals.get(transactionId) ?? 0;
+        const paidStatus = getCell(row, 'paid_status').toLowerCase();
+        const effectivePaidStatus =
+          recordedPaidAmount >= total && paidStatus !== 'voided' ? 'paid' : paidStatus;
+        const paidAmount =
+          effectivePaidStatus === 'paid' && recordedPaidAmount <= 0 ? total : recordedPaidAmount;
 
-    return NextResponse.json({ charges: unpaidCharges });
+        return {
+          transactionId,
+          timestamp: getCell(row, 'timestamp'),
+          staff: getCell(row, 'staff'),
+          paymentMethod: paymentSummaries.get(transactionId) || getCell(row, 'payment_method'),
+          paidStatus: effectivePaidStatus,
+          roomOrGuest: getCell(row, 'room_or_guest'),
+          total,
+          paidAmount,
+          refundableAmount: Math.max(paidAmount, 0),
+          itemCount: toNumber(row.get('item_count')),
+          itemSummary: getCell(row, 'item_summary'),
+          qpayInvoiceId: getCell(row, 'qpay_invoice_id'),
+          cashReceived: toNumber(row.get('cash_received')),
+          changeDue: toNumber(row.get('change_due')),
+          notes: getCell(row, 'notes'),
+        };
+      })
+      .filter(sale => sale.transactionId)
+      .filter(sale => sale.paidStatus === 'paid' && sale.total > 0)
+      .reverse()
+      .slice(0, 50);
+
+    return NextResponse.json({ charges: unpaidCharges, history });
   } catch (error) {
     console.error(`Sales GET Error: ${error instanceof Error ? error.message : String(error)}`);
     return NextResponse.json(
-      { error: salesErrorMessage(error, 'Failed to fetch unpaid sales') },
+      { error: salesErrorMessage(error, 'Failed to fetch sales') },
       { status: 500 },
     );
   }
