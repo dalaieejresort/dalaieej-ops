@@ -529,6 +529,18 @@ const KITCHEN_TICKET_KEYWORDS = [
   "salad",
   "амттан",
   "dessert",
+  "тараг",
+  "yogurt",
+  "бялуу",
+  "cake",
+  "чизкейк",
+  "cheesecake",
+  "тирамису",
+  "tiramisu",
+  "панакота",
+  "panna cotta",
+  "пирог",
+  "pie",
   "пицца",
   "пизза",
   "pizza",
@@ -550,12 +562,35 @@ const KITCHEN_TICKET_KEYWORDS = [
   "hot wine",
   "mulled wine",
   "глинтвейн",
+  "аарц",
+  "халуун шоколад",
+  "hot chocolate",
+  "какао",
   "хачир",
   "монгол",
   "европ",
   "ази",
   "сет",
   "set",
+];
+
+const BAR_TICKET_KEYWORDS = [
+  "чацаргана",
+  "sea buckthorn",
+  "зайрмаг",
+  "ice cream",
+  "мороженое",
+  "печень",
+  "жигнэмэг",
+  "cookie",
+  "cookies",
+  "biscuit",
+  "вафли",
+  "wafer",
+  "чихэр",
+  "candy",
+  "packaged sweet",
+  "packaged sweets",
 ];
 
 function normalizeTicketText(value: unknown) {
@@ -572,6 +607,10 @@ function normalizeTicketText(value: unknown) {
 
 function isKitchenTicketItem(item: RegisterCartLine) {
   const searchableText = `${normalizeTicketText(item.category)} ${normalizeTicketText(item.name)}`;
+  if (BAR_TICKET_KEYWORDS.some((keyword) => searchableText.includes(keyword))) {
+    return false;
+  }
+
   return KITCHEN_TICKET_KEYWORDS.some((keyword) =>
     searchableText.includes(keyword),
   );
