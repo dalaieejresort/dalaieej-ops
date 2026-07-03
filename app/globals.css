@@ -8,13 +8,13 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: Arial, "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
   background: #e8e8e8;
   color: #222;
-  font-family: var(--font-sans);
+  font-family: Arial, "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
   touch-action: manipulation;
