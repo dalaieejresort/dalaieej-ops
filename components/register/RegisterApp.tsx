@@ -1854,6 +1854,36 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     return `${selectedPayment.label} төлсөн ${formatNumber(cashReceived)}, хариулт ${formatNumber(changeDue)}`;
   }
 
+  function buildCurrentBillSale(): PrintableSale {
+    return {
+      id: `BILL-${(saleSequence + 1).toString().padStart(4, "0")}`,
+      createdAt: new Date(),
+      items: cart,
+      total: cartTotal,
+      isPaid: false,
+      paymentLabel: "Төлбөр хүлээгдэж байна",
+      staffName,
+      roomNumber: roomNumber.trim(),
+      cashReceived: 0,
+      changeDue: 0,
+      qpayInvoiceId: qpayInvoice?.invoiceId ?? "",
+    };
+  }
+
+  function printCurrentBill() {
+    if (cart.length === 0) return;
+
+    const printed = printBill(buildCurrentBillSale());
+    if (!printed) {
+      setSaleStatus("error");
+      setSaleMessage("Биллийн цонх нээгдсэнгүй");
+      return;
+    }
+
+    setSaleStatus("success");
+    setSaleMessage("Билл хэвлэж байна");
+  }
+
   async function completeSale() {
     if (cart.length === 0 || saleStatus === "saving") return;
     if (!dayOpen) {
@@ -2399,11 +2429,21 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           </div>
 
           <div className="shrink-0 border-t border-[#d1d5db] p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <span className="text-xs font-semibold text-[#6b7280]">Нийт</span>
-              <span className="text-2xl font-black tracking-normal">
-                {formatMNT(cartTotal)}
-              </span>
+            <div className="mb-2 grid grid-cols-[minmax(0,1fr)_130px] items-center gap-2">
+              <div className="min-w-0">
+                <span className="text-xs font-semibold text-[#6b7280]">Нийт</span>
+                <div className="truncate text-2xl font-black tracking-normal">
+                  {formatMNT(cartTotal)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={printCurrentBill}
+                disabled={cart.length === 0}
+                className="h-11 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-extrabold text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
+              >
+                Билл хэвлэх
+              </button>
             </div>
 
             <div className="mb-2 grid grid-cols-4 gap-1.5">
