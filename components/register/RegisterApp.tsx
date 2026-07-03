@@ -456,13 +456,20 @@ function printablePage(title: string, body: string) {
         font-size: 15px;
         font-weight: 900;
       }
-      .kitchen .item-main {
+      .prep-ticket + .prep-ticket {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px dashed #000;
+        break-before: page;
+        page-break-before: always;
+      }
+      .prep-ticket .item-main {
         grid-template-columns: 46px minmax(0, 1fr);
       }
-      .kitchen .qty {
+      .prep-ticket .qty {
         font-size: 24px;
       }
-      .kitchen .name {
+      .prep-ticket .name {
         font-size: 16px;
         font-weight: 900;
       }
@@ -513,9 +520,87 @@ function printHtml(title: string, body: string, reservedWindow?: Window | false)
   return true;
 }
 
-function billBody(sale: PrintableSale) {
-  return `<h1>DALAI EEJ</h1>
-    <h2>Билл</h2>
+const KITCHEN_TICKET_KEYWORDS = [
+  "food",
+  "хоол",
+  "шөл",
+  "soup",
+  "салат",
+  "salad",
+  "амттан",
+  "dessert",
+  "пицца",
+  "пизза",
+  "pizza",
+  "паста",
+  "pasta",
+  "калзони",
+  "calzone",
+  "лазан",
+  "lasagn",
+  "болонез",
+  "bolognese",
+  "карбонара",
+  "carbonara",
+  "зөгийн балтай сүү",
+  "зөгийн бал",
+  "honey milk",
+  "халуун вино",
+  "халуун дарс",
+  "hot wine",
+  "mulled wine",
+  "глинтвейн",
+  "хачир",
+  "монгол",
+  "европ",
+  "ази",
+  "сет",
+  "set",
+];
+
+function normalizeTicketText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[“”„‟«»]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/["'`]/g, "")
+    .replace(/[,.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("mn-MN");
+}
+
+function isKitchenTicketItem(item: RegisterCartLine) {
+  const searchableText = `${normalizeTicketText(item.category)} ${normalizeTicketText(item.name)}`;
+  return KITCHEN_TICKET_KEYWORDS.some((keyword) =>
+    searchableText.includes(keyword),
+  );
+}
+
+function splitPrepTicketItems(items: RegisterCartLine[]) {
+  return items.reduce(
+    (groups, item) => {
+      if (isKitchenTicketItem(item)) {
+        groups.kitchen.push(item);
+      } else {
+        groups.other.push(item);
+      }
+
+      return groups;
+    },
+    { kitchen: [] as RegisterCartLine[], other: [] as RegisterCartLine[] },
+  );
+}
+
+function prepTicketSection(
+  sale: PrintableSale,
+  title: string,
+  note: string,
+  items: RegisterCartLine[],
+) {
+  return `<section class="prep-ticket">
+    <h1>DALAI EEJ</h1>
+    <h2>${escapeHtml(title)}</h2>
     <div class="meta">
       <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
       <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
@@ -528,20 +613,33 @@ function billBody(sale: PrintableSale) {
       }
     </div>
     <div class="items">
-      ${sale.items
+      ${items
         .map(
           (item) => `<div class="item">
             <div class="item-main">
-              <span>${item.quantity}x</span>
+              <span class="qty">${item.quantity}x</span>
               <span class="name">${escapeHtml(item.name)}</span>
-              <span class="price">${formatNumber(item.price * item.quantity)}</span>
             </div>
           </div>`,
         )
         .join("")}
     </div>
-    <div class="row total"><span>Нийт</span><span>${formatMNT(sale.total)}</span></div>
-    <div class="note">Билл</div>`;
+    <div class="note">${escapeHtml(note)}</div>
+  </section>`;
+}
+
+function billBody(sale: PrintableSale) {
+  const { kitchen, other } = splitPrepTicketItems(sale.items);
+  const sections = [
+    kitchen.length > 0
+      ? prepTicketSection(sale, "Гал тогоо", "Гал тогоонд", kitchen)
+      : "",
+    other.length > 0
+      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", other)
+      : "",
+  ].filter(Boolean);
+
+  return sections.join("");
 }
 
 function receiptBody(sale: PrintableSale) {
@@ -585,8 +683,8 @@ function printReceipt(sale: PrintableSale, reservedWindow?: Window | false) {
   return printHtml("Баримт", receiptBody(sale), reservedWindow);
 }
 
-function printBill(sale: PrintableSale) {
-  return printHtml("Билл", billBody(sale));
+function printBill(sale: PrintableSale, reservedWindow?: Window | false) {
+  return printHtml("Билл", billBody(sale), reservedWindow);
 }
 
 function getSettlementPaymentLabel(lines: SettlementPaymentLine[]) {
@@ -1916,6 +2014,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
     const shouldAutoPrintReceipt = !roomRequired;
     const receiptWindow = shouldAutoPrintReceipt ? openPrintWindow() : false;
+    const roomBillWindow = roomRequired ? openPrintWindow() : false;
 
     setSaleStatus("saving");
     setSaleMessage("");
@@ -1974,6 +2073,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       const receiptPrinted = shouldAutoPrintReceipt
         ? printReceipt(completedSale, receiptWindow)
         : false;
+      const roomBillPrinted = roomRequired
+        ? printBill(completedSale, roomBillWindow)
+        : false;
       setSaleStatus("success");
       if (roomRequired) {
         void loadUnpaidCharges();
@@ -1987,13 +2089,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               ? "Баримт автоматаар хэвлэгдэж байна"
               : "Баримтын цонх нээгдсэнгүй"
             : "",
-          "Билл хэвлэх товчоор гаргана уу",
+          roomRequired
+            ? roomBillPrinted
+              ? "Билл автоматаар хэвлэгдэж байна"
+              : "Биллийн цонх нээгдсэнгүй"
+            : "Билл хэвлэх товчоор гаргана уу",
         ]
           .filter(Boolean)
           .join(" · "),
       );
     } catch (error) {
       closePrintWindow(receiptWindow);
+      closePrintWindow(roomBillWindow);
       setSaleStatus("error");
       setSaleMessage(
         error instanceof Error
