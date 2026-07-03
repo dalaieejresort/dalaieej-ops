@@ -2,8 +2,7 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
 import {
-  isUnlimitedInventoryCategory,
-  isUnlimitedInventorySku,
+  isUnlimitedInventoryItem,
 } from '@/lib/pos/inventory';
 
 type InventoryPostBody = {
@@ -285,13 +284,11 @@ export async function GET() {
       };
     });
 
-    // Stock-tracked items need stock; food/menu items are made to order and stay sellable.
+    // Stock-tracked items need stock; made-to-order food/menu items stay sellable.
     const validProducts = products.filter(
       p =>
         p.sku &&
-        (p.stock > 0 ||
-          isUnlimitedInventoryCategory(p.category) ||
-          isUnlimitedInventorySku(p.sku)),
+        (p.stock > 0 || isUnlimitedInventoryItem(p)),
     );
 
     return NextResponse.json(validProducts);
@@ -336,7 +333,8 @@ export async function POST(request: Request) {
         .filter(row => {
           const sku = getFirstValue(row, CATALOG_COLUMNS.sku);
           const category = getFirstValue(row, CATALOG_COLUMNS.category);
-          return isUnlimitedInventoryCategory(category) || isUnlimitedInventorySku(sku);
+          const name = getFirstValue(row, CATALOG_COLUMNS.name);
+          return isUnlimitedInventoryItem({ category, name, sku });
         })
         .map(row => String(getFirstValue(row, CATALOG_COLUMNS.sku)).trim())
         .filter(Boolean),
@@ -357,8 +355,7 @@ export async function POST(request: Request) {
     const inventoryItems = items.filter(item => {
       const sku = String(item.sku ?? '').trim();
       return (
-        !isUnlimitedInventoryCategory(item.category) &&
-        !isUnlimitedInventorySku(sku) &&
+        !isUnlimitedInventoryItem(item) &&
         !unlimitedInventorySkus.has(sku)
       );
     });
