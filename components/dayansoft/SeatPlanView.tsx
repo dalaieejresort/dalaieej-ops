@@ -2,19 +2,26 @@
 
 import { useState } from "react";
 import { TABLES, ZONE_TABS } from "@/lib/pos/data";
-import type { TableDef } from "@/lib/pos/types";
+import type { TableDef, TableOrder } from "@/lib/pos/types";
 
 interface SeatPlanViewProps {
+  orders: TableOrder[];
   onSelectTable: (table: TableDef) => void;
 }
 
-export function SeatPlanView({ onSelectTable }: SeatPlanViewProps) {
+export function SeatPlanView({ orders, onSelectTable }: SeatPlanViewProps) {
   const [activeZone, setActiveZone] = useState("all");
 
   const visibleTables =
     activeZone === "all"
       ? TABLES
       : TABLES.filter((t) => t.zone === activeZone);
+
+  const ordersByTable = orders.reduce<Record<string, number>>((acc, order) => {
+    if (order.amount <= 0 && !order.orderCount) return acc;
+    acc[order.tableId] = (acc[order.tableId] ?? 0) + 1;
+    return acc;
+  }, {});
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -47,34 +54,39 @@ export function SeatPlanView({ onSelectTable }: SeatPlanViewProps) {
         }}
       >
         <div className="relative min-h-[500px] w-full min-w-[600px]">
-          {visibleTables.map((table) => (
-            <button
-              key={table.id}
-              type="button"
-              onClick={() => onSelectTable(table)}
-              className="absolute flex items-center justify-center border border-black/20 text-sm font-bold text-[#333] shadow-md transition-transform active:scale-95"
-              style={{
-                left: `${table.x}%`,
-                top: `${table.y}%`,
-                width: `${table.w}%`,
-                height: `${table.h}%`,
-                backgroundColor: table.color,
-                borderRadius:
-                  table.shape === "circle"
-                    ? "50%"
-                    : table.shape === "bar"
-                      ? "4px"
-                      : "6px",
-              }}
-            >
-              {table.badge && (
-                <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
-                  {table.badge}
-                </span>
-              )}
-              {table.label}
-            </button>
-          ))}
+          {visibleTables.map((table) => {
+            const orderCount = ordersByTable[table.id] ?? 0;
+            const badge = orderCount || table.badge;
+
+            return (
+              <button
+                key={table.id}
+                type="button"
+                onClick={() => onSelectTable(table)}
+                className="absolute flex items-center justify-center border border-black/20 text-sm font-bold text-[#333] shadow-md transition-transform active:scale-95"
+                style={{
+                  left: `${table.x}%`,
+                  top: `${table.y}%`,
+                  width: `${table.w}%`,
+                  height: `${table.h}%`,
+                  backgroundColor: table.color,
+                  borderRadius:
+                    table.shape === "circle"
+                      ? "50%"
+                      : table.shape === "bar"
+                        ? "4px"
+                        : "6px",
+                }}
+              >
+                {badge ? (
+                  <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
+                    {badge}
+                  </span>
+                ) : null}
+                {table.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 

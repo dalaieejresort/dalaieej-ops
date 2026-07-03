@@ -21,6 +21,16 @@ type InventoryPostBody = {
   cashReceived?: number;
   changeDue?: number;
   qpayInvoiceId?: string;
+  payments?: InventoryPaymentInput[];
+};
+
+type InventoryPaymentInput = {
+  paymentMethod?: string;
+  amount?: number;
+  cashReceived?: number;
+  changeDue?: number;
+  qpayInvoiceId?: string;
+  notes?: string;
 };
 
 type SheetDoc = GoogleSpreadsheet;
@@ -220,6 +230,30 @@ function toNumber(value: unknown) {
   return Number.isFinite(numberValue) ? numberValue : 0;
 }
 
+function createPaymentId() {
+  return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
+}
+
+function getInventoryPayments(
+  payments: InventoryPaymentInput[] | undefined,
+  fallback: InventoryPaymentInput,
+) {
+  const source = Array.isArray(payments) && payments.length > 0
+    ? payments
+    : [fallback];
+
+  return source
+    .map(payment => ({
+      paymentMethod: String(payment.paymentMethod ?? fallback.paymentMethod ?? '').trim(),
+      amount: toNumber(payment.amount),
+      cashReceived: toNumber(payment.cashReceived),
+      changeDue: toNumber(payment.changeDue),
+      qpayInvoiceId: String(payment.qpayInvoiceId ?? '').trim(),
+      notes: String(payment.notes ?? '').trim(),
+    }))
+    .filter(payment => payment.paymentMethod && payment.amount > 0);
+}
+
 function inventoryErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error);
 
@@ -317,6 +351,7 @@ export async function POST(request: Request) {
       cashReceived,
       changeDue,
       qpayInvoiceId,
+      payments,
     } = body;
     if (!items?.length) {
       return NextResponse.json({ error: 'No items to log' }, { status: 400 });
@@ -348,6 +383,27 @@ export async function POST(request: Request) {
       0,
     );
     const saleTotal = total ?? saleSubtotal;
+    const inventoryPayments = getInventoryPayments(payments, {
+      paymentMethod: method || '',
+      amount: saleTotal,
+      cashReceived,
+      changeDue,
+      qpayInvoiceId,
+    });
+    const paymentMethod =
+      method ||
+      inventoryPayments
+        .map(payment => payment.paymentMethod)
+        .join(' + ');
+    const paymentCashReceived =
+      cashReceived ??
+      inventoryPayments.reduce((sum, payment) => sum + payment.cashReceived, 0);
+    const paymentChangeDue =
+      changeDue ??
+      inventoryPayments.reduce((sum, payment) => sum + payment.changeDue, 0);
+    const paymentQPayInvoiceId =
+      qpayInvoiceId ||
+      inventoryPayments.map(payment => payment.qpayInvoiceId).filter(Boolean).join(' + ');
     const itemSummary = items
       .map(item => `${item.name ?? item.sku ?? 'Item'} x${item.qty ?? 1}`)
       .join(', ');
@@ -373,7 +429,7 @@ export async function POST(request: Request) {
         item.qty ?? 1,             // F: Quantity
         'Front Desk',              // G: Location (Can be dynamic later)
         staffName || 'Staff',      // H: Handled By
-        method || '',              // I: Payment Method (Qpay/Card/Cash/Room)
+        paymentMethod || '',       // I: Payment Method (Qpay/Card/Cash/Room)
         room || ''                 // J: Room Number (If applicable)
       ];
     });
@@ -382,39 +438,39 @@ export async function POST(request: Request) {
       transactionId,
       timestamp,
       staffName || 'Staff',
-      method || '',
+      paymentMethod || '',
       paidStatus || 'paid',
       room || '',
       saleSubtotal,
       0,
       saleTotal,
-      cashReceived ?? '',
-      changeDue ?? '',
+      paymentCashReceived,
+      paymentChangeDue,
       items.reduce((sum, item) => sum + (item.qty ?? 1), 0),
       itemSummary,
-      qpayInvoiceId || '',
+      paymentQPayInvoiceId,
       '',
     ];
     const shouldAppendPayment = (paidStatus || 'paid').toLowerCase() !== 'unpaid';
-    const paymentRow = [
-      `PAY-${Math.floor(100000 + Math.random() * 900000)}`,
+    const paymentRows = inventoryPayments.map(payment => [
+      createPaymentId(),
       transactionId,
       timestamp,
       staffName || 'Staff',
-      method || '',
-      saleTotal,
-      cashReceived ?? '',
-      changeDue ?? '',
-      qpayInvoiceId || '',
-      'Initial sale payment',
-    ];
+      payment.paymentMethod,
+      payment.amount,
+      payment.cashReceived || '',
+      payment.changeDue || '',
+      payment.qpayInvoiceId || '',
+      payment.notes || 'Initial sale payment',
+    ]);
 
     // Fire the data into Google Sheets
     await Promise.all([
       newRows.length > 0 ? logSheet.addRows(newRows) : Promise.resolve(),
       salesLogSheet.addRows([salesRow]),
-      shouldAppendPayment
-        ? paymentsLogSheet.addRows([paymentRow])
+      shouldAppendPayment && paymentRows.length > 0
+        ? paymentsLogSheet.addRows(paymentRows)
         : Promise.resolve(),
     ]);
 

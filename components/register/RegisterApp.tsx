@@ -207,7 +207,7 @@ const CATEGORY_ACCENTS: Record<string, string> = {
 const PAYMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
   { id: "card", label: "Карт" },
-  { id: "qpay", label: "QPay" },
+  { id: "qpay", label: "Данс" },
   { id: "room", label: "Байшин/Зочин" },
 ] as const;
 
@@ -216,7 +216,7 @@ type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
 const SETTLEMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
   { id: "card", label: "Карт" },
-  { id: "qpay", label: "QPay" },
+  { id: "qpay", label: "Данс" },
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
@@ -773,7 +773,7 @@ function buildSettlementReceiptSale(
     lines.length === 1 && lines[0].method === "cash" ? lines[0] : null;
 
   return {
-    id: `PAY-${Date.now().toString().slice(-6)}`,
+    id: lines[0]?.id ?? "PAY",
     createdAt: new Date(),
     items:
       items.length > 0
@@ -836,10 +836,6 @@ function getQrImageSource(qrCode: string) {
   if (!qrCode) return "";
   if (qrCode.startsWith("data:")) return qrCode;
   return `data:image/png;base64,${qrCode}`;
-}
-
-function createLocalPaymentId() {
-  return `local-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 }
 
 function getChargeGroupKey(charge: UnpaidCharge) {
@@ -956,6 +952,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     useState(false);
   const selectedChargeGroupKeyRef = useRef("");
   const uiPreferencesLoadedRef = useRef(false);
+  const localIdSequenceRef = useRef(0);
+
+  function getNextLocalId(prefix: string) {
+    localIdSequenceRef.current += 1;
+    return `${prefix}-${localIdSequenceRef.current}`;
+  }
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -1217,7 +1219,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const changeDue = Math.max(cashReceived - cartTotal, 0);
   const roomRequired = paymentMethod === "room";
   const qpayRequired = paymentMethod === "qpay";
-  const qpayPaid = qpayStatus === "paid";
+  const bankTransferConfirmed = qpayStatus === "paid";
   const dayOpen = daySession?.status === "open";
   const dayClosed = daySession?.status === "closed";
   const dayNonCashPaymentTotal =
@@ -1246,7 +1248,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (!cashRequired || cashShort === 0) &&
     (!cardRequired || cardTerminalApproved) &&
     (!roomRequired || roomNumber.trim().length > 0) &&
-    (!qpayRequired || qpayPaid);
+    (!qpayRequired || bankTransferConfirmed);
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
     : !dayOpen
@@ -1258,9 +1260,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           ? "Карт борлуулалт хадгалах"
           : "Терминал баталгаажуулна уу"
       : qpayRequired
-        ? qpayPaid
-          ? "QPay борлуулалт хадгалах"
-          : "QPay төлбөр хүлээгдэж байна"
+        ? bankTransferConfirmed
+          ? "Дансны борлуулалт хадгалах"
+          : "Данс шалгаж баталгаажуулна уу"
         : "Төлбөр авах";
   const chargeGroups = useMemo(
     () => buildChargeGroups(unpaidCharges),
@@ -1298,6 +1300,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const settlementCashRequired = settlementMethod === "cash";
   const settlementCardRequired = settlementMethod === "card";
   const settlementQPayRequired = settlementMethod === "qpay";
+  const settlementBankTransferConfirmed = settlementQPayStatus === "paid";
   const settlementCashShort = settlementCashRequired
     ? Math.max(settlementDraftAmount - settlementCashReceived, 0)
     : 0;
@@ -1313,7 +1316,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     !settlementDraftOverRemaining &&
     (!settlementCashRequired || settlementCashShort === 0) &&
     (!settlementCardRequired || settlementCardTerminalApproved) &&
-    (!settlementQPayRequired || settlementQPayStatus === "paid");
+    (!settlementQPayRequired || settlementBankTransferConfirmed);
   const canSettleCharge =
     selectedCharges.length > 0 &&
     settlementLines.length > 0 &&
@@ -1391,7 +1394,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     resetQPayPayment();
 
     const name = customItemName.trim() || "Гараар нэмсэн төлбөр";
-    const id = `custom-${Date.now()}`;
+    const id = getNextLocalId("custom");
     setCart((current) => [
       ...current,
       {
@@ -1410,12 +1413,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   function selectPaymentMethod(method: PaymentMethodId) {
     setPaymentMethod(method);
     setCardTerminalApproved(false);
-    if (method === "qpay") {
-      setQPayWindowOpen(true);
-      void createQPayInvoice();
-    } else {
-      resetQPayPayment();
-    }
+    resetQPayPayment();
     if (saleStatus === "error") {
       setSaleStatus("idle");
       setSaleMessage("");
@@ -1648,6 +1646,19 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     resetSettlementPaymentState();
   }
 
+  function startAdditionalCharge(group: ChargeGroup) {
+    setRegisterMode("sale");
+    setPaymentMethod("room");
+    setRoomNumber(group.label);
+    setCart([]);
+    setCashReceived(0);
+    setCardTerminalApproved(false);
+    resetQPayPayment();
+    setLastSale(null);
+    setSaleStatus("idle");
+    setSaleMessage(`${group.label} дээр нэмэлт захиалга бичнэ`);
+  }
+
   function resetSettlementQPayPayment() {
     setSettlementQPayInvoice(null);
     setSettlementQPayStatus("idle");
@@ -1676,10 +1687,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementCashReceived(0);
     setSettlementCardTerminalApproved(false);
     resetSettlementQPayPayment();
-    if (method === "qpay") {
-      setSettlementQPayWindowOpen(true);
-      void createSettlementQPayInvoice();
-    }
   }
 
   function setSettlementAmountInput(value: string) {
@@ -1687,9 +1694,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementPaymentAmount(Number.isFinite(amount) ? amount : 0);
     setSettlementCardTerminalApproved(false);
     resetSettlementQPayPayment();
-    if (settlementMethod === "qpay") {
-      setSettlementQPayWindowOpen(true);
-    }
     if (settlementStatus === "error") {
       setSettlementStatus("idle");
       setSettlementMessage("");
@@ -1725,10 +1729,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         return;
       }
 
-      if (settlementQPayRequired && settlementQPayStatus !== "paid") {
+      if (settlementQPayRequired && !settlementBankTransferConfirmed) {
         setSettlementStatus("error");
-        setSettlementMessage("QPay төлбөрөө шалгаж баталгаажуулна уу");
-        setSettlementQPayWindowOpen(true);
+        setSettlementMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
         return;
       }
 
@@ -1741,15 +1744,42 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementLines((current) => [
       ...current,
       {
-        id: createLocalPaymentId(),
+        id: getNextLocalId("payment"),
         method: settlementMethod,
         methodLabel,
         amount: settlementDraftAmount,
         cashReceived: settlementCashRequired ? settlementCashReceived : 0,
         changeDue: settlementCashRequired ? settlementChangeDue : 0,
-        qpayInvoiceId: settlementQPayRequired
-          ? settlementQPayInvoice?.invoiceId ?? ""
-          : "",
+        qpayInvoiceId: "",
+      },
+    ]);
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+    resetSettlementDraft();
+  }
+
+  function addQuickSettlementLine(method: "cash" | "card") {
+    if (
+      selectedCharges.length === 0 ||
+      settlementStatus === "saving" ||
+      settlementRemaining <= 0
+    ) {
+      return;
+    }
+
+    const methodLabel =
+      SETTLEMENT_METHODS.find((item) => item.id === method)?.label ?? method;
+    setSettlementMethod(method);
+    setSettlementLines((current) => [
+      ...current,
+      {
+        id: getNextLocalId("payment"),
+        method,
+        methodLabel,
+        amount: settlementRemaining,
+        cashReceived: method === "cash" ? settlementRemaining : 0,
+        changeDue: 0,
+        qpayInvoiceId: "",
       },
     ]);
     setSettlementStatus("idle");
@@ -2068,10 +2098,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   function getPaymentLogLabel() {
-    if (qpayRequired && qpayInvoice) {
-      return `${selectedPayment.label} ${qpayInvoice.invoiceId}`;
-    }
-
     if (!cashRequired) return selectedPayment.label;
 
     return `${selectedPayment.label} төлсөн ${formatNumber(cashReceived)}, хариулт ${formatNumber(changeDue)}`;
@@ -2130,10 +2156,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage("Байшин, нэр эсвэл утас оруулна уу");
       return;
     }
-    if (qpayRequired && !qpayPaid) {
+    if (qpayRequired && !bankTransferConfirmed) {
       setSaleStatus("error");
-      setSaleMessage("QPay төлбөрөө шалгаж баталгаажуулна уу");
-      setQPayWindowOpen(true);
+      setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
       return;
     }
 
@@ -2155,7 +2180,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       roomNumber: roomRequired ? roomNumber.trim() : "",
       cashReceived: cashRequired ? cashReceived : 0,
       changeDue: cashRequired ? changeDue : 0,
-      qpayInvoiceId: qpayRequired ? qpayInvoice?.invoiceId ?? "" : "",
+      qpayInvoiceId: "",
     };
 
     try {
@@ -2933,17 +2958,48 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               </div>
             )}
 
-            {qpayRequired && !qpayWindowOpen && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQPayWindowOpen(true);
-                  void createQPayInvoice();
-                }}
-                className="mb-2 h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
-              >
-                QPay QR цонх нээх
-              </button>
+            {qpayRequired && (
+              <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold text-[#6b7280]">
+                      Дансны дүн
+                    </p>
+                    <p className="text-lg font-black">
+                      {formatMNT(cartTotal)}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-sm px-2 py-1 text-[11px] font-black ${
+                      bankTransferConfirmed
+                        ? "bg-[#ecfdf5] text-[#047857]"
+                        : "bg-white text-[#6b7280]"
+                    }`}
+                  >
+                    {bankTransferConfirmed ? "Баталгаажсан" : "Мобайл банк шалгана"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQPayStatus((current) =>
+                      current === "paid" ? "idle" : "paid",
+                    );
+                    setQPayMessage("");
+                    if (saleStatus === "error") {
+                      setSaleStatus("idle");
+                      setSaleMessage("");
+                    }
+                  }}
+                  className={`h-9 w-full rounded-md border text-xs font-extrabold ${
+                    bankTransferConfirmed
+                      ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                      : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
+                  }`}
+                >
+                  Мобайл банкаар орсон
+                </button>
+              </div>
             )}
 
             {saleMessage && (
@@ -3011,13 +3067,24 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 ) : (
                   <div className="space-y-4">
                     <div className="rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
-                      <p className="break-words text-lg font-black">
-                        {selectedChargeGroup.label}
-                      </p>
-                      <p className="mt-1 break-words text-xs font-bold text-[#6b7280]">
-                        {selectedChargeGroup.charges.length} төлбөрөөс{" "}
-                        {selectedCharges.length} сонгосон
-                      </p>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words text-lg font-black">
+                            {selectedChargeGroup.label}
+                          </p>
+                          <p className="mt-1 break-words text-xs font-bold text-[#6b7280]">
+                            {selectedChargeGroup.charges.length} төлбөрөөс{" "}
+                            {selectedCharges.length} сонгосон
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => startAdditionalCharge(selectedChargeGroup)}
+                          className="shrink-0 rounded-md border border-[#047857] bg-white px-3 py-2 text-xs font-black text-[#047857] hover:bg-[#ecfdf5]"
+                        >
+                          Дээр нь нэмэх
+                        </button>
+                      </div>
                     </div>
 
                     <div className="rounded-md border border-[#d1d5db] bg-white p-3">
@@ -3224,6 +3291,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           onClick={() => {
                             setSettlementPaymentAmount(settlementRemaining);
                             setSettlementCardTerminalApproved(false);
+                            resetSettlementQPayPayment();
                           }}
                           className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                         >
@@ -3234,6 +3302,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           onClick={() => {
                             setSettlementPaymentAmount(0);
                             setSettlementCardTerminalApproved(false);
+                            resetSettlementQPayPayment();
                           }}
                           className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                         >
@@ -3242,12 +3311,43 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         <button
                           type="button"
                           onClick={addSettlementLine}
-                          disabled={!canAddSettlementLine}
+                          disabled={
+                            selectedCharges.length === 0 ||
+                            settlementStatus === "saving" ||
+                            settlementRemaining <= 0
+                          }
                           className="h-10 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
                         >
                           Мөр нэмэх
                         </button>
                       </div>
+                    </div>
+
+                    <div className="mb-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => addQuickSettlementLine("cash")}
+                        disabled={
+                          selectedCharges.length === 0 ||
+                          settlementStatus === "saving" ||
+                          settlementRemaining <= 0
+                        }
+                        className="h-11 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] text-sm font-extrabold text-[#047857] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
+                      >
+                        Үлдэгдэл бэлнээр
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addQuickSettlementLine("card")}
+                        disabled={
+                          selectedCharges.length === 0 ||
+                          settlementStatus === "saving" ||
+                          settlementRemaining <= 0
+                        }
+                        className="h-11 rounded-md border border-[#bfdbfe] bg-[#eff6ff] text-sm font-extrabold text-[#1d4ed8] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
+                      >
+                        Үлдэгдэл картаар
+                      </button>
                     </div>
 
                     {settlementCashRequired && (
@@ -3375,47 +3475,44 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <div>
                             <p className="text-xs font-bold text-[#6b7280]">
-                              QPay мөрийн дүн
+                              Дансны мөрийн дүн
                             </p>
                             <p className="text-lg font-black">
                               {formatMNT(settlementDraftAmount)}
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={createSettlementQPayInvoice}
-                            disabled={
-                              settlementQPayStatus === "creating" ||
-                              settlementDraftAmount <= 0 ||
-                              settlementDraftOverRemaining
-                            }
-                            className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-extrabold hover:bg-[#eef2ff] disabled:opacity-40"
-                          >
-                            QR үүсгэх
-                          </button>
-                        </div>
-                        {settlementQPayInvoice && (
-                          <button
-                            type="button"
-                            onClick={() => setSettlementQPayWindowOpen(true)}
-                            className="mb-2 h-10 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc]"
-                          >
-                            QR цонх нээх
-                          </button>
-                        )}
-                        {settlementQPayMessage && (
-                          <div
-                            className={`rounded-md px-3 py-2 text-sm font-bold ${
-                              settlementQPayStatus === "error"
-                                ? "bg-[#fef2f2] text-[#b91c1c]"
-                                : settlementQPayStatus === "paid"
-                                  ? "bg-[#ecfdf5] text-[#047857]"
-                                  : "bg-white text-[#374151]"
+                          <span
+                            className={`rounded-sm px-2 py-1 text-xs font-black ${
+                              settlementBankTransferConfirmed
+                                ? "bg-[#ecfdf5] text-[#047857]"
+                                : "bg-white text-[#6b7280]"
                             }`}
                           >
-                            {settlementQPayMessage}
-                          </div>
-                        )}
+                            {settlementBankTransferConfirmed
+                              ? "Баталгаажсан"
+                              : "Мобайл банк шалгана"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettlementQPayStatus((current) =>
+                              current === "paid" ? "idle" : "paid",
+                            );
+                            setSettlementQPayMessage("");
+                            if (settlementStatus === "error") {
+                              setSettlementStatus("idle");
+                              setSettlementMessage("");
+                            }
+                          }}
+                          className={`h-10 w-full rounded-md border text-sm font-extrabold ${
+                            settlementBankTransferConfirmed
+                              ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                              : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
+                          }`}
+                        >
+                          Мобайл банкаар орсон
+                        </button>
                       </div>
                     )}
 
@@ -3511,7 +3608,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       </p>
                       {selectedHistorySale.qpayInvoiceId && (
                         <p className="mt-2 break-words text-xs font-bold text-[#6b7280]">
-                          QPay: {selectedHistorySale.qpayInvoiceId}
+                          Лавлагаа: {selectedHistorySale.qpayInvoiceId}
                         </p>
                       )}
                       {selectedHistorySale.roomOrGuest && (
@@ -3667,7 +3764,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           Буцаах хэлбэр
                         </p>
                         <div className="grid grid-cols-3 gap-2">
-                          {["Бэлэн", "Карт", "QPay"].map((method) => (
+                          {["Бэлэн", "Карт", "Данс"].map((method) => (
                             <button
                               key={method}
                               type="button"
@@ -3782,7 +3879,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         {[
                           ["1", "Нийт борлуулалт", dayTotals.salesTotal],
                           ["2", "Бэлэн төлбөр", dayTotals.cashPaymentTotal],
-                          ["3", "Карт / QPay", dayNonCashPaymentTotal],
+                          ["3", "Карт / Данс", dayNonCashPaymentTotal],
                           ["4", "Байшин/зочинд бичсэн", dayTotals.roomChargeTotal],
                           ["5", "Эхлэх бэлэн мөнгө", daySession?.startingCash ?? 0],
                           ["6", "Бэлнээр байх ёстой", dayTotals.expectedCash],

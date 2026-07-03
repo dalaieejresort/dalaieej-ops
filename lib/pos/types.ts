@@ -28,6 +28,15 @@ export interface CartLine {
   discount?: number;
 }
 
+export interface PaymentAllocation {
+  method: string;
+  label: string;
+  amount: number;
+  cashReceived?: number;
+  changeDue?: number;
+  qpayInvoiceId?: string;
+}
+
 export interface TableOrder {
   id: string;
   tableId: string;

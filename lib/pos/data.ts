@@ -91,12 +91,13 @@ export const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export const PAYMENT_METHODS = [
+  { id: "cash", label: "Бэлэн", icon: "₮" },
   { id: "card", label: "Карт", icon: "💳" },
   { id: "mobile", label: "Mobile", icon: "📱" },
   { id: "epos", label: "ePos", icon: "🟢" },
   { id: "ippos", label: "IPPOS", icon: "🔵" },
   { id: "xacpos", label: "XacPos", icon: "⭐" },
-  { id: "qr", label: "QR pay", icon: "▦" },
+  { id: "bank", label: "Данс", icon: "▦" },
   { id: "gift", label: "Бэлгийн карт ₮", icon: "🎁" },
   { id: "credit", label: "Ашиглах мөнгө", icon: "👤" },
   { id: "account", label: "Тооцоо", icon: "🧾" },

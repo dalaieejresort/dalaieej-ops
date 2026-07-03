@@ -1,18 +1,18 @@
 "use client";
 
-import { TABLE_ORDERS } from "@/lib/pos/data";
 import { formatMNT } from "@/lib/pos/utils";
 import type { TableOrder } from "@/lib/pos/types";
 
 interface OrderGridViewProps {
+  orders: TableOrder[];
   onSelectOrder: (order: TableOrder) => void;
 }
 
-export function OrderGridView({ onSelectOrder }: OrderGridViewProps) {
+export function OrderGridView({ orders, onSelectOrder }: OrderGridViewProps) {
   return (
     <div className="min-h-0 flex-1 overflow-auto bg-[#e8e8e8] p-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-        {TABLE_ORDERS.map((order) => (
+        {orders.map((order) => (
           <button
             key={order.id}
             type="button"

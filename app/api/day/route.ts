@@ -264,7 +264,11 @@ function isInsideSessionWindow(
 function classifyPaymentMethod(method: string) {
   const normalized = method.toLowerCase();
 
-  if (normalized.includes('qpay')) return 'qpay';
+  if (
+    normalized.includes('qpay') ||
+    normalized.includes('данс') ||
+    normalized.includes('bank')
+  ) return 'qpay';
   if (normalized.includes('карт') || normalized.includes('card')) return 'card';
   if (normalized.includes('бэлэн') || normalized.includes('cash')) return 'cash';
 
