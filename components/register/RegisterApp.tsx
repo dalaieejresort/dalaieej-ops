@@ -4160,7 +4160,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
                             onClick={() => {
@@ -4182,18 +4182,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                           >
                             Auto
-                          </button>
-                          <button
-                            type="button"
-                            onClick={addSettlementLine}
-                            disabled={
-                              selectedCharges.length === 0 ||
-                              settlementStatus === "saving" ||
-                              settlementRemaining <= 0
-                            }
-                            className="h-10 rounded-md bg-[#111827] text-xs font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                          >
-                            Сонгосноор нэмэх
                           </button>
                         </div>
                       </div>
@@ -4312,6 +4300,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             Арилгах
                           </button>
                         </div>
+                        <button
+                          type="button"
+                          onClick={addSettlementLine}
+                          disabled={
+                            selectedCharges.length === 0 ||
+                            settlementStatus === "saving" ||
+                            settlementRemaining <= 0
+                          }
+                          className="mt-2 h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                        >
+                          Мөр нэмэх
+                        </button>
                       </div>
                     )}
 
@@ -4356,6 +4356,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           }`}
                         >
                           Терминал дээр төлөгдсөн
+                        </button>
+                        <button
+                          type="button"
+                          onClick={addSettlementLine}
+                          disabled={
+                            selectedCharges.length === 0 ||
+                            settlementStatus === "saving" ||
+                            settlementRemaining <= 0
+                          }
+                          className="mt-2 h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                        >
+                          Мөр нэмэх
                         </button>
                       </div>
                     )}
@@ -4402,6 +4414,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           }`}
                         >
                           Мобайл банкаар орсон
+                        </button>
+                        <button
+                          type="button"
+                          onClick={addSettlementLine}
+                          disabled={
+                            selectedCharges.length === 0 ||
+                            settlementStatus === "saving" ||
+                            settlementRemaining <= 0
+                          }
+                          className="mt-2 h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                        >
+                          Мөр нэмэх
                         </button>
                       </div>
                     )}
