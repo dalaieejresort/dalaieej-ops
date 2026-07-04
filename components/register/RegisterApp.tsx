@@ -919,10 +919,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [partialPaymentLines, setPartialPaymentLines] = useState<
     SettlementPaymentLine[]
   >([]);
-  const [partialCardTerminalApproved, setPartialCardTerminalApproved] =
-    useState(false);
-  const [partialBankTransferStatus, setPartialBankTransferStatus] =
-    useState<BankTransferStatus>("idle");
   const [customItemName, setCustomItemName] = useState("");
   const [customItemAmount, setCustomItemAmount] = useState(0);
   const [roomNumber, setRoomNumber] = useState("");
@@ -1343,34 +1339,19 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     0,
   );
   const partialRemaining = Math.max(cartTotal - partialPaymentLineTotal, 0);
-  const partialRemainingAfterDraft = partialPaymentAmount > 0
-    ? partialRemaining - partialPaymentAmount
-    : partialRemaining;
   const partialDraftOverRemaining = partialPaymentAmount > partialRemaining;
-  const partialDraftClosesSale =
-    partialPaymentAmount > 0 && partialRemainingAfterDraft === 0;
   const partialSaleFullyPaid =
     partialRequired &&
     partialPaymentLines.length > 0 &&
     partialRemaining === 0;
   const partialSaleHasBalance = partialRequired && partialRemaining > 0;
-  const partialCashRequired = partialPaymentMethod === "cash";
-  const partialCardRequired = partialPaymentMethod === "card";
-  const partialBankTransferRequired = partialPaymentMethod === "bank";
-  const partialBankTransferConfirmed = partialBankTransferStatus === "paid";
   const partialBalanceOptionSelected = partialPaymentOption === "balance";
-  const partialCashReceivedForLine = partialCashRequired
-    ? partialPaymentAmount
-    : 0;
-  const partialChangeDue = 0;
   const canAddPartialPaymentLine =
     partialRequired &&
     cartTotal > 0 &&
     partialRemaining > 0 &&
     partialPaymentAmount > 0 &&
-    !partialDraftOverRemaining &&
-    (!partialCardRequired || partialCardTerminalApproved) &&
-    (!partialBankTransferRequired || partialBankTransferConfirmed);
+    !partialDraftOverRemaining;
   const dayOpen = daySession?.status === "open";
   const dayClosed = daySession?.status === "closed";
   const dayNonCashPaymentTotal =
@@ -1634,19 +1615,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setPartialPaymentMethod("cash");
     setPartialPaymentOption("cash");
     setPartialPaymentAmount(0);
-    setPartialCardTerminalApproved(false);
-    setPartialBankTransferStatus("idle");
-  }
-
-  function resetPartialTenderConfirmation() {
-    setPartialCardTerminalApproved(false);
-    setPartialBankTransferStatus("idle");
   }
 
   function selectPartialPaymentMethod(method: SettlementMethod) {
     setPartialPaymentMethod(method);
     setPartialPaymentOption(method);
-    resetPartialTenderConfirmation();
     if (saleStatus === "error") {
       setSaleStatus("idle");
       setSaleMessage("");
@@ -1682,7 +1655,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   function setPartialPaymentAmountInput(value: string) {
     const amount = Number(value.replace(/[^\d]/g, ""));
     setPartialPaymentAmount(Number.isFinite(amount) ? amount : 0);
-    resetPartialTenderConfirmation();
     if (saleStatus === "error") {
       setSaleStatus("idle");
       setSaleMessage("");
@@ -1703,18 +1675,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         return;
       }
 
-      if (partialCardRequired && !partialCardTerminalApproved) {
-        setSaleStatus("error");
-        setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
-        return;
-      }
-
-      if (partialBankTransferRequired && !partialBankTransferConfirmed) {
-        setSaleStatus("error");
-        setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
-        return;
-      }
-
       return;
     }
 
@@ -1728,15 +1688,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         method: partialPaymentMethod,
         methodLabel,
         amount: partialPaymentAmount,
-        cashReceived: partialCashReceivedForLine,
-        changeDue: partialChangeDue,
+        cashReceived:
+          partialPaymentMethod === "cash" ? partialPaymentAmount : 0,
+        changeDue: 0,
         qpayInvoiceId: "",
       },
     ]);
     setSaleStatus("idle");
     setSaleMessage("");
     resetPartialPaymentDraft();
-    setPartialPaymentOption(partialDraftClosesSale ? "cash" : "balance");
   }
 
   function removePartialPaymentLine(id: string) {
@@ -3551,207 +3511,47 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 )}
 
                 {!partialBalanceOptionSelected && partialRemaining > 0 && (
-                  <>
-                <div className="mb-2 grid grid-cols-2 gap-2">
-                  <label>
-                    <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
-                      Энэ мөрийн дүн
-                    </span>
-                    <input
-                      value={
-                        partialPaymentAmount
-                          ? formatNumber(partialPaymentAmount)
-                          : ""
-                      }
-                      onChange={(event) =>
-                        setPartialPaymentAmountInput(event.target.value)
-                      }
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="0"
-                      className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-right text-sm font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
-                    />
-                  </label>
-                  <div>
-                    <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
-                      Дараа үлдэх
-                    </span>
-                    <div
-                      className={`flex h-9 items-center justify-end rounded-md border px-2 text-sm font-black ${
-                        partialDraftOverRemaining
-                          ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                          : partialDraftClosesSale
-                            ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                            : "border-[#d1d5db] bg-white text-[#111827]"
-                      }`}
-                    >
-                      {formatNumber(partialRemainingAfterDraft)}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mb-2 grid grid-cols-2 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPartialPaymentAmount(Math.floor(partialRemaining / 2));
-                      resetPartialTenderConfirmation();
-                    }}
-                    className="h-8 rounded-md border border-[#cbd5e1] bg-white text-[11px] font-extrabold hover:bg-[#eef2ff]"
-                  >
-                    50%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPartialPaymentAmount(0);
-                      resetPartialTenderConfirmation();
-                    }}
-                    className="h-8 rounded-md border border-[#fecaca] bg-white text-[11px] font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
-                  >
-                    Арилгах
-                  </button>
-                </div>
-
-                {partialCashRequired && (
                   <div className="mb-2 rounded-md border border-[#d1d5db] bg-white p-2">
-                    <div className="mb-1.5 grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
-                          Авсан мөнгө
-                        </span>
-                        <div className="flex h-9 items-center justify-end rounded-md border border-[#d1d5db] bg-white px-2 text-sm font-black">
-                          {formatNumber(partialCashReceivedForLine)}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
-                          Хариулт
-                        </span>
-                        <div className="flex h-9 items-center justify-end rounded-md border border-[#bbf7d0] bg-[#ecfdf5] px-2 text-sm font-black text-[#047857]">
-                          {formatNumber(partialChangeDue)}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={addPartialPaymentLine}
-                      disabled={!canAddPartialPaymentLine}
-                      className="h-9 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                    >
-                      Мөр нэмэх
-                    </button>
-                  </div>
-                )}
-
-                {partialCardRequired && (
-                  <div className="mb-2 rounded-md border border-[#d1d5db] bg-white p-2">
-                    <div className="mb-1.5 flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-[11px] font-bold text-[#6b7280]">
-                          Терминалын дүн
-                        </p>
-                        <p className="text-sm font-black">
-                          {formatMNT(partialPaymentAmount)}
-                        </p>
-                      </div>
-                      <span
-                        className={`rounded-sm px-2 py-1 text-[11px] font-black ${
-                          partialCardTerminalApproved
-                            ? "bg-[#ecfdf5] text-[#047857]"
-                            : "bg-[#f8fafc] text-[#6b7280]"
-                        }`}
-                      >
-                        {partialCardTerminalApproved
-                          ? "Баталгаажсан"
-                          : "Хүлээгдэж байна"}
+                    <label className="mb-2 block">
+                      <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
+                        Төлсөн дүн
                       </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPartialCardTerminalApproved((current) => !current);
-                        if (saleStatus === "error") {
-                          setSaleStatus("idle");
-                          setSaleMessage("");
+                      <input
+                        value={
+                          partialPaymentAmount
+                            ? formatNumber(partialPaymentAmount)
+                            : ""
                         }
-                      }}
-                      className={`h-8 w-full rounded-md border text-[11px] font-extrabold ${
-                        partialCardTerminalApproved
-                          ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                          : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
-                      }`}
-                    >
-                      Терминал дээр төлөгдсөн
-                    </button>
+                        onChange={(event) =>
+                          setPartialPaymentAmountInput(event.target.value)
+                        }
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="0"
+                        className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={addPartialPaymentLine}
                       disabled={!canAddPartialPaymentLine}
-                      className="mt-2 h-9 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                      className="h-10 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
                     >
                       Мөр нэмэх
                     </button>
                   </div>
-                )}
-
-                {partialBankTransferRequired && (
-                  <div className="mb-2 rounded-md border border-[#d1d5db] bg-white p-2">
-                    <div className="mb-1.5 flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-[11px] font-bold text-[#6b7280]">
-                          Дансны дүн
-                        </p>
-                        <p className="text-sm font-black">
-                          {formatMNT(partialPaymentAmount)}
-                        </p>
-                      </div>
-                      <span
-                        className={`rounded-sm px-2 py-1 text-[11px] font-black ${
-                          partialBankTransferConfirmed
-                            ? "bg-[#ecfdf5] text-[#047857]"
-                            : "bg-[#f8fafc] text-[#6b7280]"
-                        }`}
-                      >
-                        {partialBankTransferConfirmed
-                          ? "Баталгаажсан"
-                          : "Мобайл банк шалгана"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPartialBankTransferStatus((current) =>
-                          current === "paid" ? "idle" : "paid",
-                        );
-                        if (saleStatus === "error") {
-                          setSaleStatus("idle");
-                          setSaleMessage("");
-                        }
-                      }}
-                      className={`h-8 w-full rounded-md border text-[11px] font-extrabold ${
-                        partialBankTransferConfirmed
-                          ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                          : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
-                      }`}
-                    >
-                      Мобайл банкаар орсон
-                    </button>
-                    <button
-                      type="button"
-                      onClick={addPartialPaymentLine}
-                      disabled={!canAddPartialPaymentLine}
-                      className="mt-2 h-9 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                    >
-                      Мөр нэмэх
-                    </button>
-                  </div>
-                )}
-                  </>
                 )}
 
                 {partialBalanceOptionSelected && partialRemaining > 0 && (
                   <div>
+                  <div className="mb-2 rounded-md border border-[#fecaca] bg-[#fef2f2] px-2 py-2">
+                    <p className="text-[11px] font-bold text-[#6b7280]">
+                      Үлдэгдэл
+                    </p>
+                    <p className="text-base font-black text-[#b91c1c]">
+                      {formatMNT(partialRemaining)}
+                    </p>
+                  </div>
                   <div className="mb-2 grid grid-cols-6 gap-1.5">
                     {ROOM_NUMBERS.map((number) => (
                       <button
