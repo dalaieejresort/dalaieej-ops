@@ -83,7 +83,11 @@ type RecentSale = {
   paidStatus: string;
   roomOrGuest: string;
   total: number;
+  saleTotal?: number;
   paidAmount: number;
+  paidToDate?: number;
+  balance?: number;
+  historyKind?: "sale" | "payment";
   refundableAmount: number;
   itemCount?: number;
   itemSummary: string;
@@ -99,6 +103,7 @@ type SettlementStatus = "idle" | "saving" | "success" | "error";
 
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
+const SHARED_SALES_SYNC_INTERVAL_MS = 60000;
 
 function isRegisterMode(value: string | null): value is RegisterMode {
   return value === "sale" || value === "charges" || value === "history";
@@ -832,7 +837,10 @@ function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
     items: [
       {
         id: sale.transactionId,
-        name: sale.itemSummary || sale.transactionId,
+        name:
+          sale.paidStatus === "partial"
+            ? `Өр төлбөр: ${sale.itemSummary || sale.transactionId}`
+            : sale.itemSummary || sale.transactionId,
         price: sale.total,
         category: "Үйлчилгээ",
         quantity: 1,
@@ -999,9 +1007,36 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, []);
 
-  const loadUnpaidCharges = useCallback(async () => {
-    setChargesStatus("loading");
-    setChargesMessage("");
+  const applyUnpaidCharges = useCallback((charges: UnpaidCharge[]) => {
+    const groups = buildChargeGroups(charges);
+    const nextGroup =
+      groups.find((group) => group.key === selectedChargeGroupKeyRef.current) ??
+      groups[0] ??
+      null;
+
+    setUnpaidCharges(charges);
+    selectedChargeGroupKeyRef.current = nextGroup?.key ?? "";
+    setSelectedChargeGroupKey(nextGroup?.key ?? "");
+    setSelectedChargeIds(
+      nextGroup?.charges.map((charge) => charge.transactionId) ?? [],
+    );
+  }, []);
+
+  const applySalesHistory = useCallback((history: RecentSale[]) => {
+    setHistorySales(history);
+    setSelectedHistoryTransactionId((current) =>
+      history.some((sale) => sale.transactionId === current)
+        ? current
+        : history[0]?.transactionId ?? "",
+    );
+  }, []);
+
+  const loadUnpaidCharges = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setChargesStatus("loading");
+      setChargesMessage("");
+    }
 
     try {
       const response = await fetch("/api/sales", { cache: "no-store" });
@@ -1014,19 +1049,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       }
 
       const charges = Array.isArray(data?.charges) ? data.charges : [];
-      const groups = buildChargeGroups(charges);
-      const nextGroup =
-        groups.find((group) => group.key === selectedChargeGroupKeyRef.current) ??
-        groups[0] ??
-        null;
-      setUnpaidCharges(charges);
+      applyUnpaidCharges(charges);
       setChargesStatus("ready");
-      selectedChargeGroupKeyRef.current = nextGroup?.key ?? "";
-      setSelectedChargeGroupKey(nextGroup?.key ?? "");
-      setSelectedChargeIds(
-        nextGroup?.charges.map((charge) => charge.transactionId) ?? [],
-      );
     } catch (error) {
+      if (silent) return;
+
       setUnpaidCharges([]);
       setChargesStatus("sample");
       selectedChargeGroupKeyRef.current = "";
@@ -1036,11 +1063,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         error instanceof Error ? error.message : "Өр төлбөрүүдийг авч чадсангүй",
       );
     }
-  }, []);
+  }, [applyUnpaidCharges]);
 
-  const loadSalesHistory = useCallback(async () => {
-    setHistoryStatus("loading");
-    setHistoryMessage("");
+  const loadSalesHistory = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setHistoryStatus("loading");
+      setHistoryMessage("");
+    }
 
     try {
       const response = await fetch(
@@ -1056,14 +1086,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       }
 
       const history = Array.isArray(data?.history) ? data.history : [];
-      setHistorySales(history);
-      setSelectedHistoryTransactionId((current) =>
-        history.some((sale) => sale.transactionId === current)
-          ? current
-          : history[0]?.transactionId ?? "",
-      );
+      applySalesHistory(history);
       setHistoryStatus("ready");
     } catch (error) {
+      if (silent) return;
+
       setHistorySales([]);
       setSelectedHistoryTransactionId("");
       setHistoryStatus("sample");
@@ -1071,7 +1098,51 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         error instanceof Error ? error.message : "Төлөгдсөн түүх авч чадсангүй",
       );
     }
-  }, [businessDate]);
+  }, [applySalesHistory, businessDate]);
+
+  const loadSharedSalesData = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setChargesStatus("loading");
+      setHistoryStatus("loading");
+      setChargesMessage("");
+      setHistoryMessage("");
+    }
+
+    try {
+      const response = await fetch(
+        `/api/sales?businessDate=${encodeURIComponent(businessDate)}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json().catch(() => null)) as
+        | { charges?: UnpaidCharge[]; history?: RecentSale[]; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өр, түүх шинэчилж чадсангүй");
+      }
+
+      applyUnpaidCharges(Array.isArray(data?.charges) ? data.charges : []);
+      applySalesHistory(Array.isArray(data?.history) ? data.history : []);
+      setChargesStatus("ready");
+      setHistoryStatus("ready");
+    } catch (error) {
+      if (silent) return;
+
+      setUnpaidCharges([]);
+      selectedChargeGroupKeyRef.current = "";
+      setSelectedChargeGroupKey("");
+      setSelectedChargeIds([]);
+      setChargesStatus("sample");
+      setHistorySales([]);
+      setSelectedHistoryTransactionId("");
+      setHistoryStatus("sample");
+      const message =
+        error instanceof Error ? error.message : "Өр, түүх шинэчилж чадсангүй";
+      setChargesMessage(message);
+      setHistoryMessage(message);
+    }
+  }, [applySalesHistory, applyUnpaidCharges, businessDate]);
 
   const loadDayStatus = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -1118,34 +1189,37 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadCatalog();
-      void loadUnpaidCharges();
-      void loadSalesHistory();
+      void loadSharedSalesData();
       void loadDayStatus();
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [loadCatalog, loadDayStatus, loadSalesHistory, loadUnpaidCharges]);
+  }, [loadCatalog, loadDayStatus, loadSharedSalesData]);
 
   useEffect(() => {
-    const refreshDayStatus = () => {
+    const refreshSharedState = () => {
       void loadDayStatus({ silent: true });
+      void loadSharedSalesData({ silent: true });
     };
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
-        refreshDayStatus();
+        refreshSharedState();
       }
     };
-    const interval = window.setInterval(refreshDayStatus, 15000);
+    const interval = window.setInterval(
+      refreshSharedState,
+      SHARED_SALES_SYNC_INTERVAL_MS,
+    );
 
-    window.addEventListener("focus", refreshDayStatus);
+    window.addEventListener("focus", refreshSharedState);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", refreshDayStatus);
+      window.removeEventListener("focus", refreshSharedState);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [loadDayStatus]);
+  }, [loadDayStatus, loadSharedSalesData]);
 
   useEffect(() => {
     const storedMode = window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
@@ -1156,11 +1230,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     const readyTimer = window.setTimeout(() => {
       if (isRegisterMode(storedMode)) {
         setRegisterMode(storedMode);
-        if (storedMode === "charges") {
-          void loadUnpaidCharges();
-        } else if (storedMode === "history") {
-          void loadSalesHistory();
-        }
       }
       if (storedCategory) {
         setActiveCategory(storedCategory);
@@ -1169,7 +1238,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }, 0);
 
     return () => window.clearTimeout(readyTimer);
-  }, [loadSalesHistory, loadUnpaidCharges]);
+  }, []);
 
   useEffect(() => {
     if (!uiPreferencesLoadedRef.current) return;
@@ -1258,6 +1327,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const selectedHistorySale =
     historySales.find((sale) => sale.transactionId === selectedHistoryTransactionId) ??
     null;
+  const selectedHistorySaleTotal =
+    selectedHistorySale?.saleTotal ?? selectedHistorySale?.total ?? 0;
+  const selectedHistoryBalance = selectedHistorySale?.balance ?? 0;
+  const selectedHistoryPaidToDate =
+    selectedHistorySale?.paidToDate ?? selectedHistorySale?.paidAmount ?? 0;
+  const selectedHistoryPaymentTitle =
+    selectedHistorySale?.historyKind === "payment" ? "Энэ удаа төлсөн" : "Нийт төлсөн";
   const canSubmitVoid =
     voidStatus !== "saving" &&
     Boolean(selectedVoidSale) &&
@@ -1347,9 +1423,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     settlementStatus !== "saving";
   const settlementSubmitLabel = settlementStatus === "saving"
     ? "Бичиж байна"
+    : settlementLines.length === 0
+      ? "Төлбөр нэмнэ үү"
     : settlementRemaining === 0
       ? "Төлбөр хаах"
-      : "Хэсэгчилсэн төлбөр бичих";
+      : "Үлдэгдэлтэй хадгалах";
   function addToCart(item: CatalogItem, priceMode: PriceMode = getDefaultPriceMode(item)) {
     setSaleStatus("idle");
     setSaleMessage("");
@@ -1636,8 +1714,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       await Promise.all([
         loadVoidableSales(),
         loadDayStatus(),
-        loadUnpaidCharges(),
-        loadSalesHistory(),
+        loadSharedSalesData(),
       ]);
       setVoidStatus("success");
       setVoidMessage(
@@ -1672,10 +1749,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("");
     setSettlementStatus("idle");
     setSettlementMessage("");
-    if (mode === "charges") {
-      void loadUnpaidCharges();
-    } else if (mode === "history") {
-      void loadSalesHistory();
+    if (mode === "charges" || mode === "history") {
+      void loadSharedSalesData();
     }
   }
 
@@ -1849,8 +1924,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSettlementLines([]);
       resetSettlementDraft();
       await Promise.allSettled([
-        loadUnpaidCharges(),
-        loadSalesHistory(),
+        loadSharedSalesData(),
         loadDayStatus(),
         voidModalOpen ? loadVoidableSales() : Promise.resolve(),
       ]);
@@ -1965,7 +2039,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     resetSettlementDraft();
   }
 
-  function addQuickSettlementLine(method: "cash" | "card") {
+  function addQuickSettlementLine(method: SettlementMethod) {
     if (
       selectedCharges.length === 0 ||
       settlementStatus === "saving" ||
@@ -1987,7 +2061,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     const methodLabel =
       SETTLEMENT_METHODS.find((item) => item.id === method)?.label ?? method;
     const amount = settlementDraftAmount;
-    setSettlementMethod(method);
+    const nextRemaining = Math.max(settlementRemaining - amount, 0);
+    const nextMethod: SettlementMethod =
+      nextRemaining > 0 && method === "cash" ? "card" : "cash";
+    setSettlementMethod(nextRemaining > 0 ? nextMethod : method);
     setSettlementLines((current) => [
       ...current,
       {
@@ -2196,7 +2273,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       );
       setSettlementLines([]);
       resetSettlementDraft();
-      await Promise.all([loadUnpaidCharges(), loadSalesHistory()]);
+      await loadSharedSalesData();
     } catch (error) {
       closePrintWindow(receiptWindow);
       setSettlementStatus("error");
@@ -2407,8 +2484,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSettlementStatus("success");
       setSettlementMessage(`${editedTransactionId} захиалгын засвар хадгалагдлаа`);
       await Promise.allSettled([
-        loadUnpaidCharges(),
-        loadSalesHistory(),
+        loadSharedSalesData(),
         loadDayStatus(),
       ]);
     } catch (error) {
@@ -2529,8 +2605,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         );
       }
       await Promise.allSettled([
-        roomRequired ? loadUnpaidCharges() : Promise.resolve(),
-        loadSalesHistory(),
+        loadSharedSalesData(),
         loadDayStatus(),
       ]);
       setSaleMessage(
@@ -2660,8 +2735,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             type="button"
             onClick={() => {
               void loadCatalog();
-              void loadUnpaidCharges();
-              void loadSalesHistory();
+              void loadSharedSalesData();
               void loadDayStatus();
             }}
             className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
@@ -2915,7 +2989,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   <div>
                     <h2 className="text-base font-black">Төлөгдсөн түүх</h2>
                     <p className="text-xs font-semibold text-[#6b7280]">
-                      Өнөөдрийн төлбөр хийгдсэн борлуулалт, баримт дахин хэвлэх
+                      Өнөөдрийн борлуулалт болон өр төлөлт, баримт дахин хэвлэх
                     </p>
                   </div>
                   <button
@@ -2944,45 +3018,53 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </div>
                 ) : historySales.length === 0 ? (
                   <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
-                    Өнөөдөр төлөгдсөн борлуулалт алга.
+                    Өнөөдрийн борлуулалт / өр төлөлт алга.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                    {historySales.map((sale) => (
-                      <button
-                        key={sale.transactionId}
-                        type="button"
-                        onClick={() =>
-                          setSelectedHistoryTransactionId(sale.transactionId)
-                        }
-                        className={`rounded-md border bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow ${
-                          selectedHistoryTransactionId === sale.transactionId
-                            ? "border-[#111827] ring-2 ring-[#111827]"
-                            : "border-[#d1d5db]"
-                        }`}
-                      >
-                        <div className="mb-2 flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="break-words text-base font-black">
-                              {sale.transactionId}
-                            </p>
-                            <p className="text-xs font-semibold text-[#6b7280]">
-                              {sale.timestamp} · {sale.staff}
-                            </p>
+                    {historySales.map((sale) => {
+                      const balance = sale.balance ?? 0;
+                      const isPartial = sale.paidStatus === "partial" || balance > 0;
+
+                      return (
+                        <button
+                          key={sale.transactionId}
+                          type="button"
+                          onClick={() =>
+                            setSelectedHistoryTransactionId(sale.transactionId)
+                          }
+                          className={`rounded-md border bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow ${
+                            selectedHistoryTransactionId === sale.transactionId
+                              ? "border-[#111827] ring-2 ring-[#111827]"
+                              : "border-[#d1d5db]"
+                          }`}
+                        >
+                          <div className="mb-2 flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="break-words text-base font-black">
+                                {sale.transactionId}
+                              </p>
+                              <p className="text-xs font-semibold text-[#6b7280]">
+                                {sale.timestamp} · {sale.staff}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-lg font-black text-[#047857]">
+                              {formatMNT(sale.total)}
+                            </span>
                           </div>
-                          <span className="shrink-0 text-lg font-black text-[#047857]">
-                            {formatMNT(sale.total)}
-                          </span>
-                        </div>
-                        <p className="break-words text-sm font-semibold text-[#374151]">
-                          {sale.itemSummary || sale.paymentMethod}
-                        </p>
-                        <p className="mt-2 text-xs font-bold text-[#6b7280]">
-                          {sale.paymentMethod} · Төлсөн {formatMNT(sale.paidAmount)}
-                          {sale.roomOrGuest ? ` · ${sale.roomOrGuest}` : ""}
-                        </p>
-                      </button>
-                    ))}
+                          <p className="break-words text-sm font-semibold text-[#374151]">
+                            {sale.itemSummary || sale.paymentMethod}
+                          </p>
+                          <p className="mt-2 text-xs font-bold text-[#6b7280]">
+                            {sale.paymentMethod} ·{" "}
+                            {isPartial ? "Хэсэгчилсэн" : "Төлсөн"}{" "}
+                            {formatMNT(sale.paidAmount)}
+                            {balance > 0 ? ` · Үлдэгдэл ${formatMNT(balance)}` : ""}
+                            {sale.roomOrGuest ? ` · ${sale.roomOrGuest}` : ""}
+                          </p>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -3594,126 +3676,144 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       </div>
                     )}
 
-                    <div className="mb-3 grid grid-cols-3 gap-2">
-                      {SETTLEMENT_METHODS.map((method) => (
-                        <button
-                          key={method.id}
-                          type="button"
-                          onClick={() => selectSettlementMethod(method.id)}
-                          className={`h-11 rounded-md border text-sm font-extrabold ${
-                            settlementMethod === method.id
-                              ? "border-[#111827] bg-[#111827] text-white"
-                              : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
-                          }`}
-                        >
-                          {method.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                      <div className="mb-2 grid grid-cols-2 gap-3">
-                        <label>
-                          <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                            Энэ мөрийн дүн
-                          </span>
-                          <input
-                            value={
-                              settlementPaymentAmount
-                                ? formatNumber(settlementPaymentAmount)
-                                : ""
-                            }
-                            onChange={(event) =>
-                              setSettlementAmountInput(event.target.value)
-                            }
-                            type="text"
-                            inputMode="numeric"
-                            placeholder={formatNumber(settlementRemaining)}
-                            className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
-                          />
-                        </label>
-                        <div>
-                          <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                            Үлдэгдэл
-                          </span>
-                          <div
-                            className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
-                              settlementDraftOverRemaining
-                                ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                                : "border-[#d1d5db] bg-white"
+                    {settlementRemaining > 0 && (
+                      <div className="mb-3 grid grid-cols-3 gap-2">
+                        {SETTLEMENT_METHODS.map((method) => (
+                          <button
+                            key={method.id}
+                            type="button"
+                            onClick={() => selectSettlementMethod(method.id)}
+                            className={`h-11 rounded-md border text-sm font-extrabold ${
+                              settlementMethod === method.id
+                                ? "border-[#111827] bg-[#111827] text-white"
+                                : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
                             }`}
                           >
-                            {formatNumber(settlementRemaining)}
+                            {method.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {settlementRemaining > 0 && (
+                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
+                        <div className="mb-2 grid grid-cols-2 gap-3">
+                          <label>
+                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                              Энэ мөрийн дүн
+                            </span>
+                            <input
+                              value={
+                                settlementPaymentAmount
+                                  ? formatNumber(settlementPaymentAmount)
+                                  : ""
+                              }
+                              onChange={(event) =>
+                                setSettlementAmountInput(event.target.value)
+                              }
+                              type="text"
+                              inputMode="numeric"
+                              placeholder={formatNumber(settlementRemaining)}
+                              className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                            />
+                          </label>
+                          <div>
+                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                              Үлдэгдэл
+                            </span>
+                            <div
+                              className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
+                                settlementDraftOverRemaining
+                                  ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
+                                  : "border-[#d1d5db] bg-white"
+                              }`}
+                            >
+                              {formatNumber(settlementRemaining)}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettlementPaymentAmount(settlementRemaining);
+                              setSettlementCardTerminalApproved(false);
+                              resetSettlementQPayPayment();
+                            }}
+                            className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                          >
+                            Үлдэгдэл
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettlementPaymentAmount(0);
+                              setSettlementCardTerminalApproved(false);
+                              resetSettlementQPayPayment();
+                            }}
+                            className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
+                          >
+                            Auto
+                          </button>
+                          <button
+                            type="button"
+                            onClick={addSettlementLine}
+                            disabled={
+                              selectedCharges.length === 0 ||
+                              settlementStatus === "saving" ||
+                              settlementRemaining <= 0
+                            }
+                            className="h-10 rounded-md bg-[#111827] text-xs font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                          >
+                            Сонгосноор нэмэх
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {settlementRemaining > 0 && (
+                      <div className="mb-3 grid grid-cols-3 gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setSettlementPaymentAmount(settlementRemaining);
-                            setSettlementCardTerminalApproved(false);
-                            resetSettlementQPayPayment();
-                          }}
-                          className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
-                        >
-                          Үлдэгдэл
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSettlementPaymentAmount(0);
-                            setSettlementCardTerminalApproved(false);
-                            resetSettlementQPayPayment();
-                          }}
-                          className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
-                        >
-                          Auto
-                        </button>
-                        <button
-                          type="button"
-                          onClick={addSettlementLine}
+                          onClick={() => addQuickSettlementLine("cash")}
                           disabled={
                             selectedCharges.length === 0 ||
                             settlementStatus === "saving" ||
                             settlementRemaining <= 0
                           }
-                          className="h-10 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                          className="h-11 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] text-sm font-extrabold text-[#047857] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
                         >
-                          Мөр нэмэх
+                          Бэлэн нэмэх
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addQuickSettlementLine("card")}
+                          disabled={
+                            selectedCharges.length === 0 ||
+                            settlementStatus === "saving" ||
+                            settlementRemaining <= 0
+                          }
+                          className="h-11 rounded-md border border-[#bfdbfe] bg-[#eff6ff] text-sm font-extrabold text-[#1d4ed8] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
+                        >
+                          Карт нэмэх
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addQuickSettlementLine("qpay")}
+                          disabled={
+                            selectedCharges.length === 0 ||
+                            settlementStatus === "saving" ||
+                            settlementRemaining <= 0
+                          }
+                          className="h-11 rounded-md border border-[#ddd6fe] bg-[#f5f3ff] text-sm font-extrabold text-[#6d28d9] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
+                        >
+                          Данс нэмэх
                         </button>
                       </div>
-                    </div>
+                    )}
 
-                    <div className="mb-3 grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => addQuickSettlementLine("cash")}
-                        disabled={
-                          selectedCharges.length === 0 ||
-                          settlementStatus === "saving" ||
-                          settlementRemaining <= 0
-                        }
-                        className="h-11 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] text-sm font-extrabold text-[#047857] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
-                      >
-                        Бэлнээр нэмэх
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => addQuickSettlementLine("card")}
-                        disabled={
-                          selectedCharges.length === 0 ||
-                          settlementStatus === "saving" ||
-                          settlementRemaining <= 0
-                        }
-                        className="h-11 rounded-md border border-[#bfdbfe] bg-[#eff6ff] text-sm font-extrabold text-[#1d4ed8] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
-                      >
-                        Картаар нэмэх
-                      </button>
-                    </div>
-
-                    {settlementCashRequired && (
+                    {settlementRemaining > 0 && settlementCashRequired && (
                       <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
                         <div className="mb-2 grid grid-cols-2 gap-3">
                           <label>
@@ -3788,7 +3888,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       </div>
                     )}
 
-                    {settlementCardRequired && (
+                    {settlementRemaining > 0 && settlementCardRequired && (
                       <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <div>
@@ -3833,7 +3933,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       </div>
                     )}
 
-                    {settlementQPayRequired && (
+                    {settlementRemaining > 0 && settlementQPayRequired && (
                       <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <div>
@@ -3936,7 +4036,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     <div className="rounded-md border border-[#d1d5db] bg-white p-3">
                       <div className="flex items-end justify-between gap-3">
                         <span className="text-sm font-semibold text-[#6b7280]">
-                          Нийт төлсөн
+                          {selectedHistoryPaymentTitle}
                         </span>
                         <span className="text-3xl font-black tracking-normal">
                           {formatMNT(selectedHistorySale.paidAmount)}
@@ -3948,9 +4048,27 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             Борлуулалтын дүн
                           </p>
                           <p className="font-black">
-                            {formatMNT(selectedHistorySale.total)}
+                            {formatMNT(selectedHistorySaleTotal)}
                           </p>
                         </div>
+                        <div>
+                          <p className="text-xs font-bold text-[#6b7280]">
+                            Нийт төлсөн
+                          </p>
+                          <p className="font-black">
+                            {formatMNT(selectedHistoryPaidToDate)}
+                          </p>
+                        </div>
+                        {selectedHistoryBalance > 0 && (
+                          <div>
+                            <p className="text-xs font-bold text-[#6b7280]">
+                              Үлдэгдэл
+                            </p>
+                            <p className="font-black text-[#b45309]">
+                              {formatMNT(selectedHistoryBalance)}
+                            </p>
+                          </div>
+                        )}
                         <div>
                           <p className="text-xs font-bold text-[#6b7280]">
                             Бараа

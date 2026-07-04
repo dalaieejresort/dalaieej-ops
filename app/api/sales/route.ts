@@ -349,6 +349,86 @@ function businessDateFromTimestamp(value: unknown) {
   return '';
 }
 
+function timestampMs(value: unknown) {
+  const timestamp = String(value ?? '').trim();
+  const match = timestamp.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i,
+  );
+
+  if (match) {
+    const [, month, day, year, hour, minute, second = '0', meridiem = ''] = match;
+    let hour24 = Number(hour);
+    if (meridiem.toUpperCase() === 'PM' && hour24 !== 12) hour24 += 12;
+    if (meridiem.toUpperCase() === 'AM' && hour24 === 12) hour24 = 0;
+
+    return Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      hour24,
+      Number(minute),
+      Number(second),
+    );
+  }
+
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function getBusinessDatePaymentActivity(
+  rows: Array<{ get: (columnName: string) => unknown }>,
+  businessDate: string,
+) {
+  const activity = new Map<
+    string,
+    {
+      amount: number;
+      latestTimestamp: string;
+      sortTime: number;
+      labels: string[];
+      cashReceived: number;
+      changeDue: number;
+      qpayInvoiceIds: string[];
+    }
+  >();
+
+  for (const row of rows) {
+    if (businessDateFromTimestamp(row.get('timestamp')) !== businessDate) continue;
+
+    const transactionId = getCell(row, 'transaction_id');
+    const amount = toNumber(row.get('amount'));
+    if (!transactionId || amount <= 0) continue;
+
+    const timestamp = getCell(row, 'timestamp');
+    const sortTime = timestampMs(timestamp);
+    const method = getCell(row, 'payment_method') || 'Төлбөр';
+    const qpayInvoiceId = getCell(row, 'qpay_invoice_id');
+    const current = activity.get(transactionId) ?? {
+      amount: 0,
+      latestTimestamp: timestamp,
+      sortTime,
+      labels: [],
+      cashReceived: 0,
+      changeDue: 0,
+      qpayInvoiceIds: [],
+    };
+
+    current.amount += amount;
+    current.labels.push(`${method} ${amount}`);
+    current.cashReceived += toNumber(row.get('cash_received'));
+    current.changeDue += toNumber(row.get('change_due'));
+    if (qpayInvoiceId) current.qpayInvoiceIds.push(qpayInvoiceId);
+    if (sortTime >= current.sortTime) {
+      current.latestTimestamp = timestamp;
+      current.sortTime = sortTime;
+    }
+
+    activity.set(transactionId, current);
+  }
+
+  return activity;
+}
+
 function createPaymentId() {
   return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 }
@@ -632,6 +712,10 @@ export async function GET(request: Request) {
     ]);
     const paymentTotals = getPaymentTotals(paymentRows);
     const paymentSummaries = getPaymentSummaries(paymentRows);
+    const businessDatePaymentActivity = getBusinessDatePaymentActivity(
+      paymentRows,
+      businessDate,
+    );
 
     if (requestedTransactionId) {
       const saleRow = salesRows.find(
@@ -706,39 +790,85 @@ export async function GET(request: Request) {
       .filter(charge => charge.balance > 0)
       .filter(charge => charge.transactionId);
     const history = salesRows
-      .filter(row => businessDateFromTimestamp(row.get('timestamp')) === businessDate)
-      .map(row => {
+      .flatMap(row => {
         const transactionId = getCell(row, 'transaction_id');
-        const total = toNumber(row.get('total'));
+        const saleTimestamp = getCell(row, 'timestamp');
+        const saleTotal = toNumber(row.get('total'));
         const recordedPaidAmount = paymentTotals.get(transactionId) ?? 0;
+        const paymentActivity = businessDatePaymentActivity.get(transactionId);
+        const hasBusinessDatePayment = Number(paymentActivity?.amount ?? 0) > 0;
+        const saleIsFromBusinessDate =
+          businessDateFromTimestamp(saleTimestamp) === businessDate;
         const paidStatus = getCell(row, 'paid_status').toLowerCase();
         const effectivePaidStatus =
-          recordedPaidAmount >= total && paidStatus !== 'voided' ? 'paid' : paidStatus;
-        const paidAmount =
-          effectivePaidStatus === 'paid' && recordedPaidAmount <= 0 ? total : recordedPaidAmount;
+          recordedPaidAmount >= saleTotal && paidStatus !== 'voided' ? 'paid' : paidStatus;
+        const isPaidSale = effectivePaidStatus === 'paid';
+        const shouldInclude =
+          transactionId &&
+          saleTotal > 0 &&
+          paidStatus !== 'voided' &&
+          ((saleIsFromBusinessDate && isPaidSale) || hasBusinessDatePayment);
 
-        return {
+        if (!shouldInclude) return [];
+
+        const displayPaidAmount = hasBusinessDatePayment
+          ? Number(paymentActivity?.amount ?? 0)
+          : isPaidSale && recordedPaidAmount <= 0
+            ? saleTotal
+            : recordedPaidAmount;
+        const balance = Math.max(saleTotal - recordedPaidAmount, 0);
+        const historyStatus = isPaidSale ? 'paid' : 'partial';
+
+        return [{
           transactionId,
-          timestamp: getCell(row, 'timestamp'),
+          timestamp: paymentActivity?.latestTimestamp || saleTimestamp,
           staff: getCell(row, 'staff'),
-          paymentMethod: paymentSummaries.get(transactionId) || getCell(row, 'payment_method'),
-          paidStatus: effectivePaidStatus,
+          paymentMethod:
+            paymentActivity?.labels.join(' + ') ||
+            paymentSummaries.get(transactionId) ||
+            getCell(row, 'payment_method'),
+          paidStatus: historyStatus,
           roomOrGuest: getCell(row, 'room_or_guest'),
-          total,
-          paidAmount,
-          refundableAmount: Math.max(paidAmount, 0),
+          total: displayPaidAmount,
+          saleTotal,
+          paidAmount: displayPaidAmount,
+          paidToDate: Math.max(recordedPaidAmount, 0),
+          balance,
+          historyKind: hasBusinessDatePayment ? 'payment' : 'sale',
+          refundableAmount: Math.max(displayPaidAmount, 0),
           itemCount: toNumber(row.get('item_count')),
           itemSummary: getCell(row, 'item_summary'),
-          qpayInvoiceId: getCell(row, 'qpay_invoice_id'),
-          cashReceived: toNumber(row.get('cash_received')),
-          changeDue: toNumber(row.get('change_due')),
+          qpayInvoiceId:
+            paymentActivity?.qpayInvoiceIds.join(' + ') || getCell(row, 'qpay_invoice_id'),
+          cashReceived: paymentActivity?.cashReceived || toNumber(row.get('cash_received')),
+          changeDue: paymentActivity?.changeDue || toNumber(row.get('change_due')),
           notes: getCell(row, 'notes'),
-        };
+          sortTime: paymentActivity?.sortTime || timestampMs(saleTimestamp),
+        }];
       })
-      .filter(sale => sale.transactionId)
-      .filter(sale => sale.paidStatus === 'paid' && sale.total > 0)
-      .reverse()
-      .slice(0, 50);
+      .sort((a, b) => b.sortTime - a.sortTime)
+      .slice(0, 50)
+      .map(sale => ({
+        transactionId: sale.transactionId,
+        timestamp: sale.timestamp,
+        staff: sale.staff,
+        paymentMethod: sale.paymentMethod,
+        paidStatus: sale.paidStatus,
+        roomOrGuest: sale.roomOrGuest,
+        total: sale.total,
+        saleTotal: sale.saleTotal,
+        paidAmount: sale.paidAmount,
+        paidToDate: sale.paidToDate,
+        balance: sale.balance,
+        historyKind: sale.historyKind,
+        refundableAmount: sale.refundableAmount,
+        itemCount: sale.itemCount,
+        itemSummary: sale.itemSummary,
+        qpayInvoiceId: sale.qpayInvoiceId,
+        cashReceived: sale.cashReceived,
+        changeDue: sale.changeDue,
+        notes: sale.notes,
+      }));
 
     return NextResponse.json({ charges: unpaidCharges, history });
   } catch (error) {
