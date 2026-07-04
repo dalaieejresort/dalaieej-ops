@@ -97,6 +97,7 @@ type SettlementStatus = "idle" | "saving" | "success" | "error";
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
 const SHARED_SALES_SYNC_INTERVAL_MS = 60000;
+const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 30000;
 const CATALOG_RETRY_DELAY_MS = 15000;
 const CATALOG_RETRY_INTERVAL_MS = 120000;
 
@@ -966,6 +967,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [settlementMessage, setSettlementMessage] = useState("");
   const selectedChargeGroupKeyRef = useRef("");
   const uiPreferencesLoadedRef = useRef(false);
+  const lastSharedRefreshAtRef = useRef(0);
   const localIdSequenceRef = useRef(0);
 
   function getNextLocalId(prefix: string) {
@@ -973,9 +975,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     return `${prefix}-${localIdSequenceRef.current}`;
   }
 
-  const loadCatalog = useCallback(async () => {
+  const loadCatalog = useCallback(async (options?: { fresh?: boolean }) => {
     try {
-      const response = await fetch("/api/inventory", { cache: "no-store" });
+      const response = await fetch(
+        options?.fresh ? "/api/inventory?fresh=1" : "/api/inventory",
+        { cache: "no-store" },
+      );
       if (!response.ok) throw new Error("Catalogue request failed");
 
       const data = (await response.json()) as CatalogResponseItem[];
@@ -1017,7 +1022,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     );
   }, []);
 
-  const loadUnpaidCharges = useCallback(async (options?: { silent?: boolean }) => {
+  const loadUnpaidCharges = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
     if (!silent) {
       setChargesStatus("loading");
@@ -1025,7 +1030,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
 
     try {
-      const response = await fetch("/api/sales", { cache: "no-store" });
+      const response = await fetch(
+        options?.fresh ? "/api/sales?fresh=1" : "/api/sales",
+        { cache: "no-store" },
+      );
       const data = (await response.json().catch(() => null)) as
         | { charges?: UnpaidCharge[]; error?: string }
         | null;
@@ -1051,7 +1059,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, [applyUnpaidCharges]);
 
-  const loadSalesHistory = useCallback(async (options?: { silent?: boolean }) => {
+  const loadSalesHistory = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
     if (!silent) {
       setHistoryStatus("loading");
@@ -1059,8 +1067,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
 
     try {
+      const params = new URLSearchParams({ businessDate });
+      if (options?.fresh) params.set("fresh", "1");
       const response = await fetch(
-        `/api/sales?businessDate=${encodeURIComponent(businessDate)}`,
+        `/api/sales?${params.toString()}`,
         { cache: "no-store" },
       );
       const data = (await response.json().catch(() => null)) as
@@ -1086,7 +1096,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, [applySalesHistory, businessDate]);
 
-  const loadSharedSalesData = useCallback(async (options?: { silent?: boolean }) => {
+  const loadSharedSalesData = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
     if (!silent) {
       setChargesStatus("loading");
@@ -1096,8 +1106,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
 
     try {
+      const params = new URLSearchParams({ businessDate });
+      if (options?.fresh) params.set("fresh", "1");
       const response = await fetch(
-        `/api/sales?businessDate=${encodeURIComponent(businessDate)}`,
+        `/api/sales?${params.toString()}`,
         { cache: "no-store" },
       );
       const data = (await response.json().catch(() => null)) as
@@ -1130,7 +1142,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }, [applySalesHistory, applyUnpaidCharges, businessDate]);
 
-  const loadDayStatus = useCallback(async (options?: { silent?: boolean }) => {
+  const loadDayStatus = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
     if (!silent) {
       setDayStatus("loading");
@@ -1138,8 +1150,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
 
     try {
+      const params = new URLSearchParams({ businessDate });
+      if (options?.fresh) params.set("fresh", "1");
       const response = await fetch(
-        `/api/day?businessDate=${encodeURIComponent(businessDate)}`,
+        `/api/day?${params.toString()}`,
         { cache: "no-store" },
       );
       const data = (await response.json().catch(() => null)) as
@@ -1174,6 +1188,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      lastSharedRefreshAtRef.current = Date.now();
       void loadCatalog();
       void loadSharedSalesData();
       void loadDayStatus();
@@ -1183,7 +1198,16 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }, [loadCatalog, loadDayStatus, loadSharedSalesData]);
 
   useEffect(() => {
-    const refreshSharedState = () => {
+    const refreshSharedState = (force = false) => {
+      const now = Date.now();
+      if (
+        !force &&
+        now - lastSharedRefreshAtRef.current < SHARED_REFRESH_FOCUS_COOLDOWN_MS
+      ) {
+        return;
+      }
+
+      lastSharedRefreshAtRef.current = now;
       void loadDayStatus({ silent: true });
       void loadSharedSalesData({ silent: true });
     };
@@ -1192,17 +1216,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         refreshSharedState();
       }
     };
+    const refreshWhenFocused = () => {
+      refreshSharedState();
+    };
     const interval = window.setInterval(
-      refreshSharedState,
+      () => refreshSharedState(true),
       SHARED_SALES_SYNC_INTERVAL_MS,
     );
 
-    window.addEventListener("focus", refreshSharedState);
+    window.addEventListener("focus", refreshWhenFocused);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", refreshSharedState);
+      window.removeEventListener("focus", refreshWhenFocused);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadDayStatus, loadSharedSalesData]);
@@ -1853,8 +1880,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setVoidReason("");
       await Promise.all([
         loadVoidableSales(),
-        loadDayStatus(),
-        loadSharedSalesData(),
+        loadDayStatus({ fresh: true }),
+        loadSharedSalesData({ fresh: true }),
       ]);
       setVoidStatus("success");
       setVoidMessage(
@@ -2067,8 +2094,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSettlementLines([]);
       resetSettlementDraft();
       await Promise.allSettled([
-        loadSharedSalesData(),
-        loadDayStatus(),
+        loadSharedSalesData({ fresh: true }),
+        loadDayStatus({ fresh: true }),
         voidModalOpen ? loadVoidableSales() : Promise.resolve(),
       ]);
       setSettlementStatus("success");
@@ -2258,7 +2285,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       );
       setSettlementLines([]);
       resetSettlementDraft();
-      await loadSharedSalesData();
+      await loadSharedSalesData({ fresh: true });
     } catch (error) {
       closePrintWindow(receiptWindow);
       setSettlementStatus("error");
@@ -2390,8 +2417,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSettlementStatus("success");
       setSettlementMessage(`${editedTransactionId} захиалгын засвар хадгалагдлаа`);
       await Promise.allSettled([
-        loadSharedSalesData(),
-        loadDayStatus(),
+        loadSharedSalesData({ fresh: true }),
+        loadDayStatus({ fresh: true }),
       ]);
     } catch (error) {
       setSaleStatus("error");
@@ -2549,8 +2576,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         );
       }
       await Promise.allSettled([
-        loadSharedSalesData(),
-        loadDayStatus(),
+        loadSharedSalesData({ fresh: true }),
+        loadDayStatus({ fresh: true }),
       ]);
       setSaleMessage(
         [
@@ -2682,9 +2709,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           <button
             type="button"
             onClick={() => {
-              void loadCatalog();
-              void loadSharedSalesData();
-              void loadDayStatus();
+              void loadCatalog({ fresh: true });
+              void loadSharedSalesData({ fresh: true });
+              void loadDayStatus({ fresh: true });
             }}
             className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
           >

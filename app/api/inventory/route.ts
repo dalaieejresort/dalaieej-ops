@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import {
   isUnlimitedInventoryItem,
 } from '@/lib/pos/inventory';
+import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -34,6 +35,8 @@ type InventoryPaymentInput = {
 };
 
 type SheetDoc = GoogleSpreadsheet;
+
+const INVENTORY_READ_CACHE_TTL_MS = 30000;
 
 const CATALOG_SHEET_TITLES = [
   process.env.GOOGLE_CATALOG_SHEET_TITLE,
@@ -296,34 +299,45 @@ function logInventoryError(label: string, error: unknown) {
 // ==========================================
 // GET: Fetch the Catalog for the iPad Screen
 // ==========================================
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const doc = await loadSpreadsheet();
-    const catalogSheet = findSheet(doc, CATALOG_SHEET_TITLES, 'inventory catalogue');
-    const rows = await catalogSheet.getRows();
+    const url = new URL(request.url);
+    const bypassCache = url.searchParams.get('fresh') === '1';
+    const loadCatalog = async () => {
+      const doc = await loadSpreadsheet();
+      const catalogSheet = findSheet(doc, CATALOG_SHEET_TITLES, 'inventory catalogue');
+      const rows = await catalogSheet.getRows();
 
-    // Clean up the Google Sheets data into a simple JSON array for your React frontend
-    const products = rows.map(row => {
-      const guestPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.guestPrice));
-      const staffPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.staffPrice));
+      // Clean up the Google Sheets data into a simple JSON array for your React frontend
+      const products = rows.map(row => {
+        const guestPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.guestPrice));
+        const staffPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.staffPrice));
 
-      return {
-        sku: String(getFirstValue(row, CATALOG_COLUMNS.sku)),
-        name: String(getFirstValue(row, CATALOG_COLUMNS.name)),
-        category: String(getFirstValue(row, CATALOG_COLUMNS.category)),
-        price: guestPrice || staffPrice,
-        guestPrice: guestPrice || undefined,
-        staffPrice: staffPrice || undefined,
-        stock: toNumber(getFirstValue(row, CATALOG_COLUMNS.stock)),
-      };
-    });
+        return {
+          sku: String(getFirstValue(row, CATALOG_COLUMNS.sku)),
+          name: String(getFirstValue(row, CATALOG_COLUMNS.name)),
+          category: String(getFirstValue(row, CATALOG_COLUMNS.category)),
+          price: guestPrice || staffPrice,
+          guestPrice: guestPrice || undefined,
+          staffPrice: staffPrice || undefined,
+          stock: toNumber(getFirstValue(row, CATALOG_COLUMNS.stock)),
+        };
+      });
 
-    // Stock-tracked items need stock; made-to-order food/menu items stay sellable.
-    const validProducts = products.filter(
-      p =>
-        p.sku &&
-        (p.stock > 0 || isUnlimitedInventoryItem(p)),
-    );
+      // Stock-tracked items need stock; made-to-order food/menu items stay sellable.
+      return products.filter(
+        p =>
+          p.sku &&
+          (p.stock > 0 || isUnlimitedInventoryItem(p)),
+      );
+    };
+    const validProducts = bypassCache
+      ? await loadCatalog()
+      : await getCachedRead(
+        'inventory:catalog',
+        INVENTORY_READ_CACHE_TTL_MS,
+        loadCatalog,
+      );
 
     return NextResponse.json(validProducts);
   } catch (error) {
@@ -501,6 +515,9 @@ export async function POST(request: Request) {
         ? paymentsLogSheet.addRows(paymentRows)
         : Promise.resolve(),
     ]);
+    clearCachedReads('day:');
+    clearCachedReads('sales:');
+    clearCachedReads('inventory:');
 
     return NextResponse.json({
       success: true,

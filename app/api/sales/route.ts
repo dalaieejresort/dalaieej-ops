@@ -2,6 +2,7 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
 import { isUnlimitedInventoryItem } from '@/lib/pos/inventory';
+import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -51,6 +52,8 @@ type CatalogRowItem = {
   staffPrice: number;
   price: number;
 };
+
+const SALES_READ_CACHE_TTL_MS = 10000;
 
 const SALES_LOG_SHEET_TITLES = [
   process.env.GOOGLE_SALES_SHEET_TITLE,
@@ -703,21 +706,17 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const requestedTransactionId = url.searchParams.get('transactionId')?.trim();
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
-    const doc = await loadSpreadsheet();
-    const salesLogSheet = await getOrCreateSalesLogSheet(doc);
-    const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
-    const [salesRows, paymentRows] = await Promise.all([
-      salesLogSheet.getRows() as Promise<SheetRow[]>,
-      paymentsLogSheet.getRows(),
-    ]);
-    const paymentTotals = getPaymentTotals(paymentRows);
-    const paymentSummaries = getPaymentSummaries(paymentRows);
-    const businessDatePaymentActivity = getBusinessDatePaymentActivity(
-      paymentRows,
-      businessDate,
-    );
+    const bypassCache = url.searchParams.get('fresh') === '1';
 
     if (requestedTransactionId) {
+      const doc = await loadSpreadsheet();
+      const salesLogSheet = await getOrCreateSalesLogSheet(doc);
+      const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
+      const [salesRows, paymentRows] = await Promise.all([
+        salesLogSheet.getRows() as Promise<SheetRow[]>,
+        paymentsLogSheet.getRows(),
+      ]);
+      const paymentTotals = getPaymentTotals(paymentRows);
       const saleRow = salesRows.find(
         row => getCell(row, 'transaction_id') === requestedTransactionId,
       );
@@ -761,116 +760,140 @@ export async function GET(request: Request) {
       });
     }
 
-    const unpaidCharges = salesRows
-      .filter(row => getCell(row, 'paid_status').toLowerCase() === 'unpaid')
-      .map(row => {
-        const transactionId = getCell(row, 'transaction_id');
-        const saleTotal = toNumber(row.get('total'));
-        const paidAmount = paymentTotals.get(transactionId) ?? 0;
-        const balance = Math.max(saleTotal - paidAmount, 0);
+    const loadSalesList = async () => {
+      const doc = await loadSpreadsheet();
+      const salesLogSheet = await getOrCreateSalesLogSheet(doc);
+      const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
+      const [salesRows, paymentRows] = await Promise.all([
+        salesLogSheet.getRows() as Promise<SheetRow[]>,
+        paymentsLogSheet.getRows(),
+      ]);
+      const paymentTotals = getPaymentTotals(paymentRows);
+      const paymentSummaries = getPaymentSummaries(paymentRows);
+      const businessDatePaymentActivity = getBusinessDatePaymentActivity(
+        paymentRows,
+        businessDate,
+      );
+      const unpaidCharges = salesRows
+        .filter(row => getCell(row, 'paid_status').toLowerCase() === 'unpaid')
+        .map(row => {
+          const transactionId = getCell(row, 'transaction_id');
+          const saleTotal = toNumber(row.get('total'));
+          const paidAmount = paymentTotals.get(transactionId) ?? 0;
+          const balance = Math.max(saleTotal - paidAmount, 0);
 
-        return {
-          transactionId,
-          timestamp: getCell(row, 'timestamp'),
-          staff: getCell(row, 'staff'),
-          paymentMethod: getCell(row, 'payment_method'),
-          roomOrGuest: getCell(row, 'room_or_guest'),
-          subtotal: toNumber(row.get('subtotal')),
-          discount: toNumber(row.get('discount')),
-          total: balance,
-          originalTotal: saleTotal,
-          paidAmount,
-          balance,
-          itemCount: toNumber(row.get('item_count')),
-          itemSummary: getCell(row, 'item_summary'),
-          qpayInvoiceId: getCell(row, 'qpay_invoice_id'),
-          notes: getCell(row, 'notes'),
-        };
-      })
-      .filter(charge => charge.balance > 0)
-      .filter(charge => charge.transactionId);
-    const history = salesRows
-      .flatMap(row => {
-        const transactionId = getCell(row, 'transaction_id');
-        const saleTimestamp = getCell(row, 'timestamp');
-        const saleTotal = toNumber(row.get('total'));
-        const recordedPaidAmount = paymentTotals.get(transactionId) ?? 0;
-        const paymentActivity = businessDatePaymentActivity.get(transactionId);
-        const hasBusinessDatePayment = Number(paymentActivity?.amount ?? 0) > 0;
-        const saleIsFromBusinessDate =
-          businessDateFromTimestamp(saleTimestamp) === businessDate;
-        const paidStatus = getCell(row, 'paid_status').toLowerCase();
-        const effectivePaidStatus =
-          recordedPaidAmount >= saleTotal && paidStatus !== 'voided' ? 'paid' : paidStatus;
-        const isPaidSale = effectivePaidStatus === 'paid';
-        const shouldInclude =
-          transactionId &&
-          saleTotal > 0 &&
-          paidStatus !== 'voided' &&
-          ((saleIsFromBusinessDate && isPaidSale) || hasBusinessDatePayment);
+          return {
+            transactionId,
+            timestamp: getCell(row, 'timestamp'),
+            staff: getCell(row, 'staff'),
+            paymentMethod: getCell(row, 'payment_method'),
+            roomOrGuest: getCell(row, 'room_or_guest'),
+            subtotal: toNumber(row.get('subtotal')),
+            discount: toNumber(row.get('discount')),
+            total: balance,
+            originalTotal: saleTotal,
+            paidAmount,
+            balance,
+            itemCount: toNumber(row.get('item_count')),
+            itemSummary: getCell(row, 'item_summary'),
+            qpayInvoiceId: getCell(row, 'qpay_invoice_id'),
+            notes: getCell(row, 'notes'),
+          };
+        })
+        .filter(charge => charge.balance > 0)
+        .filter(charge => charge.transactionId);
+      const history = salesRows
+        .flatMap(row => {
+          const transactionId = getCell(row, 'transaction_id');
+          const saleTimestamp = getCell(row, 'timestamp');
+          const saleTotal = toNumber(row.get('total'));
+          const recordedPaidAmount = paymentTotals.get(transactionId) ?? 0;
+          const paymentActivity = businessDatePaymentActivity.get(transactionId);
+          const hasBusinessDatePayment = Number(paymentActivity?.amount ?? 0) > 0;
+          const saleIsFromBusinessDate =
+            businessDateFromTimestamp(saleTimestamp) === businessDate;
+          const paidStatus = getCell(row, 'paid_status').toLowerCase();
+          const effectivePaidStatus =
+            recordedPaidAmount >= saleTotal && paidStatus !== 'voided' ? 'paid' : paidStatus;
+          const isPaidSale = effectivePaidStatus === 'paid';
+          const shouldInclude =
+            transactionId &&
+            saleTotal > 0 &&
+            paidStatus !== 'voided' &&
+            ((saleIsFromBusinessDate && isPaidSale) || hasBusinessDatePayment);
 
-        if (!shouldInclude) return [];
+          if (!shouldInclude) return [];
 
-        const displayPaidAmount = hasBusinessDatePayment
-          ? Number(paymentActivity?.amount ?? 0)
-          : isPaidSale && recordedPaidAmount <= 0
-            ? saleTotal
-            : recordedPaidAmount;
-        const balance = Math.max(saleTotal - recordedPaidAmount, 0);
-        const historyStatus = isPaidSale ? 'paid' : 'partial';
+          const displayPaidAmount = hasBusinessDatePayment
+            ? Number(paymentActivity?.amount ?? 0)
+            : isPaidSale && recordedPaidAmount <= 0
+              ? saleTotal
+              : recordedPaidAmount;
+          const balance = Math.max(saleTotal - recordedPaidAmount, 0);
+          const historyStatus = isPaidSale ? 'paid' : 'partial';
 
-        return [{
-          transactionId,
-          timestamp: paymentActivity?.latestTimestamp || saleTimestamp,
-          staff: getCell(row, 'staff'),
-          paymentMethod:
-            paymentActivity?.labels.join(' + ') ||
-            paymentSummaries.get(transactionId) ||
-            getCell(row, 'payment_method'),
-          paidStatus: historyStatus,
-          roomOrGuest: getCell(row, 'room_or_guest'),
-          total: displayPaidAmount,
-          saleTotal,
-          paidAmount: displayPaidAmount,
-          paidToDate: Math.max(recordedPaidAmount, 0),
-          balance,
-          historyKind: hasBusinessDatePayment ? 'payment' : 'sale',
-          refundableAmount: Math.max(displayPaidAmount, 0),
-          itemCount: toNumber(row.get('item_count')),
-          itemSummary: getCell(row, 'item_summary'),
-          qpayInvoiceId:
-            paymentActivity?.qpayInvoiceIds.join(' + ') || getCell(row, 'qpay_invoice_id'),
-          cashReceived: paymentActivity?.cashReceived || toNumber(row.get('cash_received')),
-          changeDue: paymentActivity?.changeDue || toNumber(row.get('change_due')),
-          notes: getCell(row, 'notes'),
-          sortTime: paymentActivity?.sortTime || timestampMs(saleTimestamp),
-        }];
-      })
-      .sort((a, b) => b.sortTime - a.sortTime)
-      .slice(0, 50)
-      .map(sale => ({
-        transactionId: sale.transactionId,
-        timestamp: sale.timestamp,
-        staff: sale.staff,
-        paymentMethod: sale.paymentMethod,
-        paidStatus: sale.paidStatus,
-        roomOrGuest: sale.roomOrGuest,
-        total: sale.total,
-        saleTotal: sale.saleTotal,
-        paidAmount: sale.paidAmount,
-        paidToDate: sale.paidToDate,
-        balance: sale.balance,
-        historyKind: sale.historyKind,
-        refundableAmount: sale.refundableAmount,
-        itemCount: sale.itemCount,
-        itemSummary: sale.itemSummary,
-        qpayInvoiceId: sale.qpayInvoiceId,
-        cashReceived: sale.cashReceived,
-        changeDue: sale.changeDue,
-        notes: sale.notes,
-      }));
+          return [{
+            transactionId,
+            timestamp: paymentActivity?.latestTimestamp || saleTimestamp,
+            staff: getCell(row, 'staff'),
+            paymentMethod:
+              paymentActivity?.labels.join(' + ') ||
+              paymentSummaries.get(transactionId) ||
+              getCell(row, 'payment_method'),
+            paidStatus: historyStatus,
+            roomOrGuest: getCell(row, 'room_or_guest'),
+            total: displayPaidAmount,
+            saleTotal,
+            paidAmount: displayPaidAmount,
+            paidToDate: Math.max(recordedPaidAmount, 0),
+            balance,
+            historyKind: hasBusinessDatePayment ? 'payment' : 'sale',
+            refundableAmount: Math.max(displayPaidAmount, 0),
+            itemCount: toNumber(row.get('item_count')),
+            itemSummary: getCell(row, 'item_summary'),
+            qpayInvoiceId:
+              paymentActivity?.qpayInvoiceIds.join(' + ') || getCell(row, 'qpay_invoice_id'),
+            cashReceived: paymentActivity?.cashReceived || toNumber(row.get('cash_received')),
+            changeDue: paymentActivity?.changeDue || toNumber(row.get('change_due')),
+            notes: getCell(row, 'notes'),
+            sortTime: paymentActivity?.sortTime || timestampMs(saleTimestamp),
+          }];
+        })
+        .sort((a, b) => b.sortTime - a.sortTime)
+        .slice(0, 50)
+        .map(sale => ({
+          transactionId: sale.transactionId,
+          timestamp: sale.timestamp,
+          staff: sale.staff,
+          paymentMethod: sale.paymentMethod,
+          paidStatus: sale.paidStatus,
+          roomOrGuest: sale.roomOrGuest,
+          total: sale.total,
+          saleTotal: sale.saleTotal,
+          paidAmount: sale.paidAmount,
+          paidToDate: sale.paidToDate,
+          balance: sale.balance,
+          historyKind: sale.historyKind,
+          refundableAmount: sale.refundableAmount,
+          itemCount: sale.itemCount,
+          itemSummary: sale.itemSummary,
+          qpayInvoiceId: sale.qpayInvoiceId,
+          cashReceived: sale.cashReceived,
+          changeDue: sale.changeDue,
+          notes: sale.notes,
+        }));
 
-    return NextResponse.json({ charges: unpaidCharges, history });
+      return { charges: unpaidCharges, history };
+    };
+    const payload = bypassCache
+      ? await loadSalesList()
+      : await getCachedRead(
+        `sales:list:${businessDate}`,
+        SALES_READ_CACHE_TTL_MS,
+        loadSalesList,
+      );
+
+    return NextResponse.json(payload);
   } catch (error) {
     console.error(`Sales GET Error: ${error instanceof Error ? error.message : String(error)}`);
     return NextResponse.json(
@@ -998,6 +1021,8 @@ export async function PATCH(request: Request) {
           .join(' | '),
       );
       await row.save();
+      clearCachedReads('sales:');
+      clearCachedReads('day:');
 
       return NextResponse.json({
         success: true,
@@ -1055,6 +1080,8 @@ export async function PATCH(request: Request) {
         payment.notes || `Settlement payment for ${transactionId}`,
       ]),
     );
+    clearCachedReads('sales:');
+    clearCachedReads('day:');
 
     return NextResponse.json({
       success: true,

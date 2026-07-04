@@ -1,6 +1,7 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
+import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 
 type DayAction = 'open' | 'close';
 
@@ -36,6 +37,8 @@ type DayItemTotal = {
   name: string;
   quantity: number;
 };
+
+const DAY_READ_CACHE_TTL_MS = 10000;
 
 const DAY_SESSION_SHEET_TITLES = [
   process.env.GOOGLE_DAY_SESSION_SHEET_TITLE,
@@ -506,14 +509,26 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
-    const { sessionRow, totals, itemTotals } = await getDayContext(businessDate);
+    const bypassCache = url.searchParams.get('fresh') === '1';
+    const loadDayPayload = async () => {
+      const { sessionRow, totals, itemTotals } = await getDayContext(businessDate);
 
-    return NextResponse.json({
-      businessDate,
-      session: serializeSession(sessionRow),
-      totals,
-      itemTotals,
-    });
+      return {
+        businessDate,
+        session: serializeSession(sessionRow),
+        totals,
+        itemTotals,
+      };
+    };
+    const payload = bypassCache
+      ? await loadDayPayload()
+      : await getCachedRead(
+        `day:${businessDate}`,
+        DAY_READ_CACHE_TTL_MS,
+        loadDayPayload,
+      );
+
+    return NextResponse.json(payload);
   } catch (error) {
     console.error(`Day GET Error: ${error instanceof Error ? error.message : String(error)}`);
     return NextResponse.json(
@@ -578,6 +593,7 @@ export async function POST(request: Request) {
           body.notes || '',
         ],
       ]);
+      clearCachedReads('day:');
 
       return NextResponse.json({
         success: true,
@@ -620,6 +636,7 @@ export async function POST(request: Request) {
     sessionRow.set('sales_total', totals.salesTotal);
     sessionRow.set('notes', body.notes || '');
     await sessionRow.save();
+    clearCachedReads('day:');
 
     return NextResponse.json({
       success: true,
