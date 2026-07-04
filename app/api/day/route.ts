@@ -275,6 +275,19 @@ function classifyPaymentMethod(method: string) {
   return 'other';
 }
 
+function getPaymentTotals(paymentRows: Array<{ get: (columnName: string) => unknown }>) {
+  const totals = new Map<string, number>();
+
+  for (const row of paymentRows) {
+    const transactionId = getCell(row, 'transaction_id');
+    if (!transactionId) continue;
+
+    totals.set(transactionId, (totals.get(transactionId) ?? 0) + toNumber(row.get('amount')));
+  }
+
+  return totals;
+}
+
 function getLatestSession(rows: SheetRow[], businessDate: string) {
   return rows
     .filter(row => getCell(row, 'business_date') === businessDate)
@@ -360,6 +373,8 @@ function getDayTotals(
     expectedCash: startingCash,
   };
 
+  const paymentTotals = getPaymentTotals(paymentRows);
+
   for (const row of daySalesRows) {
     if (getCell(row, 'paid_status').toLowerCase() === 'voided') continue;
 
@@ -367,7 +382,8 @@ function getDayTotals(
     totals.salesTotal += total;
 
     if (getCell(row, 'paid_status').toLowerCase() === 'unpaid') {
-      totals.roomChargeTotal += total;
+      const transactionId = getCell(row, 'transaction_id');
+      totals.roomChargeTotal += Math.max(total - (paymentTotals.get(transactionId) ?? 0), 0);
     }
   }
 

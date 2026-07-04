@@ -383,6 +383,8 @@ export async function POST(request: Request) {
       0,
     );
     const saleTotal = total ?? saleSubtotal;
+    const normalizedPaidStatus = (paidStatus || 'paid').toLowerCase();
+    const hasExplicitPayments = Array.isArray(payments) && payments.length > 0;
     const inventoryPayments = getInventoryPayments(payments, {
       paymentMethod: method || '',
       amount: saleTotal,
@@ -390,6 +392,32 @@ export async function POST(request: Request) {
       changeDue,
       qpayInvoiceId,
     });
+    const paymentTotal = inventoryPayments.reduce(
+      (sum, payment) => sum + payment.amount,
+      0,
+    );
+
+    if (hasExplicitPayments && inventoryPayments.length === 0) {
+      return NextResponse.json(
+        { error: 'Explicit payments must include a method and amount greater than zero' },
+        { status: 400 },
+      );
+    }
+
+    if (hasExplicitPayments && paymentTotal > saleTotal) {
+      return NextResponse.json(
+        { error: 'Payment amount is greater than the sale total' },
+        { status: 400 },
+      );
+    }
+
+    if (normalizedPaidStatus === 'unpaid' && hasExplicitPayments && paymentTotal >= saleTotal) {
+      return NextResponse.json(
+        { error: 'Partial unpaid sales must leave a remaining balance' },
+        { status: 400 },
+      );
+    }
+
     const paymentMethod =
       method ||
       inventoryPayments
@@ -439,7 +467,7 @@ export async function POST(request: Request) {
       timestamp,
       staffName || 'Staff',
       paymentMethod || '',
-      paidStatus || 'paid',
+      normalizedPaidStatus,
       room || '',
       saleSubtotal,
       0,
@@ -451,7 +479,7 @@ export async function POST(request: Request) {
       paymentQPayInvoiceId,
       '',
     ];
-    const shouldAppendPayment = (paidStatus || 'paid').toLowerCase() !== 'unpaid';
+    const shouldAppendPayment = normalizedPaidStatus !== 'unpaid' || hasExplicitPayments;
     const paymentRows = inventoryPayments.map(payment => [
       createPaymentId(),
       transactionId,
