@@ -98,11 +98,24 @@ const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
 const SHARED_SALES_SYNC_INTERVAL_MS = 60000;
 const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 30000;
+const DAY_SESSION_SYNC_INTERVAL_MS = 10000;
 const CATALOG_RETRY_DELAY_MS = 15000;
 const CATALOG_RETRY_INTERVAL_MS = 120000;
 
 function isRegisterMode(value: string | null): value is RegisterMode {
   return value === "sale" || value === "charges" || value === "history";
+}
+
+function getDaySessionSignature(session: DaySession | null) {
+  if (!session) return "";
+
+  return [
+    session.businessDate,
+    session.status,
+    session.openedAt,
+    session.closedAt,
+    session.startingCash,
+  ].join("|");
 }
 
 type SettlementPaymentLine = {
@@ -968,6 +981,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const selectedChargeGroupKeyRef = useRef("");
   const uiPreferencesLoadedRef = useRef(false);
   const lastSharedRefreshAtRef = useRef(0);
+  const daySessionSignatureRef = useRef("");
   const localIdSequenceRef = useRef(0);
 
   function getNextLocalId(prefix: string) {
@@ -1169,7 +1183,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         throw new Error(data?.error ?? "Өдрийн төлөв авч чадсангүй");
       }
 
-      setDaySession(data?.session ?? null);
+      const nextSession = data?.session ?? null;
+      daySessionSignatureRef.current = getDaySessionSignature(nextSession);
+      setDaySession(nextSession);
       setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
       setDayItemTotals(data?.itemTotals ?? []);
       setDayStatus("ready");
@@ -1185,6 +1201,49 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       );
     }
   }, [businessDate]);
+
+  const loadDaySession = useCallback(async (options?: { fresh?: boolean }) => {
+    if (dayStatus === "saving") return;
+
+    try {
+      const params = new URLSearchParams({
+        businessDate,
+        sessionOnly: "1",
+      });
+      if (options?.fresh) params.set("fresh", "1");
+      const response = await fetch(
+        `/api/day?${params.toString()}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json().catch(() => null)) as
+        | { session?: DaySession | null; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өдрийн төлөв авч чадсангүй");
+      }
+
+      const nextSession = data?.session ?? null;
+      const previousSignature = daySessionSignatureRef.current;
+      const nextSignature = getDaySessionSignature(nextSession);
+      const changed = previousSignature !== nextSignature;
+
+      daySessionSignatureRef.current = nextSignature;
+      setDaySession(nextSession);
+      setDayStatus((current) => current === "saving" ? current : "ready");
+
+      if (changed) {
+        setDayModalMode((current) => {
+          if (current === "open" && nextSession?.status === "open") return null;
+          if (current === "close" && nextSession?.status !== "open") return null;
+          return current;
+        });
+        void loadDayStatus({ fresh: true, silent: true });
+      }
+    } catch {
+      // Silent sync should not interrupt the cashier flow.
+    }
+  }, [businessDate, dayStatus, loadDayStatus]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1233,6 +1292,36 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadDayStatus, loadSharedSalesData]);
+
+  useEffect(() => {
+    const syncDaySession = (options?: { fresh?: boolean }) => {
+      if (document.visibilityState === "visible") {
+        void loadDaySession(options);
+      }
+    };
+    const syncFreshDaySession = () => syncDaySession({ fresh: true });
+    const syncDaySessionWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        syncFreshDaySession();
+      }
+    };
+    const interval = window.setInterval(
+      () => syncDaySession(),
+      DAY_SESSION_SYNC_INTERVAL_MS,
+    );
+
+    window.addEventListener("focus", syncFreshDaySession);
+    document.addEventListener("visibilitychange", syncDaySessionWhenVisible);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncFreshDaySession);
+      document.removeEventListener(
+        "visibilitychange",
+        syncDaySessionWhenVisible,
+      );
+    };
+  }, [loadDaySession]);
 
   useEffect(() => {
     if (catalogStatus !== "sample") return;
@@ -1774,7 +1863,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         throw new Error(data?.error ?? "Өдрийн төлөв хадгалж чадсангүй");
       }
 
-      setDaySession(data?.session ?? null);
+      const nextSession = data?.session ?? null;
+      daySessionSignatureRef.current = getDaySessionSignature(nextSession);
+      setDaySession(nextSession);
       setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
       setDayItemTotals(data?.itemTotals ?? []);
       setDayModalMode(null);

@@ -39,6 +39,7 @@ type DayItemTotal = {
 };
 
 const DAY_READ_CACHE_TTL_MS = 10000;
+const DAY_SESSION_READ_CACHE_TTL_MS = 5000;
 
 const DAY_SESSION_SHEET_TITLES = [
   process.env.GOOGLE_DAY_SESSION_SHEET_TITLE,
@@ -505,11 +506,46 @@ async function getDayContext(businessDate: string) {
   return { daySheet, dayRows, sessionRow, totals, itemTotals };
 }
 
+async function getDaySessionContext(businessDate: string) {
+  const doc = await loadSpreadsheet();
+  const daySheet = await getOrCreateSheet(
+    doc,
+    DAY_SESSION_SHEET_TITLES,
+    DAY_SESSION_HEADERS,
+  );
+  const dayRows = await daySheet.getRows() as SheetRow[];
+  const sessionRow = getLatestSession(dayRows, businessDate);
+
+  return { sessionRow };
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
     const bypassCache = url.searchParams.get('fresh') === '1';
+    const sessionOnly = url.searchParams.get('sessionOnly') === '1';
+
+    if (sessionOnly) {
+      const loadDaySessionPayload = async () => {
+        const { sessionRow } = await getDaySessionContext(businessDate);
+
+        return {
+          businessDate,
+          session: serializeSession(sessionRow),
+        };
+      };
+      const payload = bypassCache
+        ? await loadDaySessionPayload()
+        : await getCachedRead(
+          `day:session:${businessDate}`,
+          DAY_SESSION_READ_CACHE_TTL_MS,
+          loadDaySessionPayload,
+        );
+
+      return NextResponse.json(payload);
+    }
+
     const loadDayPayload = async () => {
       const { sessionRow, totals, itemTotals } = await getDayContext(businessDate);
 
