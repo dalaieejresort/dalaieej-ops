@@ -104,6 +104,8 @@ type SettlementStatus = "idle" | "saving" | "success" | "error";
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
 const SHARED_SALES_SYNC_INTERVAL_MS = 60000;
+const CATALOG_RETRY_DELAY_MS = 15000;
+const CATALOG_RETRY_INTERVAL_MS = 120000;
 
 function isRegisterMode(value: string | null): value is RegisterMode {
   return value === "sale" || value === "charges" || value === "history";
@@ -1220,6 +1222,39 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadDayStatus, loadSharedSalesData]);
+
+  useEffect(() => {
+    if (catalogStatus !== "sample") return;
+
+    const retryCatalog = () => {
+      if (document.visibilityState === "visible") {
+        void loadCatalog();
+      }
+    };
+    const retryWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        retryCatalog();
+      }
+    };
+    const retryTimer = window.setTimeout(
+      retryCatalog,
+      CATALOG_RETRY_DELAY_MS,
+    );
+    const retryInterval = window.setInterval(
+      retryCatalog,
+      CATALOG_RETRY_INTERVAL_MS,
+    );
+
+    window.addEventListener("focus", retryCatalog);
+    document.addEventListener("visibilitychange", retryWhenVisible);
+
+    return () => {
+      window.clearTimeout(retryTimer);
+      window.clearInterval(retryInterval);
+      window.removeEventListener("focus", retryCatalog);
+      document.removeEventListener("visibilitychange", retryWhenVisible);
+    };
+  }, [catalogStatus, loadCatalog]);
 
   useEffect(() => {
     const storedMode = window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
