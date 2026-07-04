@@ -283,6 +283,49 @@ function getPaymentTotals(rows: Array<{ get: (columnName: string) => unknown }>)
   return totals;
 }
 
+function normalizeLookup(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase('mn-MN');
+}
+
+function getCurrentInventoryBalances(
+  transactionId: string,
+  inventoryRows: Array<{ get: (columnName: string) => unknown }>,
+) {
+  const balances = new Map<
+    string,
+    { sku: string; name: string; location: string; quantity: number }
+  >();
+
+  for (const row of inventoryRows) {
+    const rowTransactionId = String(getFirstValue(row, INVENTORY_COLUMNS.transactionId)).trim();
+    const movementType = String(getFirstValue(row, INVENTORY_COLUMNS.type)).trim();
+    if (rowTransactionId !== transactionId) continue;
+    if (movementType !== 'Зарлага' && movementType !== 'Буцаалт') continue;
+
+    const sku = String(getFirstValue(row, INVENTORY_COLUMNS.sku)).trim();
+    const name = String(getFirstValue(row, INVENTORY_COLUMNS.name)).trim();
+    const location = String(getFirstValue(row, INVENTORY_COLUMNS.location) || 'Front Desk');
+    const key = sku ? `sku:${sku}` : `name:${normalizeLookup(name)}`;
+    const existing = balances.get(key);
+    const signedQuantity =
+      movementType === 'Зарлага'
+        ? toNumber(getFirstValue(row, INVENTORY_COLUMNS.quantity))
+        : -toNumber(getFirstValue(row, INVENTORY_COLUMNS.quantity));
+
+    balances.set(key, {
+      sku,
+      name,
+      location,
+      quantity: (existing?.quantity ?? 0) + signedQuantity,
+    });
+  }
+
+  return Array.from(balances.values()).filter(item => item.quantity > 0);
+}
+
 function getRecentSale(row: SheetRow, paymentTotals: Map<string, number>) {
   const transactionId = getCell(row, 'transaction_id');
   const total = toNumber(row.get('total'));
@@ -424,19 +467,15 @@ export async function POST(request: Request) {
     const refundAmount = Math.max(paidAmount, 0);
     const itemSummary = getCell(saleRow, 'item_summary');
     const voidId = createVoidId();
-    const matchingInventoryRows = inventoryRows.filter(
-      row =>
-        String(getFirstValue(row, INVENTORY_COLUMNS.transactionId)).trim() === transactionId &&
-        String(getFirstValue(row, INVENTORY_COLUMNS.type)).trim() !== 'Буцаалт',
-    );
-    const reversalRows: Array<Array<string | number>> = matchingInventoryRows.map(row => [
+    const currentInventoryBalances = getCurrentInventoryBalances(transactionId, inventoryRows);
+    const reversalRows: Array<Array<string | number>> = currentInventoryBalances.map(item => [
       `${transactionId}-VOID`,
       timestamp,
-      String(getFirstValue(row, INVENTORY_COLUMNS.sku)),
-      String(getFirstValue(row, INVENTORY_COLUMNS.name)),
+      item.sku,
+      item.name,
       'Буцаалт',
-      toNumber(getFirstValue(row, INVENTORY_COLUMNS.quantity)),
-      String(getFirstValue(row, INVENTORY_COLUMNS.location) || 'Front Desk'),
+      item.quantity,
+      item.location,
       body.staffName || 'Staff',
     ]);
 

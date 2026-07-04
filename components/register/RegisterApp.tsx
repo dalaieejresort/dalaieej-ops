@@ -952,6 +952,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [selectedChargeGroupKey, setSelectedChargeGroupKey] = useState("");
   const [selectedChargeIds, setSelectedChargeIds] = useState<string[]>([]);
   const [editingCharge, setEditingCharge] = useState<UnpaidCharge | null>(null);
+  const [deletingChargeId, setDeletingChargeId] = useState("");
   const [settlementMethod, setSettlementMethod] =
     useState<SettlementMethod>("cash");
   const [settlementPaymentAmount, setSettlementPaymentAmount] = useState(0);
@@ -1794,6 +1795,74 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           ? error.message
           : "Өрийн захиалга уншиж чадсангүй",
       );
+    }
+  }
+
+  async function deleteCharge(charge: UnpaidCharge) {
+    if (deletingChargeId) return;
+
+    if (!dayOpen) {
+      setSettlementStatus("error");
+      setSettlementMessage("Өр устгахаас өмнө өдрөө нээнэ үү");
+      openDayModal("open");
+      return;
+    }
+
+    if (charge.paidAmount > 0) {
+      setSettlementStatus("error");
+      setSettlementMessage(
+        "Төлбөр орсон өрийг шууд устгахгүй. Буцаалт эсвэл хэсэгчилсэн төлбөрийн засвар ашиглана уу.",
+      );
+      return;
+    }
+
+    setDeletingChargeId(charge.transactionId);
+    setSettlementStatus("saving");
+    setSettlementMessage(`${charge.transactionId} өрийг устгаж байна`);
+
+    try {
+      const response = await fetch("/api/voids", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transactionId: charge.transactionId,
+          businessDate,
+          staffName,
+          reason: `Өрөөс устгасан: ${charge.roomOrGuest || charge.transactionId}`,
+          refundMethod: "No refund",
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өр устгаж чадсангүй");
+      }
+
+      setSelectedChargeIds((current) =>
+        current.filter((id) => id !== charge.transactionId),
+      );
+      if (editingCharge?.transactionId === charge.transactionId) {
+        clearCurrentSale();
+      }
+      setSettlementLines([]);
+      resetSettlementDraft();
+      await Promise.allSettled([
+        loadUnpaidCharges(),
+        loadSalesHistory(),
+        loadDayStatus(),
+        voidModalOpen ? loadVoidableSales() : Promise.resolve(),
+      ]);
+      setSettlementStatus("success");
+      setSettlementMessage(`${charge.transactionId} өр устгагдлаа`);
+    } catch (error) {
+      setSettlementStatus("error");
+      setSettlementMessage(
+        error instanceof Error ? error.message : "Өр устгаж чадсангүй",
+      );
+    } finally {
+      setDeletingChargeId("");
     }
   }
 
@@ -3365,7 +3434,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                                   className="min-w-0 flex-1 text-left"
                                 >
                                   <p className="break-words text-sm font-black">
-                                    {checked ? "[x]" : "[ ]"}{" "}
+                                    <span
+                                      className={`mr-1 rounded-sm px-1.5 py-0.5 text-[10px] ${
+                                        checked
+                                          ? "bg-[#111827] text-white"
+                                          : "bg-[#e5e7eb] text-[#374151]"
+                                      }`}
+                                    >
+                                      {checked ? "Сонгосон" : "Сонгох"}
+                                    </span>
                                     {charge.itemSummary ||
                                       `${charge.itemCount} бараа`}
                                   </p>
@@ -3383,6 +3460,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                                     className="h-8 rounded-md border border-[#bfdbfe] bg-white px-2 text-xs font-black text-[#1d4ed8] hover:bg-[#eff6ff]"
                                   >
                                     Засах
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void deleteCharge(charge)}
+                                    disabled={
+                                      deletingChargeId === charge.transactionId ||
+                                      charge.paidAmount > 0 ||
+                                      settlementStatus === "saving"
+                                    }
+                                    className="h-8 rounded-md border border-[#fecaca] bg-white px-2 text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2] disabled:border-[#e5e7eb] disabled:text-[#9ca3af]"
+                                  >
+                                    {deletingChargeId === charge.transactionId
+                                      ? "Устгаж..."
+                                      : "Устгах"}
                                   </button>
                                 </div>
                               </div>
