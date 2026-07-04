@@ -1,6 +1,7 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
+import { isUnlimitedInventoryItem } from '@/lib/pos/inventory';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -11,7 +12,16 @@ type SettlementPaymentInput = {
   notes?: string;
 };
 
+type SaleEditItemInput = {
+  sku?: string;
+  name?: string;
+  category?: string;
+  qty?: number;
+  unitPrice?: number;
+};
+
 type SettleSaleBody = {
+  action?: 'settle' | 'edit_unpaid';
   transactionId?: string;
   paymentMethod?: string;
   amount?: number;
@@ -20,14 +30,46 @@ type SettleSaleBody = {
   changeDue?: number;
   qpayInvoiceId?: string;
   payments?: SettlementPaymentInput[];
+  room?: string;
+  items?: SaleEditItemInput[];
+  total?: number;
 };
 
 type SheetDoc = GoogleSpreadsheet;
+
+type SheetRow = {
+  get: (columnName: string) => unknown;
+  set: (columnName: string, value: unknown) => void;
+  save: () => Promise<void>;
+};
+
+type CatalogRowItem = {
+  sku: string;
+  name: string;
+  category: string;
+  guestPrice: number;
+  staffPrice: number;
+  price: number;
+};
 
 const SALES_LOG_SHEET_TITLES = [
   process.env.GOOGLE_SALES_SHEET_TITLE,
   'Sales_Log',
   'sales_log',
+].filter(Boolean) as string[];
+
+const INVENTORY_LOG_SHEET_TITLES = [
+  process.env.GOOGLE_LOG_SHEET_TITLE,
+  'Inventory_Log',
+  'inventory_log',
+].filter(Boolean) as string[];
+
+const CATALOG_SHEET_TITLES = [
+  process.env.GOOGLE_CATALOG_SHEET_TITLE,
+  'Inventory_Catalog',
+  'inventory_catalogue',
+  'inventory_catalog',
+  'Inventory_Catalogue',
 ].filter(Boolean) as string[];
 
 const PAYMENTS_LOG_SHEET_TITLES = [
@@ -54,6 +96,19 @@ const SALES_LOG_HEADERS = [
   'notes',
 ];
 
+const INVENTORY_LOG_HEADERS = [
+  'Transaction ID',
+  'Timestamp',
+  'SKU (Барааны код)',
+  'Item Description',
+  'Type (Хөдөлгөөн)',
+  'Quantity (Тоо)',
+  'Location (Байршил)',
+  'Handled By',
+  'Payment Method',
+  'Room Number',
+];
+
 const PAYMENTS_LOG_HEADERS = [
   'payment_id',
   'transaction_id',
@@ -66,6 +121,49 @@ const PAYMENTS_LOG_HEADERS = [
   'qpay_invoice_id',
   'notes',
 ];
+
+const INVENTORY_COLUMNS = {
+  transactionId: ['Transaction ID', 'transaction_id'],
+  sku: ['SKU (Барааны код)', 'sku', 'SKU'],
+  name: ['Item Description', 'item_name', 'name'],
+  type: ['Type (Хөдөлгөөн)', 'type'],
+  quantity: ['Quantity (Тоо)', 'qty', 'quantity'],
+  location: ['Location (Байршил)', 'location'],
+};
+
+const CATALOG_COLUMNS = {
+  sku: ['sku', 'SKU', 'SKU (Барааны код)', 'Барааны код'],
+  name: [
+    'name',
+    'item_name',
+    'Item Name',
+    'Item Name (Барааны нэр)',
+    'Барааны нэр',
+  ],
+  category: [
+    'category',
+    'Category',
+    'Category (Ангилал)',
+    'Ангилал',
+  ],
+  guestPrice: [
+    'Guest Price (Амрагчдын үнэ)',
+    'Амрагчдын үнэ',
+    'price',
+    'unit_cost',
+    'Unit Cost',
+    'Unit Cost (Нэгж үнэ ₮)',
+    'Нэгж үнэ ₮',
+  ],
+  staffPrice: [
+    'Staff Price',
+    'Employee Price',
+    'Employee Price (Ажчилчдын үнэ)',
+    'Ажчилчдын үнэ',
+    'Employee Price (Ажилчдын үнэ)',
+    'Ажилчдын үнэ',
+  ],
+};
 
 function requiredEnv(name: string) {
   const value = process.env[name];
@@ -119,6 +217,18 @@ async function getOrCreateSalesLogSheet(doc: SheetDoc) {
   });
 }
 
+async function getOrCreateInventoryLogSheet(doc: SheetDoc) {
+  for (const title of INVENTORY_LOG_SHEET_TITLES) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return sheet;
+  }
+
+  return doc.addSheet({
+    title: INVENTORY_LOG_SHEET_TITLES[0] ?? 'Inventory_Log',
+    headerValues: INVENTORY_LOG_HEADERS,
+  });
+}
+
 async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
   for (const title of PAYMENTS_LOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
@@ -131,6 +241,15 @@ async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
   });
 }
 
+function findCatalogSheet(doc: SheetDoc) {
+  for (const title of CATALOG_SHEET_TITLES) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return sheet;
+  }
+
+  return null;
+}
+
 function toNumber(value: unknown) {
   const cleaned = String(value ?? '').replace(/[₮,\s]/g, '');
   const numberValue = Number(cleaned);
@@ -139,6 +258,20 @@ function toNumber(value: unknown) {
 
 function getCell(row: { get: (columnName: string) => unknown }, column: string) {
   return String(row.get(column) ?? '').trim();
+}
+
+function getFirstValue(
+  row: { get: (columnName: string) => unknown },
+  columnNames: string[],
+) {
+  for (const columnName of columnNames) {
+    const value = row.get(columnName);
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value;
+    }
+  }
+
+  return '';
 }
 
 function getPaymentTotals(rows: Array<{ get: (columnName: string) => unknown }>) {
@@ -220,6 +353,233 @@ function createPaymentId() {
   return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
+function normalizeLookup(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase('mn-MN');
+}
+
+function normalizeCatalogItem(row: { get: (columnName: string) => unknown }): CatalogRowItem {
+  const guestPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.guestPrice));
+  const staffPrice = toNumber(getFirstValue(row, CATALOG_COLUMNS.staffPrice));
+
+  return {
+    sku: String(getFirstValue(row, CATALOG_COLUMNS.sku)).trim(),
+    name: String(getFirstValue(row, CATALOG_COLUMNS.name)).trim(),
+    category: String(getFirstValue(row, CATALOG_COLUMNS.category)).trim(),
+    guestPrice,
+    staffPrice,
+    price: guestPrice || staffPrice,
+  };
+}
+
+function parseItemSummary(summary: string) {
+  const items: Array<{ name: string; qty: number }> = [];
+  const pattern = /(.+?)\s+x(\d+(?:\.\d+)?)(?:,\s*|$)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(summary)) !== null) {
+    const name = match[1]?.trim();
+    const qty = Number(match[2]);
+
+    if (name && Number.isFinite(qty) && qty > 0) {
+      items.push({ name, qty });
+    }
+  }
+
+  return items;
+}
+
+function buildItemSummary(items: SaleEditItemInput[]) {
+  return items
+    .map(item => `${item.name ?? item.sku ?? 'Item'} x${item.qty ?? 1}`)
+    .join(', ');
+}
+
+function buildEditableItems(
+  saleRow: { get: (columnName: string) => unknown },
+  inventoryRows: Array<{ get: (columnName: string) => unknown }>,
+  catalogItems: CatalogRowItem[],
+) {
+  const transactionId = getCell(saleRow, 'transaction_id');
+  const bySku = new Map(
+    catalogItems
+      .filter(item => item.sku)
+      .map(item => [normalizeLookup(item.sku), item]),
+  );
+  const byName = new Map(
+    catalogItems
+      .filter(item => item.name)
+      .map(item => [normalizeLookup(item.name), item]),
+  );
+  const itemByKey = new Map<
+    string,
+    {
+      sku: string;
+      name: string;
+      category: string;
+      qty: number;
+      unitPrice: number;
+      priceMode: 'guest' | 'staff';
+      source: 'inventory' | 'summary';
+    }
+  >();
+  const saleTotal = toNumber(saleRow.get('total'));
+  const summaryItems = parseItemSummary(getCell(saleRow, 'item_summary'));
+  let knownTotal = 0;
+
+  if (summaryItems.length > 0) {
+    const unmatchedSummaryItems: Array<{ name: string; qty: number }> = [];
+
+    for (const summaryItem of summaryItems) {
+      const catalogItem = byName.get(normalizeLookup(summaryItem.name));
+      if (!catalogItem) {
+        unmatchedSummaryItems.push(summaryItem);
+        continue;
+      }
+
+      const key = catalogItem.sku ? `sku:${catalogItem.sku}` : `name:${normalizeLookup(catalogItem.name)}`;
+      const existing = itemByKey.get(key);
+      const unitPrice = catalogItem.price || 0;
+      itemByKey.set(key, {
+        sku: catalogItem.sku,
+        name: catalogItem.name,
+        category: catalogItem.category || 'Үйлчилгээ',
+        qty: (existing?.qty ?? 0) + summaryItem.qty,
+        unitPrice: existing?.unitPrice || unitPrice,
+        priceMode: catalogItem.guestPrice ? 'guest' : 'staff',
+        source: 'summary',
+      });
+      knownTotal += summaryItem.qty * unitPrice;
+    }
+
+    const remainingTotal = saleTotal - knownTotal;
+    if (unmatchedSummaryItems.length === 1 && remainingTotal > 0) {
+      const item = unmatchedSummaryItems[0];
+      itemByKey.set(`manual:${normalizeLookup(item.name)}`, {
+        sku: '',
+        name: item.name,
+        category: 'Үйлчилгээ',
+        qty: item.qty,
+        unitPrice: Math.round(remainingTotal / item.qty),
+        priceMode: 'guest',
+        source: 'summary',
+      });
+      knownTotal += remainingTotal;
+    } else if (unmatchedSummaryItems.length > 0 && remainingTotal > 0) {
+      itemByKey.set('manual:summary', {
+        sku: '',
+        name: getCell(saleRow, 'item_summary'),
+        category: 'Үйлчилгээ',
+        qty: 1,
+        unitPrice: Math.round(remainingTotal),
+        priceMode: 'guest',
+        source: 'summary',
+      });
+      knownTotal += remainingTotal;
+    }
+
+    const adjustedRemainingTotal = saleTotal - knownTotal;
+    if (adjustedRemainingTotal > 0) {
+      itemByKey.set('manual:adjustment', {
+        sku: '',
+        name: 'Өмнөх захиалгын тохируулга',
+        category: 'Үйлчилгээ',
+        qty: 1,
+        unitPrice: Math.round(adjustedRemainingTotal),
+        priceMode: 'guest',
+        source: 'summary',
+      });
+    }
+
+    return Array.from(itemByKey.values()).filter(item => item.qty > 0 && item.unitPrice >= 0);
+  }
+
+  for (const row of inventoryRows) {
+    const rowTransactionId = String(getFirstValue(row, INVENTORY_COLUMNS.transactionId)).trim();
+    const movementType = String(getFirstValue(row, INVENTORY_COLUMNS.type)).trim();
+    if (rowTransactionId !== transactionId || movementType !== 'Зарлага') continue;
+
+    const sku = String(getFirstValue(row, INVENTORY_COLUMNS.sku)).trim();
+    const name = String(getFirstValue(row, INVENTORY_COLUMNS.name)).trim();
+    const qty = toNumber(getFirstValue(row, INVENTORY_COLUMNS.quantity));
+    if (!name || qty <= 0) continue;
+
+    const catalogItem = bySku.get(normalizeLookup(sku)) ?? byName.get(normalizeLookup(name));
+    const key = sku ? `sku:${sku}` : `name:${normalizeLookup(name)}`;
+    const existing = itemByKey.get(key);
+    const unitPrice = catalogItem?.price ?? 0;
+
+    itemByKey.set(key, {
+      sku,
+      name,
+      category: catalogItem?.category ?? 'Үйлчилгээ',
+      qty: (existing?.qty ?? 0) + qty,
+      unitPrice: existing?.unitPrice || unitPrice,
+      priceMode: catalogItem?.guestPrice ? 'guest' : 'staff',
+      source: 'inventory',
+    });
+  }
+
+  knownTotal = Array.from(itemByKey.values()).reduce(
+    (sum, item) => sum + item.qty * item.unitPrice,
+    0,
+  );
+  const items = Array.from(itemByKey.values());
+  const remainingTotal = saleTotal - knownTotal;
+
+  if (items.length === 0 || remainingTotal > 0) {
+    items.push({
+      sku: '',
+      name: getCell(saleRow, 'item_summary') || 'Өмнөх захиалгын тохируулга',
+      category: 'Үйлчилгээ',
+      qty: 1,
+      unitPrice: Math.max(Math.round(remainingTotal || saleTotal), 0),
+      priceMode: 'guest',
+      source: 'summary',
+    });
+  }
+
+  return items.filter(item => item.qty > 0 && item.unitPrice >= 0);
+}
+
+function getCurrentInventoryBalances(
+  transactionId: string,
+  inventoryRows: Array<{ get: (columnName: string) => unknown }>,
+) {
+  const balances = new Map<
+    string,
+    { sku: string; name: string; location: string; quantity: number }
+  >();
+
+  for (const row of inventoryRows) {
+    const rowTransactionId = String(getFirstValue(row, INVENTORY_COLUMNS.transactionId)).trim();
+    const movementType = String(getFirstValue(row, INVENTORY_COLUMNS.type)).trim();
+    if (rowTransactionId !== transactionId) continue;
+    if (movementType !== 'Зарлага' && movementType !== 'Буцаалт') continue;
+
+    const sku = String(getFirstValue(row, INVENTORY_COLUMNS.sku)).trim();
+    const name = String(getFirstValue(row, INVENTORY_COLUMNS.name)).trim();
+    const location = String(getFirstValue(row, INVENTORY_COLUMNS.location) || 'Front Desk');
+    const key = sku ? `sku:${sku}` : `name:${normalizeLookup(name)}`;
+    const existing = balances.get(key);
+    const signedQuantity =
+      movementType === 'Зарлага'
+        ? toNumber(getFirstValue(row, INVENTORY_COLUMNS.quantity))
+        : -toNumber(getFirstValue(row, INVENTORY_COLUMNS.quantity));
+
+    balances.set(key, {
+      sku,
+      name,
+      location,
+      quantity: (existing?.quantity ?? 0) + signedQuantity,
+    });
+  }
+
+  return Array.from(balances.values()).filter(item => item.quantity > 0);
+}
+
 function getSettlementPayments(body: SettleSaleBody) {
   if (Array.isArray(body.payments) && body.payments.length > 0) {
     return body.payments;
@@ -261,16 +621,62 @@ function salesErrorMessage(error: unknown, fallback: string) {
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
+    const requestedTransactionId = url.searchParams.get('transactionId')?.trim();
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
     const doc = await loadSpreadsheet();
     const salesLogSheet = await getOrCreateSalesLogSheet(doc);
     const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
     const [salesRows, paymentRows] = await Promise.all([
-      salesLogSheet.getRows(),
+      salesLogSheet.getRows() as Promise<SheetRow[]>,
       paymentsLogSheet.getRows(),
     ]);
     const paymentTotals = getPaymentTotals(paymentRows);
     const paymentSummaries = getPaymentSummaries(paymentRows);
+
+    if (requestedTransactionId) {
+      const saleRow = salesRows.find(
+        row => getCell(row, 'transaction_id') === requestedTransactionId,
+      );
+
+      if (!saleRow) {
+        return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
+      }
+
+      if (getCell(saleRow, 'paid_status').toLowerCase() !== 'unpaid') {
+        return NextResponse.json({ error: 'Sale is not an unpaid charge' }, { status: 400 });
+      }
+
+      const [inventoryRows, catalogRows] = await Promise.all([
+        getOrCreateInventoryLogSheet(doc).then(sheet => sheet.getRows()),
+        Promise.resolve(findCatalogSheet(doc)).then(sheet => sheet?.getRows() ?? []),
+      ]);
+      const catalogItems = catalogRows.map(normalizeCatalogItem);
+      const total = toNumber(saleRow.get('total'));
+      const paidAmount = paymentTotals.get(requestedTransactionId) ?? 0;
+
+      return NextResponse.json({
+        charge: {
+          transactionId: requestedTransactionId,
+          timestamp: getCell(saleRow, 'timestamp'),
+          staff: getCell(saleRow, 'staff'),
+          paymentMethod: getCell(saleRow, 'payment_method'),
+          paidStatus: getCell(saleRow, 'paid_status'),
+          roomOrGuest: getCell(saleRow, 'room_or_guest'),
+          subtotal: toNumber(saleRow.get('subtotal')),
+          discount: toNumber(saleRow.get('discount')),
+          total: Math.max(total - paidAmount, 0),
+          originalTotal: total,
+          paidAmount,
+          balance: Math.max(total - paidAmount, 0),
+          itemCount: toNumber(saleRow.get('item_count')),
+          itemSummary: getCell(saleRow, 'item_summary'),
+          qpayInvoiceId: getCell(saleRow, 'qpay_invoice_id'),
+          notes: getCell(saleRow, 'notes'),
+          items: buildEditableItems(saleRow, inventoryRows, catalogItems),
+        },
+      });
+    }
+
     const unpaidCharges = salesRows
       .filter(row => getCell(row, 'paid_status').toLowerCase() === 'unpaid')
       .map(row => {
@@ -357,7 +763,7 @@ export async function PATCH(request: Request) {
     const salesLogSheet = await getOrCreateSalesLogSheet(doc);
     const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
     const [salesRows, paymentRows] = await Promise.all([
-      salesLogSheet.getRows(),
+      salesLogSheet.getRows() as Promise<SheetRow[]>,
       paymentsLogSheet.getRows(),
     ]);
     const row = salesRows.find(item => getCell(item, 'transaction_id') === transactionId);
@@ -373,6 +779,103 @@ export async function PATCH(request: Request) {
     const saleTotal = toNumber(row.get('total'));
     const paidToDate = getPaymentTotals(paymentRows).get(transactionId) ?? 0;
     const balance = Math.max(saleTotal - paidToDate, 0);
+
+    if (body.action === 'edit_unpaid') {
+      if (paidToDate > 0) {
+        return NextResponse.json(
+          { error: 'Partially paid charges cannot be edited' },
+          { status: 400 },
+        );
+      }
+
+      const items = (body.items ?? [])
+        .map(item => ({
+          sku: String(item.sku ?? '').trim(),
+          name: String(item.name ?? item.sku ?? '').trim(),
+          category: String(item.category ?? '').trim() || 'Үйлчилгээ',
+          qty: toNumber(item.qty ?? 1),
+          unitPrice: toNumber(item.unitPrice),
+        }))
+        .filter(item => item.name && item.qty > 0 && item.unitPrice >= 0);
+
+      if (items.length === 0) {
+        return NextResponse.json({ error: 'At least one item is required' }, { status: 400 });
+      }
+
+      const subtotal = items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+      const total = Number.isFinite(body.total) ? toNumber(body.total) : subtotal;
+      const room = String(body.room ?? '').trim();
+
+      if (!room) {
+        return NextResponse.json({ error: 'room is required' }, { status: 400 });
+      }
+
+      if (total <= 0) {
+        return NextResponse.json({ error: 'total must be greater than zero' }, { status: 400 });
+      }
+
+      const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
+      const inventoryLogSheet = await getOrCreateInventoryLogSheet(doc);
+      const inventoryRows = await inventoryLogSheet.getRows();
+      const currentInventoryBalances = getCurrentInventoryBalances(transactionId, inventoryRows);
+      const reversalRows = currentInventoryBalances.map(inventoryItem => [
+        transactionId,
+        timestamp,
+        inventoryItem.sku,
+        inventoryItem.name,
+        'Буцаалт',
+        inventoryItem.quantity,
+        inventoryItem.location,
+        body.staffName || 'Staff',
+        'Өр засвар',
+        room,
+      ]);
+      const newInventoryRows = items
+        .filter(item => item.sku && !isUnlimitedInventoryItem(item))
+        .map(item => [
+          transactionId,
+          timestamp,
+          item.sku,
+          item.name,
+          'Зарлага',
+          item.qty,
+          'Front Desk',
+          body.staffName || 'Staff',
+          'Өр засвар',
+          room,
+        ]);
+
+      if (reversalRows.length > 0 || newInventoryRows.length > 0) {
+        await inventoryLogSheet.addRows([...reversalRows, ...newInventoryRows]);
+      }
+
+      row.set('staff', body.staffName || getCell(row, 'staff') || 'Staff');
+      row.set('payment_method', 'Байшин/Зочин');
+      row.set('paid_status', 'unpaid');
+      row.set('room_or_guest', room);
+      row.set('subtotal', subtotal);
+      row.set('discount', 0);
+      row.set('total', total);
+      row.set('cash_received', '');
+      row.set('change_due', '');
+      row.set('item_count', items.reduce((sum, item) => sum + item.qty, 0));
+      row.set('item_summary', buildItemSummary(items));
+      row.set('qpay_invoice_id', '');
+      row.set(
+        'notes',
+        [getCell(row, 'notes'), `Edited ${timestamp} by ${body.staffName || 'Staff'}`]
+          .filter(Boolean)
+          .join(' | '),
+      );
+      await row.save();
+
+      return NextResponse.json({
+        success: true,
+        message: 'Sale updated',
+        transactionId,
+        total,
+      });
+    }
 
     if (balance === 0) {
       return NextResponse.json({ success: true, message: 'Sale is already settled' });

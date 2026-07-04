@@ -132,6 +132,20 @@ type UnpaidCharge = {
   notes: string;
 };
 
+type ChargeEditItem = {
+  sku?: string;
+  name: string;
+  category?: string;
+  qty: number;
+  unitPrice: number;
+  priceMode?: PriceMode;
+};
+
+type UnpaidChargeDetail = UnpaidCharge & {
+  paidStatus?: string;
+  items?: ChargeEditItem[];
+};
+
 type ChargeGroup = {
   key: string;
   label: string;
@@ -350,6 +364,10 @@ function getCartLineId(item: CatalogItem, priceMode: PriceMode) {
 function getPriceModeLabel(priceMode?: PriceMode) {
   if (!priceMode) return "Гараар";
   return priceMode === "staff" ? "Ажилчин үнэ" : "Амрагч үнэ";
+}
+
+function getChargeReferenceKey(value: string) {
+  return value.trim().toLowerCase();
 }
 
 function escapeHtml(value: string) {
@@ -933,6 +951,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [chargesMessage, setChargesMessage] = useState("");
   const [selectedChargeGroupKey, setSelectedChargeGroupKey] = useState("");
   const [selectedChargeIds, setSelectedChargeIds] = useState<string[]>([]);
+  const [editingCharge, setEditingCharge] = useState<UnpaidCharge | null>(null);
   const [settlementMethod, setSettlementMethod] =
     useState<SettlementMethod>("cash");
   const [settlementPaymentAmount, setSettlementPaymentAmount] = useState(0);
@@ -1210,6 +1229,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (sum, line) => sum + line.price * line.quantity,
     0,
   );
+  const isEditingCharge = Boolean(editingCharge);
   const selectedPayment =
     PAYMENT_METHODS.find((method) => method.id === paymentMethod) ??
     PAYMENT_METHODS[0];
@@ -1245,12 +1265,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     dayOpen &&
     cart.length > 0 &&
     saleStatus !== "saving" &&
+    (!isEditingCharge || roomRequired) &&
     (!cashRequired || cashShort === 0) &&
     (!cardRequired || cardTerminalApproved) &&
     (!roomRequired || roomNumber.trim().length > 0) &&
     (!qpayRequired || bankTransferConfirmed);
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
+    : isEditingCharge
+      ? "Засвар хадгалах"
     : !dayOpen
       ? "Өдрөө нээнэ үү"
       : roomRequired
@@ -1410,7 +1433,22 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setCustomItemAmount(0);
   }
 
+  function clearCurrentSale() {
+    setCart([]);
+    setCashReceived(0);
+    setRoomNumber("");
+    setSaleStatus("idle");
+    setSaleMessage("");
+    setLastSale(null);
+    setEditingCharge(null);
+    setPaymentMethod("cash");
+    setCardTerminalApproved(false);
+    resetQPayPayment();
+  }
+
   function selectPaymentMethod(method: PaymentMethodId) {
+    if (isEditingCharge && method !== "room") return;
+
     setPaymentMethod(method);
     setCardTerminalApproved(false);
     resetQPayPayment();
@@ -1617,6 +1655,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   function selectRegisterMode(mode: RegisterMode) {
+    if (mode !== "sale" && editingCharge) {
+      setEditingCharge(null);
+      setCart([]);
+      setCashReceived(0);
+      setRoomNumber("");
+      setPaymentMethod("cash");
+      setCardTerminalApproved(false);
+      resetQPayPayment();
+      setLastSale(null);
+      resetSettlementPaymentState();
+    }
     setRegisterMode(mode);
     setSaleStatus("idle");
     setSaleMessage("");
@@ -1648,6 +1697,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   function startAdditionalCharge(group: ChargeGroup) {
     setRegisterMode("sale");
+    setEditingCharge(null);
     setPaymentMethod("room");
     setRoomNumber(group.label);
     setCart([]);
@@ -1657,6 +1707,94 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setLastSale(null);
     setSaleStatus("idle");
     setSaleMessage(`${group.label} дээр нэмэлт захиалга бичнэ`);
+    resetSettlementPaymentState();
+  }
+
+  function buildChargeEditCartLines(items: ChargeEditItem[], charge: UnpaidCharge) {
+    if (items.length === 0) {
+      return [
+        {
+          id: getNextLocalId("edit"),
+          name: charge.itemSummary || charge.transactionId,
+          price: charge.originalTotal || charge.total,
+          category: "Үйлчилгээ",
+          quantity: 1,
+          staff: staffName,
+        },
+      ];
+    }
+
+    return items.map((item, index) => {
+      const priceMode: PriceMode =
+        item.priceMode === "staff" ? "staff" : "guest";
+      const sku = item.sku?.trim() || undefined;
+
+      return {
+        id: sku ? `${sku}:${priceMode}` : getNextLocalId(`edit-${index + 1}`),
+        sku,
+        name: item.name,
+        price: Math.round(item.unitPrice),
+        priceMode: sku ? priceMode : undefined,
+        category: item.category || "Үйлчилгээ",
+        quantity: Math.max(Math.round(item.qty), 1),
+        staff: staffName,
+      };
+    });
+  }
+
+  async function startEditingCharge(charge: UnpaidCharge) {
+    if (charge.paidAmount > 0) {
+      setSettlementStatus("error");
+      setSettlementMessage(
+        "Хэсэгчилсэн төлбөр орсон өрийг засахгүй. Үлдэгдлийг хаах эсвэл буцаалт ашиглана уу.",
+      );
+      return;
+    }
+
+    resetSettlementPaymentState();
+    setSettlementStatus("idle");
+    setSettlementMessage("Захиалга уншиж байна");
+
+    try {
+      const response = await fetch(
+        `/api/sales?transactionId=${encodeURIComponent(charge.transactionId)}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json().catch(() => null)) as
+        | { charge?: UnpaidChargeDetail; error?: string }
+        | null;
+
+      if (!response.ok || !data?.charge) {
+        throw new Error(data?.error ?? "Өрийн захиалга уншиж чадсангүй");
+      }
+
+      const detailedCharge = data.charge;
+      const editLines = buildChargeEditCartLines(
+        detailedCharge.items ?? [],
+        detailedCharge,
+      );
+
+      setEditingCharge(detailedCharge);
+      setCart(editLines);
+      setPaymentMethod("room");
+      setRoomNumber(detailedCharge.roomOrGuest || charge.roomOrGuest);
+      setCashReceived(0);
+      setCardTerminalApproved(false);
+      resetQPayPayment();
+      setLastSale(null);
+      setSaleStatus("idle");
+      setSaleMessage(`${charge.transactionId} засаж байна`);
+      setSettlementStatus("idle");
+      setSettlementMessage("");
+      setRegisterMode("sale");
+    } catch (error) {
+      setSettlementStatus("error");
+      setSettlementMessage(
+        error instanceof Error
+          ? error.message
+          : "Өрийн захиалга уншиж чадсангүй",
+      );
+    }
   }
 
   function resetSettlementQPayPayment() {
@@ -1766,9 +1904,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     ) {
       return;
     }
+    if (settlementDraftAmount <= 0) {
+      setSettlementStatus("error");
+      setSettlementMessage("Нэмэх дүнгээ оруулна уу");
+      return;
+    }
+    if (settlementDraftOverRemaining) {
+      setSettlementStatus("error");
+      setSettlementMessage("Төлөх мөр үлдэгдлээс их байна");
+      return;
+    }
 
     const methodLabel =
       SETTLEMENT_METHODS.find((item) => item.id === method)?.label ?? method;
+    const amount = settlementDraftAmount;
     setSettlementMethod(method);
     setSettlementLines((current) => [
       ...current,
@@ -1776,8 +1925,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         id: getNextLocalId("payment"),
         method,
         methodLabel,
-        amount: settlementRemaining,
-        cashReceived: method === "cash" ? settlementRemaining : 0,
+        amount,
+        cashReceived: method === "cash" ? amount : 0,
         changeDue: 0,
         qpayInvoiceId: "",
       },
@@ -2133,12 +2282,86 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("Билл хэвлэж байна");
   }
 
+  async function saveEditedCharge() {
+    if (!editingCharge || saleStatus === "saving") return;
+    const chargeReference = roomNumber.trim();
+
+    if (!chargeReference) {
+      setSaleStatus("error");
+      setSaleMessage("Байшин, нэр эсвэл утас оруулна уу");
+      return;
+    }
+
+    setSaleStatus("saving");
+    setSaleMessage("");
+
+    try {
+      const response = await fetch("/api/sales", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "edit_unpaid",
+          transactionId: editingCharge.transactionId,
+          staffName,
+          room: chargeReference,
+          total: cartTotal,
+          items: cart.map((line) => ({
+            sku: line.sku ?? "",
+            name: line.name,
+            category: line.category,
+            qty: line.quantity,
+            unitPrice: line.price,
+          })),
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Өрийн захиалга засаж чадсангүй");
+      }
+
+      const editedTransactionId = editingCharge.transactionId;
+      selectedChargeGroupKeyRef.current = getChargeReferenceKey(chargeReference);
+      setEditingCharge(null);
+      setCart([]);
+      setCashReceived(0);
+      setCardTerminalApproved(false);
+      setRoomNumber("");
+      resetQPayPayment();
+      setLastSale(null);
+      setRegisterMode("charges");
+      setSaleStatus("success");
+      setSettlementLines([]);
+      resetSettlementDraft();
+      setSettlementStatus("success");
+      setSettlementMessage(`${editedTransactionId} захиалгын засвар хадгалагдлаа`);
+      await Promise.allSettled([
+        loadUnpaidCharges(),
+        loadSalesHistory(),
+        loadDayStatus(),
+      ]);
+    } catch (error) {
+      setSaleStatus("error");
+      setSaleMessage(
+        error instanceof Error
+          ? error.message
+          : "Өрийн захиалга засаж чадсангүй",
+      );
+    }
+  }
+
   async function completeSale() {
     if (cart.length === 0 || saleStatus === "saving") return;
     if (!dayOpen) {
       setSaleStatus("error");
       setSaleMessage("Борлуулалт хийхээс өмнө өдрөө нээнэ үү");
       openDayModal("open");
+      return;
+    }
+    if (isEditingCharge) {
+      await saveEditedCharge();
       return;
     }
     if (cashRequired && cashShort > 0) {
@@ -2162,6 +2385,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return;
     }
 
+    const chargeReference = roomRequired ? roomNumber.trim() : "";
     const shouldAutoPrintReceipt = !roomRequired;
     const receiptWindow = shouldAutoPrintReceipt ? openPrintWindow() : false;
     const roomBillWindow = roomRequired ? openPrintWindow() : false;
@@ -2177,7 +2401,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       isPaid: !roomRequired,
       paymentLabel: getPaymentLogLabel(),
       staffName,
-      roomNumber: roomRequired ? roomNumber.trim() : "",
+      roomNumber: chargeReference,
       cashReceived: cashRequired ? cashReceived : 0,
       changeDue: cashRequired ? changeDue : 0,
       qpayInvoiceId: "",
@@ -2196,7 +2420,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             unitPrice: line.price,
           })),
           method: completedSale.paymentLabel,
-          room: roomRequired ? roomNumber.trim() : "",
+          room: chargeReference,
           staffName,
           paidStatus: roomRequired ? "unpaid" : "paid",
           total: completedSale.total,
@@ -2228,10 +2452,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         : false;
       setSaleStatus("success");
       if (roomRequired) {
-        void loadUnpaidCharges();
+        selectedChargeGroupKeyRef.current = getChargeReferenceKey(chargeReference);
+        setRegisterMode("charges");
+        setSettlementStatus("success");
+        setSettlementMessage(
+          `${chargeReference} өр хэсэгт нэмэгдлээ. Төлбөр хаахад бэлэн.`,
+        );
       }
-      void loadSalesHistory();
-      void loadDayStatus();
+      await Promise.allSettled([
+        roomRequired ? loadUnpaidCharges() : Promise.resolve(),
+        loadSalesHistory(),
+        loadDayStatus(),
+      ]);
       setSaleMessage(
         [
           `${formatMNT(cartTotal)} хадгаллаа`,
@@ -2693,22 +2925,23 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           {registerMode === "sale" ? (
             <>
           <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
-            <h2 className="text-base font-bold">Одоогийн борлуулалт</h2>
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-bold">
+                {isEditingCharge ? "Өрийн захиалга засах" : "Одоогийн борлуулалт"}
+              </h2>
+              {editingCharge && (
+                <p className="truncate text-xs font-bold text-[#6b7280]">
+                  {editingCharge.transactionId} · {editingCharge.roomOrGuest}
+                </p>
+              )}
+            </div>
             <button
               type="button"
-              onClick={() => {
-                setCart([]);
-                setCashReceived(0);
-                setRoomNumber("");
-                setSaleStatus("idle");
-                setSaleMessage("");
-                setLastSale(null);
-                resetQPayPayment();
-              }}
-              disabled={cart.length === 0}
+              onClick={clearCurrentSale}
+              disabled={cart.length === 0 && !editingCharge}
               className="rounded-md border border-[#cbd5e1] px-3 py-1.5 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc] disabled:opacity-40"
             >
-              Цэвэрлэх
+              {isEditingCharge ? "Болих" : "Цэвэрлэх"}
             </button>
           </div>
 
@@ -2802,11 +3035,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   key={method.id}
                   type="button"
                   onClick={() => selectPaymentMethod(method.id)}
+                  disabled={isEditingCharge && method.id !== "room"}
                   className={`h-9 rounded-md border px-1 text-[11px] font-extrabold leading-tight ${
                     paymentMethod === method.id
                       ? "border-[#111827] bg-[#111827] text-white"
                       : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
-                  }`}
+                  } disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]`}
                 >
                   {method.label}
                 </button>
@@ -3114,20 +3348,22 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           );
 
                           return (
-                            <button
+                            <div
                               key={charge.transactionId}
-                              type="button"
-                              onClick={() =>
-                                toggleSelectedCharge(charge.transactionId)
-                              }
-                              className={`w-full rounded-md border p-2 text-left ${
+                              className={`rounded-md border p-2 ${
                                 checked
                                   ? "border-[#111827] bg-[#f8fafc]"
                                   : "border-[#e5e7eb] bg-white"
                               }`}
                             >
                               <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleSelectedCharge(charge.transactionId)
+                                  }
+                                  className="min-w-0 flex-1 text-left"
+                                >
                                   <p className="break-words text-sm font-black">
                                     {checked ? "[x]" : "[ ]"}{" "}
                                     {charge.itemSummary ||
@@ -3136,12 +3372,21 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                                   <p className="mt-0.5 text-xs font-bold text-[#6b7280]">
                                     {charge.transactionId} · {charge.timestamp}
                                   </p>
+                                </button>
+                                <div className="flex shrink-0 flex-col items-end gap-2">
+                                  <span className="text-sm font-black">
+                                    {formatMNT(charge.total)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void startEditingCharge(charge)}
+                                    className="h-8 rounded-md border border-[#bfdbfe] bg-white px-2 text-xs font-black text-[#1d4ed8] hover:bg-[#eff6ff]"
+                                  >
+                                    Засах
+                                  </button>
                                 </div>
-                                <span className="shrink-0 text-sm font-black">
-                                  {formatMNT(charge.total)}
-                                </span>
                               </div>
-                            </button>
+                            </div>
                           );
                         })}
                       </div>
@@ -3184,6 +3429,33 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               <div className="shrink-0 border-t border-[#d1d5db] p-4">
                 {selectedCharges.length > 0 && (
                   <>
+                    <div className="mb-3 grid grid-cols-3 gap-2">
+                      <div className="rounded-md border border-[#e5e7eb] bg-white px-3 py-2">
+                        <p className="text-[11px] font-bold text-[#6b7280]">
+                          Нийт
+                        </p>
+                        <p className="truncate text-sm font-black">
+                          {formatMNT(selectedChargeTotal)}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-[#e5e7eb] bg-white px-3 py-2">
+                        <p className="text-[11px] font-bold text-[#6b7280]">
+                          Нэмсэн
+                        </p>
+                        <p className="truncate text-sm font-black text-[#047857]">
+                          {formatMNT(settlementLineTotal)}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-[#e5e7eb] bg-white px-3 py-2">
+                        <p className="text-[11px] font-bold text-[#6b7280]">
+                          Үлдэгдэл
+                        </p>
+                        <p className="truncate text-sm font-black text-[#b91c1c]">
+                          {formatMNT(settlementRemaining)}
+                        </p>
+                      </div>
+                    </div>
+
                     {settlementLines.length > 0 && (
                       <div className="mb-3 rounded-md border border-[#d1d5db] bg-white">
                         <div className="border-b border-[#e5e7eb] px-3 py-2 text-xs font-black text-[#6b7280]">
@@ -3334,7 +3606,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         }
                         className="h-11 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] text-sm font-extrabold text-[#047857] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
                       >
-                        Үлдэгдэл бэлнээр
+                        Бэлнээр нэмэх
                       </button>
                       <button
                         type="button"
@@ -3346,7 +3618,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         }
                         className="h-11 rounded-md border border-[#bfdbfe] bg-[#eff6ff] text-sm font-extrabold text-[#1d4ed8] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
                       >
-                        Үлдэгдэл картаар
+                        Картаар нэмэх
                       </button>
                     </div>
 
