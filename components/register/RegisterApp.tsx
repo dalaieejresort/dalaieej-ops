@@ -1347,7 +1347,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     ? partialRemaining - partialPaymentAmount
     : partialRemaining;
   const partialDraftOverRemaining = partialPaymentAmount > partialRemaining;
-  const partialDraftLeavesBalance = partialRemainingAfterDraft > 0;
+  const partialDraftClosesSale =
+    partialPaymentAmount > 0 && partialRemainingAfterDraft === 0;
+  const partialSaleFullyPaid =
+    partialRequired &&
+    partialPaymentLines.length > 0 &&
+    partialRemaining === 0;
+  const partialSaleHasBalance = partialRequired && partialRemaining > 0;
   const partialCashRequired = partialPaymentMethod === "cash";
   const partialCardRequired = partialPaymentMethod === "card";
   const partialBankTransferRequired = partialPaymentMethod === "bank";
@@ -1363,7 +1369,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     partialRemaining > 0 &&
     partialPaymentAmount > 0 &&
     !partialDraftOverRemaining &&
-    partialDraftLeavesBalance &&
     (!partialCardRequired || partialCardTerminalApproved) &&
     (!partialBankTransferRequired || partialBankTransferConfirmed);
   const dayOpen = daySession?.status === "open";
@@ -1404,10 +1409,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (!roomRequired || roomNumber.trim().length > 0) &&
     (!bankTransferRequired || bankTransferConfirmed) &&
     (!partialRequired ||
-      (roomNumber.trim().length > 0 &&
-        partialPaymentLines.length > 0 &&
-        partialRemaining > 0 &&
-        partialPaymentAmount === 0));
+      (partialPaymentLines.length > 0 &&
+        partialPaymentAmount === 0 &&
+        (partialRemaining === 0 || roomNumber.trim().length > 0)));
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
     : isEditingCharge
@@ -1421,8 +1425,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         ? "Төлбөрийн мөр нэмнэ үү"
         : partialPaymentAmount > 0
           ? "Мөр нэмэх эсвэл арилгах"
-          : partialRemaining <= 0
-            ? "Үлдэгдэлгүй байна"
+          : partialRemaining === 0
+            ? "Төлбөр хаах"
         : roomNumber.trim().length === 0
           ? "Үлдэгдэл бичих хүнээ оруулна уу"
           : "Хэсэгчилсэн хадгалах"
@@ -1656,6 +1660,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return;
     }
 
+    if (partialRemaining === 0) {
+      setSaleStatus("error");
+      setSaleMessage("Үлдэгдэл байхгүй, төлбөрөө хаана уу");
+      return;
+    }
+
     if (partialPaymentAmount > 0) {
       setSaleStatus("error");
       setSaleMessage("Бичсэн дүнгээ Мөр нэмэхээр баталгаажуулна уу");
@@ -1693,12 +1703,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         return;
       }
 
-      if (!partialDraftLeavesBalance) {
-        setSaleStatus("error");
-        setSaleMessage("Хэсэгчилсэн төлбөрт үлдэгдэл үлдэх ёстой");
-        return;
-      }
-
       if (partialCardRequired && !partialCardTerminalApproved) {
         setSaleStatus("error");
         setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
@@ -1732,7 +1736,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleStatus("idle");
     setSaleMessage("");
     resetPartialPaymentDraft();
-    setPartialPaymentOption("balance");
+    setPartialPaymentOption(partialDraftClosesSale ? "cash" : "balance");
   }
 
   function removePartialPaymentLine(id: string) {
@@ -2408,6 +2412,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   function getPaymentLogLabel() {
     if (partialRequired) {
+      if (partialRemaining === 0) {
+        return `Хувааж төлсөн: ${getSettlementPaymentLabel(partialPaymentLines)}`;
+      }
+
       return `Хэсэгчилсэн: ${getSettlementPaymentLabel(partialPaymentLines)}, үлдэгдэл ${formatNumber(partialRemaining)}`;
     }
 
@@ -2558,18 +2566,16 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage("Бичсэн дүнгээ Мөр нэмэхээр баталгаажуулна уу");
       return;
     }
-    if (partialRequired && partialRemaining <= 0) {
-      setSaleStatus("error");
-      setSaleMessage("Хэсэгчилсэн төлбөрт үлдэгдэл үлдэх ёстой");
-      return;
-    }
-    if (partialRequired && roomNumber.trim().length === 0) {
+    if (partialRequired && partialRemaining > 0 && roomNumber.trim().length === 0) {
       setSaleStatus("error");
       setSaleMessage("Үлдэгдэл бичих байшин, нэр эсвэл утас оруулна уу");
       return;
     }
 
-    const chargeReference = roomRequired || partialRequired ? roomNumber.trim() : "";
+    const chargeReference =
+      roomRequired || (partialRequired && partialRemaining > 0)
+        ? roomNumber.trim()
+        : "";
     const shouldAutoPrintReceipt = !roomRequired && !partialRequired;
     const shouldAutoPrintRoomBill = roomRequired;
     const receiptWindow = shouldAutoPrintReceipt ? openPrintWindow() : false;
@@ -2583,7 +2589,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       createdAt: new Date(),
       items: cart,
       total: cartTotal,
-      isPaid: !roomRequired && !partialRequired,
+      isPaid: !roomRequired && (!partialRequired || partialSaleFullyPaid),
       paymentLabel: getPaymentLogLabel(),
       staffName,
       roomNumber: chargeReference,
@@ -2617,7 +2623,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           method: completedSale.paymentLabel,
           room: chargeReference,
           staffName,
-          paidStatus: roomRequired || partialRequired ? "unpaid" : "paid",
+          paidStatus: roomRequired || partialSaleHasBalance ? "unpaid" : "paid",
           total: completedSale.total,
           cashReceived: completedSale.cashReceived,
           changeDue: completedSale.changeDue,
@@ -2651,7 +2657,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         ? printBill(completedSale, roomBillWindow)
         : false;
       setSaleStatus("success");
-      if (roomRequired || partialRequired) {
+      if (roomRequired || partialSaleHasBalance) {
         selectedChargeGroupKeyRef.current = getChargeReferenceKey(chargeReference);
         if (roomRequired) {
           setRegisterMode("charges");
@@ -2670,7 +2676,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage(
         [
           `${formatMNT(cartTotal)} хадгаллаа`,
-          partialRequired
+          partialSaleFullyPaid ? "Хувааж төлсөн борлуулалт хаагдлаа" : "",
+          partialSaleHasBalance
             ? `${chargeReference} дээр ${formatMNT(partialRemaining)} үлдэгдэл бичигдлээ`
             : "",
           shouldAutoPrintReceipt
@@ -3463,7 +3470,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     <p className="text-[11px] font-bold text-[#6b7280]">
                       Үлдэгдэл
                     </p>
-                    <p className="text-sm font-black text-[#b91c1c]">
+                    <p
+                      className={`text-sm font-black ${
+                        partialRemaining === 0
+                          ? "text-[#047857]"
+                          : "text-[#b91c1c]"
+                      }`}
+                    >
                       {formatMNT(partialRemaining)}
                     </p>
                   </div>
@@ -3517,16 +3530,27 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 <button
                   type="button"
                   onClick={selectPartialBalanceOption}
+                  disabled={
+                    partialPaymentLines.length === 0 ||
+                    partialPaymentAmount > 0 ||
+                    partialRemaining === 0
+                  }
                   className={`mb-2 h-8 w-full rounded-md border text-[11px] font-extrabold ${
                     partialBalanceOptionSelected
                       ? "border-[#111827] bg-[#111827] text-white"
                       : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
-                  }`}
+                  } disabled:border-[#d1d5db] disabled:bg-[#e5e7eb] disabled:text-[#6b7280]`}
                 >
                   Үлдэгдэл бичих
                 </button>
 
-                {!partialBalanceOptionSelected && (
+                {partialRemaining === 0 && (
+                  <div className="mb-2 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] px-2 py-2 text-xs font-black text-[#047857]">
+                    Бүх төлбөр нэмэгдсэн. Төлбөр хаах товчийг дарна уу.
+                  </div>
+                )}
+
+                {!partialBalanceOptionSelected && partialRemaining > 0 && (
                   <>
                 <div className="mb-2 grid grid-cols-2 gap-2">
                   <label>
@@ -3554,9 +3578,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     </span>
                     <div
                       className={`flex h-9 items-center justify-end rounded-md border px-2 text-sm font-black ${
-                        partialDraftOverRemaining || !partialDraftLeavesBalance
+                        partialDraftOverRemaining
                           ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                          : "border-[#d1d5db] bg-white text-[#111827]"
+                          : partialDraftClosesSale
+                            ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                            : "border-[#d1d5db] bg-white text-[#111827]"
                       }`}
                     >
                       {formatNumber(partialRemainingAfterDraft)}
@@ -3724,7 +3750,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </>
                 )}
 
-                {partialBalanceOptionSelected && (
+                {partialBalanceOptionSelected && partialRemaining > 0 && (
                   <div>
                   <div className="mb-2 grid grid-cols-6 gap-1.5">
                     {ROOM_NUMBERS.map((number) => (
