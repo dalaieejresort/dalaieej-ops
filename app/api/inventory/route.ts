@@ -429,7 +429,7 @@ export async function POST(request: Request) {
     const paymentChangeDue =
       changeDue ??
       inventoryPayments.reduce((sum, payment) => sum + payment.changeDue, 0);
-    const paymentQPayInvoiceId =
+    const paymentBankReferenceId =
       qpayInvoiceId ||
       inventoryPayments.map(payment => payment.qpayInvoiceId).filter(Boolean).join(' + ');
     const itemSummary = items
@@ -457,7 +457,7 @@ export async function POST(request: Request) {
         item.qty ?? 1,             // F: Quantity
         'Front Desk',              // G: Location (Can be dynamic later)
         staffName || 'Staff',      // H: Handled By
-        paymentMethod || '',       // I: Payment Method (Qpay/Card/Cash/Room)
+        paymentMethod || '',       // I: Payment Method (Bank/Card/Cash/Room)
         room || ''                 // J: Room Number (If applicable)
       ];
     });
@@ -476,7 +476,7 @@ export async function POST(request: Request) {
       paymentChangeDue,
       items.reduce((sum, item) => sum + (item.qty ?? 1), 0),
       itemSummary,
-      paymentQPayInvoiceId,
+      paymentBankReferenceId,
       '',
     ];
     const shouldAppendPayment = normalizedPaidStatus !== 'unpaid' || hasExplicitPayments;

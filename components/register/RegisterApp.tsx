@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
 import type {
@@ -25,14 +24,7 @@ type CatalogResponseItem = {
 type CatalogStatus = "loading" | "ready" | "sample";
 type SaleStatus = "idle" | "saving" | "success" | "error";
 type RegisterCartLine = CartLine & { category: ItemCategory };
-type QPayStatus = "idle" | "creating" | "pending" | "checking" | "paid" | "error";
-
-type QPayInvoice = {
-  invoiceId: string;
-  qrCode: string;
-  qrText: string;
-  shortUrl: string;
-};
+type BankTransferStatus = "idle" | "paid";
 
 type DayStatus = "loading" | "ready" | "saving" | "error";
 type DayModalMode = "open" | "close" | null;
@@ -98,7 +90,7 @@ type RecentSale = {
 };
 
 type RegisterMode = "sale" | "charges" | "history";
-type SettlementMethod = "cash" | "card" | "qpay";
+type SettlementMethod = "cash" | "card" | "bank";
 type SettlementStatus = "idle" | "saving" | "success" | "error";
 
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
@@ -228,7 +220,7 @@ const CATEGORY_ACCENTS: Record<string, string> = {
 const PAYMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
   { id: "card", label: "Карт" },
-  { id: "qpay", label: "Данс" },
+  { id: "bank", label: "Данс" },
   { id: "room", label: "Байшин/Зочин" },
   { id: "partial", label: "Хэсэгчилсэн" },
 ] as const;
@@ -238,7 +230,7 @@ type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
 const SETTLEMENT_METHODS = [
   { id: "cash", label: "Бэлэн" },
   { id: "card", label: "Карт" },
-  { id: "qpay", label: "Данс" },
+  { id: "bank", label: "Данс" },
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
@@ -861,12 +853,6 @@ function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
   };
 }
 
-function getQrImageSource(qrCode: string) {
-  if (!qrCode) return "";
-  if (qrCode.startsWith("data:")) return qrCode;
-  return `data:image/png;base64,${qrCode}`;
-}
-
 function getChargeGroupKey(charge: UnpaidCharge) {
   return (charge.roomOrGuest || "Байшин/Зочин").trim().toLowerCase();
 }
@@ -930,8 +916,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [partialCashReceived, setPartialCashReceived] = useState(0);
   const [partialCardTerminalApproved, setPartialCardTerminalApproved] =
     useState(false);
-  const [partialQPayStatus, setPartialQPayStatus] =
-    useState<QPayStatus>("idle");
+  const [partialBankTransferStatus, setPartialBankTransferStatus] =
+    useState<BankTransferStatus>("idle");
   const [customItemName, setCustomItemName] = useState("");
   const [customItemAmount, setCustomItemAmount] = useState(0);
   const [roomNumber, setRoomNumber] = useState("");
@@ -939,10 +925,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [saleMessage, setSaleMessage] = useState("");
   const [lastSale, setLastSale] = useState<PrintableSale | null>(null);
   const [saleSequence, setSaleSequence] = useState(0);
-  const [qpayInvoice, setQPayInvoice] = useState<QPayInvoice | null>(null);
-  const [qpayStatus, setQPayStatus] = useState<QPayStatus>("idle");
-  const [qpayMessage, setQPayMessage] = useState("");
-  const [qpayWindowOpen, setQPayWindowOpen] = useState(false);
+  const [bankTransferStatus, setBankTransferStatus] =
+    useState<BankTransferStatus>("idle");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [dayStatus, setDayStatus] = useState<DayStatus>("loading");
   const [dayMessage, setDayMessage] = useState("");
@@ -976,19 +960,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     useState<SettlementMethod>("cash");
   const [settlementPaymentAmount, setSettlementPaymentAmount] = useState(0);
   const [settlementLines, setSettlementLines] = useState<SettlementPaymentLine[]>([]);
-  const [settlementCashReceived, setSettlementCashReceived] = useState(0);
   const [settlementCardTerminalApproved, setSettlementCardTerminalApproved] =
     useState(false);
   const [settlementStatus, setSettlementStatus] =
     useState<SettlementStatus>("idle");
   const [settlementMessage, setSettlementMessage] = useState("");
-  const [settlementQPayInvoice, setSettlementQPayInvoice] =
-    useState<QPayInvoice | null>(null);
-  const [settlementQPayStatus, setSettlementQPayStatus] =
-    useState<QPayStatus>("idle");
-  const [settlementQPayMessage, setSettlementQPayMessage] = useState("");
-  const [settlementQPayWindowOpen, setSettlementQPayWindowOpen] =
-    useState(false);
+  const [settlementBankTransferStatus, setSettlementBankTransferStatus] =
+    useState<BankTransferStatus>("idle");
   const selectedChargeGroupKeyRef = useRef("");
   const uiPreferencesLoadedRef = useRef(false);
   const localIdSequenceRef = useRef(0);
@@ -1352,9 +1330,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const cashShort = Math.max(cartTotal - cashReceived, 0);
   const changeDue = Math.max(cashReceived - cartTotal, 0);
   const roomRequired = paymentMethod === "room";
-  const qpayRequired = paymentMethod === "qpay";
+  const bankTransferRequired = paymentMethod === "bank";
   const partialRequired = paymentMethod === "partial";
-  const bankTransferConfirmed = qpayStatus === "paid";
+  const bankTransferConfirmed = bankTransferStatus === "paid";
   const partialPaymentLabel =
     SETTLEMENT_METHODS.find((method) => method.id === partialPaymentMethod)
       ?.label ?? partialPaymentMethod;
@@ -1363,8 +1341,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     partialPaymentAmount > 0 && partialPaymentAmount < cartTotal;
   const partialCashRequired = partialPaymentMethod === "cash";
   const partialCardRequired = partialPaymentMethod === "card";
-  const partialQPayRequired = partialPaymentMethod === "qpay";
-  const partialBankTransferConfirmed = partialQPayStatus === "paid";
+  const partialBankTransferRequired = partialPaymentMethod === "bank";
+  const partialBankTransferConfirmed = partialBankTransferStatus === "paid";
   const partialCashShort = partialCashRequired
     ? Math.max(partialPaymentAmount - partialCashReceived, 0)
     : 0;
@@ -1408,13 +1386,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (!cashRequired || cashShort === 0) &&
     (!cardRequired || cardTerminalApproved) &&
     (!roomRequired || roomNumber.trim().length > 0) &&
-    (!qpayRequired || bankTransferConfirmed) &&
+    (!bankTransferRequired || bankTransferConfirmed) &&
     (!partialRequired ||
       (roomNumber.trim().length > 0 &&
         partialAmountValid &&
         (!partialCashRequired || partialCashShort === 0) &&
         (!partialCardRequired || partialCardTerminalApproved) &&
-        (!partialQPayRequired || partialBankTransferConfirmed)));
+        (!partialBankTransferRequired || partialBankTransferConfirmed)));
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
     : isEditingCharge
@@ -1432,14 +1410,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             ? "Бэлэн дутуу байна"
             : partialCardRequired && !partialCardTerminalApproved
               ? "Терминал баталгаажуулна уу"
-              : partialQPayRequired && !partialBankTransferConfirmed
+              : partialBankTransferRequired && !partialBankTransferConfirmed
                 ? "Данс баталгаажуулна уу"
                 : "Хэсэгчилсэн хадгалах"
       : cardRequired
         ? cardTerminalApproved
           ? "Карт борлуулалт хадгалах"
           : "Терминал баталгаажуулна уу"
-      : qpayRequired
+      : bankTransferRequired
         ? bankTransferConfirmed
           ? "Дансны борлуулалт хадгалах"
           : "Данс шалгаж баталгаажуулна уу"
@@ -1475,17 +1453,21 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   );
   const settlementDraftAmount =
     settlementPaymentAmount > 0 ? settlementPaymentAmount : settlementRemaining;
+  const settlementRemainingAfterDraft = settlementRemaining - settlementDraftAmount;
   const settlementDraftOverRemaining =
     settlementDraftAmount > settlementRemaining;
   const settlementCashRequired = settlementMethod === "cash";
   const settlementCardRequired = settlementMethod === "card";
-  const settlementQPayRequired = settlementMethod === "qpay";
-  const settlementBankTransferConfirmed = settlementQPayStatus === "paid";
+  const settlementBankTransferRequired = settlementMethod === "bank";
+  const settlementBankTransferConfirmed = settlementBankTransferStatus === "paid";
+  const settlementCashReceivedForLine = settlementCashRequired
+    ? settlementDraftAmount
+    : 0;
   const settlementCashShort = settlementCashRequired
-    ? Math.max(settlementDraftAmount - settlementCashReceived, 0)
+    ? Math.max(settlementDraftAmount - settlementCashReceivedForLine, 0)
     : 0;
   const settlementChangeDue = Math.max(
-    settlementCashReceived - settlementDraftAmount,
+    settlementCashReceivedForLine - settlementDraftAmount,
     0,
   );
   const canAddSettlementLine =
@@ -1496,7 +1478,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     !settlementDraftOverRemaining &&
     (!settlementCashRequired || settlementCashShort === 0) &&
     (!settlementCardRequired || settlementCardTerminalApproved) &&
-    (!settlementQPayRequired || settlementBankTransferConfirmed);
+    (!settlementBankTransferRequired || settlementBankTransferConfirmed);
   const canSettleCharge =
     selectedCharges.length > 0 &&
     settlementLines.length > 0 &&
@@ -1513,7 +1495,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("");
     setLastSale(null);
     setCardTerminalApproved(false);
-    resetQPayPayment();
+    resetBankTransferPayment();
     resetPartialPaymentState();
     const resolvedPriceMode =
       priceMode === "guest" && !hasGuestPrice(item) && hasStaffPrice(item)
@@ -1549,7 +1531,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   function updateQuantity(id: string, quantity: number) {
     setCardTerminalApproved(false);
-    resetQPayPayment();
+    resetBankTransferPayment();
     resetPartialPaymentState();
     setCart((current) =>
       current
@@ -1575,7 +1557,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("");
     setLastSale(null);
     setCardTerminalApproved(false);
-    resetQPayPayment();
+    resetBankTransferPayment();
     resetPartialPaymentState();
 
     const name = customItemName.trim() || "Гараар нэмсэн төлбөр";
@@ -1605,7 +1587,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setEditingCharge(null);
     setPaymentMethod("cash");
     setCardTerminalApproved(false);
-    resetQPayPayment();
+    resetBankTransferPayment();
     resetPartialPaymentState();
   }
 
@@ -1614,7 +1596,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
     setPaymentMethod(method);
     setCardTerminalApproved(false);
-    resetQPayPayment();
+    resetBankTransferPayment();
     resetPartialPaymentState();
     if (saleStatus === "error") {
       setSaleStatus("idle");
@@ -1622,11 +1604,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
-  function resetQPayPayment() {
-    setQPayInvoice(null);
-    setQPayStatus("idle");
-    setQPayMessage("");
-    setQPayWindowOpen(false);
+  function resetBankTransferPayment() {
+    setBankTransferStatus("idle");
   }
 
   function resetPartialPaymentState() {
@@ -1634,13 +1613,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setPartialPaymentAmount(0);
     setPartialCashReceived(0);
     setPartialCardTerminalApproved(false);
-    setPartialQPayStatus("idle");
+    setPartialBankTransferStatus("idle");
   }
 
   function resetPartialTenderConfirmation() {
     setPartialCashReceived(0);
     setPartialCardTerminalApproved(false);
-    setPartialQPayStatus("idle");
+    setPartialBankTransferStatus("idle");
   }
 
   function selectPartialPaymentMethod(method: SettlementMethod) {
@@ -1867,7 +1846,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setRoomNumber("");
       setPaymentMethod("cash");
       setCardTerminalApproved(false);
-      resetQPayPayment();
+      resetBankTransferPayment();
       resetPartialPaymentState();
       setLastSale(null);
       resetSettlementPaymentState();
@@ -1907,7 +1886,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setCart([]);
     setCashReceived(0);
     setCardTerminalApproved(false);
-    resetQPayPayment();
+    resetBankTransferPayment();
     resetPartialPaymentState();
     setLastSale(null);
     setSaleStatus("idle");
@@ -1985,7 +1964,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setRoomNumber(detailedCharge.roomOrGuest || charge.roomOrGuest);
       setCashReceived(0);
       setCardTerminalApproved(false);
-      resetQPayPayment();
+      resetBankTransferPayment();
       resetPartialPaymentState();
       setLastSale(null);
       setSaleStatus("idle");
@@ -2070,18 +2049,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
-  function resetSettlementQPayPayment() {
-    setSettlementQPayInvoice(null);
-    setSettlementQPayStatus("idle");
-    setSettlementQPayMessage("");
-    setSettlementQPayWindowOpen(false);
+  function resetSettlementBankTransferPayment() {
+    setSettlementBankTransferStatus("idle");
   }
 
   function resetSettlementDraft() {
     setSettlementPaymentAmount(0);
-    setSettlementCashReceived(0);
     setSettlementCardTerminalApproved(false);
-    resetSettlementQPayPayment();
+    resetSettlementBankTransferPayment();
   }
 
   function resetSettlementPaymentState() {
@@ -2095,25 +2070,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMethod(method);
     setSettlementStatus("idle");
     setSettlementMessage("");
-    setSettlementCashReceived(0);
     setSettlementCardTerminalApproved(false);
-    resetSettlementQPayPayment();
+    resetSettlementBankTransferPayment();
+  }
+
+  function updateSettlementDraftAmount(amount: number) {
+    const nextAmount = Number.isFinite(amount) ? amount : 0;
+    setSettlementPaymentAmount(nextAmount);
+    setSettlementCardTerminalApproved(false);
+    resetSettlementBankTransferPayment();
   }
 
   function setSettlementAmountInput(value: string) {
     const amount = Number(value.replace(/[^\d]/g, ""));
-    setSettlementPaymentAmount(Number.isFinite(amount) ? amount : 0);
-    setSettlementCardTerminalApproved(false);
-    resetSettlementQPayPayment();
-    if (settlementStatus === "error") {
-      setSettlementStatus("idle");
-      setSettlementMessage("");
-    }
-  }
-
-  function setSettlementCashInput(value: string) {
-    const amount = Number(value.replace(/[^\d]/g, ""));
-    setSettlementCashReceived(Number.isFinite(amount) ? amount : 0);
+    updateSettlementDraftAmount(amount);
     if (settlementStatus === "error") {
       setSettlementStatus("idle");
       setSettlementMessage("");
@@ -2140,7 +2110,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         return;
       }
 
-      if (settlementQPayRequired && !settlementBankTransferConfirmed) {
+      if (settlementBankTransferRequired && !settlementBankTransferConfirmed) {
         setSettlementStatus("error");
         setSettlementMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
         return;
@@ -2159,7 +2129,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         method: settlementMethod,
         methodLabel,
         amount: settlementDraftAmount,
-        cashReceived: settlementCashRequired ? settlementCashReceived : 0,
+        cashReceived: settlementCashReceivedForLine,
         changeDue: settlementCashRequired ? settlementChangeDue : 0,
         qpayInvoiceId: "",
       },
@@ -2216,98 +2186,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementLines((current) => current.filter((line) => line.id !== id));
     setSettlementStatus("idle");
     setSettlementMessage("");
-  }
-
-  async function createSettlementQPayInvoice() {
-    if (
-      selectedCharges.length === 0 ||
-      settlementQPayStatus === "creating" ||
-      settlementQPayInvoice
-    ) {
-      return;
-    }
-    if (settlementDraftAmount <= 0 || settlementDraftOverRemaining) {
-      setSettlementQPayStatus("error");
-      setSettlementQPayMessage("QPay үүсгэх дүнгээ шалгана уу");
-      return;
-    }
-
-    setSettlementQPayWindowOpen(true);
-    setSettlementQPayStatus("creating");
-    setSettlementQPayMessage("");
-
-    try {
-      const response = await fetch("/api/qpay/create-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: settlementDraftAmount,
-          description: `${selectedChargeGroup?.label ?? "Өр"} төлбөр`,
-        }),
-      });
-      const data = (await response.json().catch(() => null)) as
-        | (QPayInvoice & { success?: boolean; error?: string })
-        | null;
-
-      if (!response.ok || !data?.invoiceId) {
-        throw new Error(data?.error ?? "QPay invoice үүсгэж чадсангүй");
-      }
-
-      setSettlementQPayInvoice({
-        invoiceId: data.invoiceId,
-        qrCode: data.qrCode ?? "",
-        qrText: data.qrText ?? "",
-        shortUrl: data.shortUrl ?? "",
-      });
-      setSettlementQPayStatus("pending");
-      setSettlementQPayMessage("QR уншуулсны дараа төлбөр шалгана уу");
-    } catch (error) {
-      setSettlementQPayStatus("error");
-      setSettlementQPayMessage(
-        error instanceof Error ? error.message : "QPay invoice үүсгэж чадсангүй",
-      );
-    }
-  }
-
-  async function checkSettlementQPayPayment() {
-    if (!settlementQPayInvoice || settlementQPayStatus === "checking") return;
-
-    setSettlementQPayStatus("checking");
-    setSettlementQPayMessage("");
-
-    try {
-      const response = await fetch("/api/qpay/check-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invoiceId: settlementQPayInvoice.invoiceId,
-          expectedAmount: settlementDraftAmount,
-        }),
-      });
-      const data = (await response.json().catch(() => null)) as
-        | { paid?: boolean; paidAmount?: number; error?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(data?.error ?? "QPay төлбөр шалгаж чадсангүй");
-      }
-
-      if (!data?.paid) {
-        setSettlementQPayStatus("pending");
-        setSettlementQPayMessage("Төлбөр хараахан орж ирээгүй байна");
-        return;
-      }
-
-      setSettlementQPayStatus("paid");
-      setSettlementQPayMessage(
-        `QPay төлөгдсөн: ${formatMNT(Number(data.paidAmount ?? settlementDraftAmount))}`,
-      );
-    } catch (error) {
-      setSettlementQPayStatus("error");
-      setSettlementQPayMessage(
-        error instanceof Error ? error.message : "QPay төлбөр шалгаж чадсангүй",
-      );
-    }
   }
 
   async function settleSelectedCharge() {
@@ -2434,94 +2312,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
-  async function createQPayInvoice() {
-    if (cartTotal <= 0 || qpayStatus === "creating" || qpayInvoice) return;
-
-    setQPayStatus("creating");
-    setQPayMessage("");
-    setSaleStatus("idle");
-    setSaleMessage("");
-
-    try {
-      const response = await fetch("/api/qpay/create-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: cartTotal,
-          description: `Dalai Eej POS ${formatMNT(cartTotal)}`,
-        }),
-      });
-      const data = (await response.json().catch(() => null)) as
-        | {
-            invoiceId?: string;
-            qrCode?: string;
-            qrText?: string;
-            shortUrl?: string;
-            error?: string;
-          }
-        | null;
-
-      if (!response.ok || !data?.invoiceId) {
-        throw new Error(data?.error ?? "QPay QR үүсгэж чадсангүй");
-      }
-
-      setQPayInvoice({
-        invoiceId: data.invoiceId,
-        qrCode: data.qrCode ?? "",
-        qrText: data.qrText ?? "",
-        shortUrl: data.shortUrl ?? "",
-      });
-      setQPayStatus("pending");
-      setQPayMessage("QR уншуулсны дараа төлбөр шалгана уу");
-    } catch (error) {
-      setQPayStatus("error");
-      setQPayMessage(
-        error instanceof Error ? error.message : "QPay QR үүсгэж чадсангүй",
-      );
-    }
-  }
-
-  async function checkQPayPayment() {
-    if (!qpayInvoice || qpayStatus === "checking") return;
-
-    setQPayStatus("checking");
-    setQPayMessage("");
-
-    try {
-      const response = await fetch("/api/qpay/check-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invoiceId: qpayInvoice.invoiceId,
-          expectedAmount: cartTotal,
-        }),
-      });
-      const data = (await response.json().catch(() => null)) as
-        | { paid?: boolean; paidAmount?: number; error?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(data?.error ?? "QPay төлбөр шалгаж чадсангүй");
-      }
-
-      if (!data?.paid) {
-        setQPayStatus("pending");
-        setQPayMessage("Төлбөр хараахан орж ирээгүй байна");
-        return;
-      }
-
-      setQPayStatus("paid");
-      setQPayMessage(
-        `QPay төлөгдсөн: ${formatMNT(Number(data.paidAmount ?? cartTotal))}`,
-      );
-    } catch (error) {
-      setQPayStatus("error");
-      setQPayMessage(
-        error instanceof Error ? error.message : "QPay төлбөр шалгаж чадсангүй",
-      );
-    }
-  }
-
   function getPaymentLogLabel() {
     if (partialRequired) {
       return `Хэсэгчилсэн: ${partialPaymentLabel} ${formatNumber(partialPaymentAmount)}, үлдэгдэл ${formatNumber(partialBalance)}`;
@@ -2544,7 +2334,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       roomNumber: roomNumber.trim(),
       cashReceived: 0,
       changeDue: 0,
-      qpayInvoiceId: qpayInvoice?.invoiceId ?? "",
+      qpayInvoiceId: "",
     };
   }
 
@@ -2609,7 +2399,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setCashReceived(0);
       setCardTerminalApproved(false);
       setRoomNumber("");
-      resetQPayPayment();
+      resetBankTransferPayment();
       resetPartialPaymentState();
       setLastSale(null);
       setRegisterMode("charges");
@@ -2659,7 +2449,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage("Байшин, нэр эсвэл утас оруулна уу");
       return;
     }
-    if (qpayRequired && !bankTransferConfirmed) {
+    if (bankTransferRequired && !bankTransferConfirmed) {
       setSaleStatus("error");
       setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
       return;
@@ -2684,7 +2474,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
       return;
     }
-    if (partialRequired && partialQPayRequired && !partialBankTransferConfirmed) {
+    if (
+      partialRequired &&
+      partialBankTransferRequired &&
+      !partialBankTransferConfirmed
+    ) {
       setSaleStatus("error");
       setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
       return;
@@ -2767,7 +2561,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setCashReceived(0);
       setCardTerminalApproved(false);
       setRoomNumber("");
-      resetQPayPayment();
+      resetBankTransferPayment();
       resetPartialPaymentState();
       setLastSale(completedSale);
       setSaleSequence(nextSaleSequence);
@@ -3527,7 +3321,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
               </div>
             )}
 
-            {qpayRequired && (
+            {bankTransferRequired && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
@@ -3551,10 +3345,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setQPayStatus((current) =>
+                    setBankTransferStatus((current) =>
                       current === "paid" ? "idle" : "paid",
                     );
-                    setQPayMessage("");
                     if (saleStatus === "error") {
                       setSaleStatus("idle");
                       setSaleMessage("");
@@ -3737,7 +3530,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </div>
                 )}
 
-                {partialQPayRequired && (
+                {partialBankTransferRequired && (
                   <div className="mb-2 rounded-md border border-[#d1d5db] bg-white p-2">
                     <div className="mb-1.5 flex items-center justify-between gap-2">
                       <div>
@@ -3763,7 +3556,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        setPartialQPayStatus((current) =>
+                        setPartialBankTransferStatus((current) =>
                           current === "paid" ? "idle" : "paid",
                         );
                         if (saleStatus === "error") {
@@ -4146,16 +3939,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           </label>
                           <div>
                             <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                              Үлдэгдэл
+                              Дараа үлдэх
                             </span>
                             <div
                               className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
                                 settlementDraftOverRemaining
                                   ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                                  : "border-[#d1d5db] bg-white"
+                                  : settlementRemainingAfterDraft === 0
+                                    ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                                    : "border-[#d1d5db] bg-white"
                               }`}
                             >
-                              {formatNumber(settlementRemaining)}
+                              {formatNumber(settlementRemainingAfterDraft)}
                             </div>
                           </div>
                         </div>
@@ -4164,24 +3959,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           <button
                             type="button"
                             onClick={() => {
-                              setSettlementPaymentAmount(settlementRemaining);
-                              setSettlementCardTerminalApproved(false);
-                              resetSettlementQPayPayment();
+                              updateSettlementDraftAmount(settlementRemaining);
                             }}
                             className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                           >
-                            Үлдэгдэл
+                            Бүх үлдэгдэл
                           </button>
                           <button
                             type="button"
                             onClick={() => {
-                              setSettlementPaymentAmount(0);
-                              setSettlementCardTerminalApproved(false);
-                              resetSettlementQPayPayment();
+                              updateSettlementDraftAmount(0);
                             }}
                             className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
                           >
-                            Auto
+                            Авто
                           </button>
                         </div>
                       </div>
@@ -4215,7 +4006,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         </button>
                         <button
                           type="button"
-                          onClick={() => addQuickSettlementLine("qpay")}
+                          onClick={() => addQuickSettlementLine("bank")}
                           disabled={
                             selectedCharges.length === 0 ||
                             settlementStatus === "saving" ||
@@ -4231,25 +4022,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     {settlementRemaining > 0 && settlementCashRequired && (
                       <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
                         <div className="mb-2 grid grid-cols-2 gap-3">
-                          <label>
+                          <div>
                             <span className="mb-1 block text-xs font-bold text-[#6b7280]">
                               Авсан мөнгө
                             </span>
-                            <input
-                              value={
-                                settlementCashReceived
-                                  ? formatNumber(settlementCashReceived)
-                                  : ""
-                              }
-                              onChange={(event) =>
-                                setSettlementCashInput(event.target.value)
-                              }
-                              type="text"
-                              inputMode="numeric"
-                              placeholder="0"
-                              className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
-                            />
-                          </label>
+                            <div className="flex h-11 items-center justify-end rounded-md border border-[#d1d5db] bg-white px-3 text-base font-black">
+                              {formatNumber(settlementDraftAmount)}
+                            </div>
+                          </div>
                           <div>
                             <span className="mb-1 block text-xs font-bold text-[#6b7280]">
                               Хариулт
@@ -4268,38 +4048,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSettlementCashReceived(settlementDraftAmount)
-                            }
-                            className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
-                          >
-                            Яг дүн
-                          </button>
-                          {CASH_DENOMINATIONS.map((amount) => (
-                            <button
-                              key={amount}
-                              type="button"
-                              onClick={() =>
-                                setSettlementCashReceived(
-                                  (current) => current + amount,
-                                )
-                              }
-                              className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
-                            >
-                              +{formatNumber(amount)}
-                            </button>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => setSettlementCashReceived(0)}
-                            className="h-10 rounded-md border border-[#fecaca] bg-white text-sm font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
-                          >
-                            Арилгах
-                          </button>
-                        </div>
                         <button
                           type="button"
                           onClick={addSettlementLine}
@@ -4372,7 +4120,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       </div>
                     )}
 
-                    {settlementRemaining > 0 && settlementQPayRequired && (
+                    {settlementRemaining > 0 && settlementBankTransferRequired && (
                       <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <div>
@@ -4398,10 +4146,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         <button
                           type="button"
                           onClick={() => {
-                            setSettlementQPayStatus((current) =>
+                            setSettlementBankTransferStatus((current) =>
                               current === "paid" ? "idle" : "paid",
                             );
-                            setSettlementQPayMessage("");
                             if (settlementStatus === "error") {
                               setSettlementStatus("idle");
                               setSettlementMessage("");
@@ -4989,221 +4736,6 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         </div>
       )}
 
-      {qpayRequired && qpayWindowOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-[360px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
-            <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
-              <h3 className="text-sm font-black">QPay төлбөр</h3>
-              <button
-                type="button"
-                onClick={() => setQPayWindowOpen(false)}
-                className="h-8 w-8 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
-                aria-label="QPay цонх хаах"
-              >
-                x
-              </button>
-            </div>
-
-            <div className="p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <span className="text-xs font-bold text-[#6b7280]">Нийт</span>
-                <span className="text-2xl font-black">{formatMNT(cartTotal)}</span>
-              </div>
-
-              {qpayInvoice ? (
-                <div className="mb-3 flex flex-col items-center gap-3">
-                  {qpayInvoice.qrCode ? (
-                    <Image
-                      src={getQrImageSource(qpayInvoice.qrCode)}
-                      alt="QPay QR"
-                      width={176}
-                      height={176}
-                      unoptimized
-                      className="h-44 w-44 rounded-md border border-[#e5e7eb] object-contain p-2"
-                    />
-                  ) : (
-                    <div className="flex h-44 w-44 items-center justify-center rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-3 text-center text-xs font-bold text-[#6b7280]">
-                      QR зураг ирсэнгүй. Богино холбоос эсвэл QR текст ашиглана уу.
-                    </div>
-                  )}
-                  <div className="w-full rounded-md bg-[#f8fafc] px-3 py-2 text-xs font-semibold text-[#374151]">
-                    <p className="break-all">Invoice: {qpayInvoice.invoiceId}</p>
-                    {qpayInvoice.shortUrl && (
-                      <a
-                        href={qpayInvoice.shortUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 block break-all text-[#2563eb] underline"
-                      >
-                        {qpayInvoice.shortUrl}
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-3 rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-8 text-center text-sm font-bold text-[#6b7280]">
-                  QR автоматаар үүсэж байна.
-                </div>
-              )}
-
-              {qpayMessage && (
-                <div
-                  className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
-                    qpayStatus === "paid"
-                      ? "bg-[#ecfdf5] text-[#047857]"
-                      : qpayStatus === "error"
-                        ? "bg-[#fef2f2] text-[#b91c1c]"
-                        : "bg-[#eff6ff] text-[#1d4ed8]"
-                  }`}
-                >
-                  {qpayMessage}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={createQPayInvoice}
-                  disabled={
-                    cartTotal <= 0 ||
-                    qpayStatus === "creating" ||
-                    Boolean(qpayInvoice)
-                  }
-                  className="h-11 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc] disabled:opacity-40"
-                >
-                  {qpayStatus === "creating"
-                    ? "Үүсгэж байна"
-                    : qpayInvoice
-                      ? "QR бэлэн"
-                      : "QR үүсгэх"}
-                </button>
-                <button
-                  type="button"
-                  onClick={checkQPayPayment}
-                  disabled={!qpayInvoice || qpayStatus === "checking"}
-                  className="h-11 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                >
-                  {qpayStatus === "checking" ? "Шалгаж байна" : "Төлбөр шалгах"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {settlementQPayRequired && settlementQPayWindowOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-[360px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
-            <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
-              <h3 className="text-sm font-black">QPay өр төлбөр</h3>
-              <button
-                type="button"
-                onClick={() => setSettlementQPayWindowOpen(false)}
-                className="h-8 w-8 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
-                aria-label="QPay цонх хаах"
-              >
-                x
-              </button>
-            </div>
-
-            <div className="p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <span className="text-xs font-bold text-[#6b7280]">
-                  Мөрийн дүн
-                </span>
-                <span className="text-2xl font-black">
-                  {formatMNT(settlementDraftAmount)}
-                </span>
-              </div>
-
-              {settlementQPayInvoice ? (
-                <div className="mb-3 flex flex-col items-center gap-3">
-                  {settlementQPayInvoice.qrCode ? (
-                    <Image
-                      src={getQrImageSource(settlementQPayInvoice.qrCode)}
-                      alt="QPay QR"
-                      width={176}
-                      height={176}
-                      unoptimized
-                      className="h-44 w-44 rounded-md border border-[#e5e7eb] object-contain p-2"
-                    />
-                  ) : (
-                    <div className="flex h-44 w-44 items-center justify-center rounded-md border border-[#e5e7eb] bg-[#f8fafc] p-3 text-center text-xs font-bold text-[#6b7280]">
-                      QR зураг ирсэнгүй. Богино холбоос эсвэл QR текст ашиглана уу.
-                    </div>
-                  )}
-                  <div className="w-full rounded-md bg-[#f8fafc] px-3 py-2 text-xs font-semibold text-[#374151]">
-                    <p className="break-all">
-                      Invoice: {settlementQPayInvoice.invoiceId}
-                    </p>
-                    {settlementQPayInvoice.shortUrl && (
-                      <a
-                        href={settlementQPayInvoice.shortUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 block break-all text-[#2563eb] underline"
-                      >
-                        {settlementQPayInvoice.shortUrl}
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-3 rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-8 text-center text-sm font-bold text-[#6b7280]">
-                  QR автоматаар үүсэж байна.
-                </div>
-              )}
-
-              {settlementQPayMessage && (
-                <div
-                  className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
-                    settlementQPayStatus === "paid"
-                      ? "bg-[#ecfdf5] text-[#047857]"
-                      : settlementQPayStatus === "error"
-                        ? "bg-[#fef2f2] text-[#b91c1c]"
-                        : "bg-[#eff6ff] text-[#1d4ed8]"
-                  }`}
-                >
-                  {settlementQPayMessage}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={createSettlementQPayInvoice}
-                  disabled={
-                    settlementDraftAmount <= 0 ||
-                    settlementDraftOverRemaining ||
-                    settlementQPayStatus === "creating" ||
-                    Boolean(settlementQPayInvoice)
-                  }
-                  className="h-11 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#f8fafc] disabled:opacity-40"
-                >
-                  {settlementQPayStatus === "creating"
-                    ? "Үүсгэж байна"
-                    : settlementQPayInvoice
-                      ? "QR бэлэн"
-                    : "QR үүсгэх"}
-                </button>
-                <button
-                  type="button"
-                  onClick={checkSettlementQPayPayment}
-                  disabled={
-                    !settlementQPayInvoice ||
-                    settlementQPayStatus === "checking"
-                  }
-                  className="h-11 rounded-md bg-[#111827] text-sm font-extrabold text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                >
-                  {settlementQPayStatus === "checking"
-                    ? "Шалгаж байна"
-                    : "Төлбөр шалгах"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
