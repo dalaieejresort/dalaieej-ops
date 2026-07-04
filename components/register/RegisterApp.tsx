@@ -913,7 +913,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [partialPaymentMethod, setPartialPaymentMethod] =
     useState<SettlementMethod>("cash");
   const [partialPaymentAmount, setPartialPaymentAmount] = useState(0);
-  const [partialCashReceived, setPartialCashReceived] = useState(0);
+  const [partialPaymentLines, setPartialPaymentLines] = useState<
+    SettlementPaymentLine[]
+  >([]);
   const [partialCardTerminalApproved, setPartialCardTerminalApproved] =
     useState(false);
   const [partialBankTransferStatus, setPartialBankTransferStatus] =
@@ -1333,23 +1335,33 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const bankTransferRequired = paymentMethod === "bank";
   const partialRequired = paymentMethod === "partial";
   const bankTransferConfirmed = bankTransferStatus === "paid";
-  const partialPaymentLabel =
-    SETTLEMENT_METHODS.find((method) => method.id === partialPaymentMethod)
-      ?.label ?? partialPaymentMethod;
-  const partialBalance = Math.max(cartTotal - partialPaymentAmount, 0);
-  const partialAmountValid =
-    partialPaymentAmount > 0 && partialPaymentAmount < cartTotal;
+  const partialPaymentLineTotal = partialPaymentLines.reduce(
+    (sum, line) => sum + line.amount,
+    0,
+  );
+  const partialRemaining = Math.max(cartTotal - partialPaymentLineTotal, 0);
+  const partialRemainingAfterDraft = partialPaymentAmount > 0
+    ? partialRemaining - partialPaymentAmount
+    : partialRemaining;
+  const partialDraftOverRemaining = partialPaymentAmount > partialRemaining;
+  const partialDraftLeavesBalance = partialRemainingAfterDraft > 0;
   const partialCashRequired = partialPaymentMethod === "cash";
   const partialCardRequired = partialPaymentMethod === "card";
   const partialBankTransferRequired = partialPaymentMethod === "bank";
   const partialBankTransferConfirmed = partialBankTransferStatus === "paid";
-  const partialCashShort = partialCashRequired
-    ? Math.max(partialPaymentAmount - partialCashReceived, 0)
+  const partialCashReceivedForLine = partialCashRequired
+    ? partialPaymentAmount
     : 0;
-  const partialChangeDue = Math.max(
-    partialCashReceived - partialPaymentAmount,
-    0,
-  );
+  const partialChangeDue = 0;
+  const canAddPartialPaymentLine =
+    partialRequired &&
+    cartTotal > 0 &&
+    partialRemaining > 0 &&
+    partialPaymentAmount > 0 &&
+    !partialDraftOverRemaining &&
+    partialDraftLeavesBalance &&
+    (!partialCardRequired || partialCardTerminalApproved) &&
+    (!partialBankTransferRequired || partialBankTransferConfirmed);
   const dayOpen = daySession?.status === "open";
   const dayClosed = daySession?.status === "closed";
   const dayNonCashPaymentTotal =
@@ -1389,10 +1401,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     (!bankTransferRequired || bankTransferConfirmed) &&
     (!partialRequired ||
       (roomNumber.trim().length > 0 &&
-        partialAmountValid &&
-        (!partialCashRequired || partialCashShort === 0) &&
-        (!partialCardRequired || partialCardTerminalApproved) &&
-        (!partialBankTransferRequired || partialBankTransferConfirmed)));
+        partialPaymentLines.length > 0 &&
+        partialRemaining > 0 &&
+        partialPaymentAmount === 0));
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
     : isEditingCharge
@@ -1402,17 +1413,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     : roomRequired
       ? "Байшин/зочинд бичих"
     : partialRequired
-      ? !partialAmountValid
-        ? "Хэсэгчилсэн дүнгээ шалгана уу"
+      ? partialPaymentLines.length === 0
+        ? "Төлбөрийн мөр нэмнэ үү"
+        : partialPaymentAmount > 0
+          ? "Мөр нэмэх эсвэл арилгах"
+          : partialRemaining <= 0
+            ? "Үлдэгдэлгүй байна"
         : roomNumber.trim().length === 0
           ? "Үлдэгдэл бичих хүнээ оруулна уу"
-          : partialCashRequired && partialCashShort > 0
-            ? "Бэлэн дутуу байна"
-            : partialCardRequired && !partialCardTerminalApproved
-              ? "Терминал баталгаажуулна уу"
-              : partialBankTransferRequired && !partialBankTransferConfirmed
-                ? "Данс баталгаажуулна уу"
-                : "Хэсэгчилсэн хадгалах"
+          : "Хэсэгчилсэн хадгалах"
       : cardRequired
         ? cardTerminalApproved
           ? "Карт борлуулалт хадгалах"
@@ -1609,15 +1618,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   function resetPartialPaymentState() {
+    setPartialPaymentLines([]);
+    resetPartialPaymentDraft();
+  }
+
+  function resetPartialPaymentDraft() {
     setPartialPaymentMethod("cash");
     setPartialPaymentAmount(0);
-    setPartialCashReceived(0);
     setPartialCardTerminalApproved(false);
     setPartialBankTransferStatus("idle");
   }
 
   function resetPartialTenderConfirmation() {
-    setPartialCashReceived(0);
     setPartialCardTerminalApproved(false);
     setPartialBankTransferStatus("idle");
   }
@@ -1641,13 +1653,65 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
-  function setPartialCashInput(value: string) {
-    const amount = Number(value.replace(/[^\d]/g, ""));
-    setPartialCashReceived(Number.isFinite(amount) ? amount : 0);
-    if (saleStatus === "error") {
-      setSaleStatus("idle");
-      setSaleMessage("");
+  function addPartialPaymentLine() {
+    if (!canAddPartialPaymentLine) {
+      if (partialDraftOverRemaining) {
+        setSaleStatus("error");
+        setSaleMessage("Төлөх мөр үлдэгдлээс их байна");
+        return;
+      }
+
+      if (partialPaymentAmount <= 0) {
+        setSaleStatus("error");
+        setSaleMessage("Нэмэх дүнгээ оруулна уу");
+        return;
+      }
+
+      if (!partialDraftLeavesBalance) {
+        setSaleStatus("error");
+        setSaleMessage("Хэсэгчилсэн төлбөрт үлдэгдэл үлдэх ёстой");
+        return;
+      }
+
+      if (partialCardRequired && !partialCardTerminalApproved) {
+        setSaleStatus("error");
+        setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
+        return;
+      }
+
+      if (partialBankTransferRequired && !partialBankTransferConfirmed) {
+        setSaleStatus("error");
+        setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
+        return;
+      }
+
+      return;
     }
+
+    const methodLabel =
+      SETTLEMENT_METHODS.find((method) => method.id === partialPaymentMethod)
+        ?.label ?? partialPaymentMethod;
+    setPartialPaymentLines((current) => [
+      ...current,
+      {
+        id: getNextLocalId("sale-payment"),
+        method: partialPaymentMethod,
+        methodLabel,
+        amount: partialPaymentAmount,
+        cashReceived: partialCashReceivedForLine,
+        changeDue: partialChangeDue,
+        qpayInvoiceId: "",
+      },
+    ]);
+    setSaleStatus("idle");
+    setSaleMessage("");
+    resetPartialPaymentDraft();
+  }
+
+  function removePartialPaymentLine(id: string) {
+    setPartialPaymentLines((current) => current.filter((line) => line.id !== id));
+    setSaleStatus("idle");
+    setSaleMessage("");
   }
 
   function setCashInput(value: string) {
@@ -2314,7 +2378,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   function getPaymentLogLabel() {
     if (partialRequired) {
-      return `Хэсэгчилсэн: ${partialPaymentLabel} ${formatNumber(partialPaymentAmount)}, үлдэгдэл ${formatNumber(partialBalance)}`;
+      return `Хэсэгчилсэн: ${getSettlementPaymentLabel(partialPaymentLines)}, үлдэгдэл ${formatNumber(partialRemaining)}`;
     }
 
     if (!cashRequired) return selectedPayment.label;
@@ -2454,33 +2518,24 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
       return;
     }
-    if (partialRequired && !partialAmountValid) {
+    if (partialRequired && partialPaymentLines.length === 0) {
       setSaleStatus("error");
-      setSaleMessage("Хэсэгчилсэн төлбөр нь нийт дүнгээс бага, 0-ээс их байх ёстой");
+      setSaleMessage("Эхлээд төлсөн мөрөө нэмнэ үү");
+      return;
+    }
+    if (partialRequired && partialPaymentAmount > 0) {
+      setSaleStatus("error");
+      setSaleMessage("Бичсэн дүнгээ Мөр нэмэхээр баталгаажуулна уу");
+      return;
+    }
+    if (partialRequired && partialRemaining <= 0) {
+      setSaleStatus("error");
+      setSaleMessage("Хэсэгчилсэн төлбөрт үлдэгдэл үлдэх ёстой");
       return;
     }
     if (partialRequired && roomNumber.trim().length === 0) {
       setSaleStatus("error");
       setSaleMessage("Үлдэгдэл бичих байшин, нэр эсвэл утас оруулна уу");
-      return;
-    }
-    if (partialRequired && partialCashRequired && partialCashShort > 0) {
-      setSaleStatus("error");
-      setSaleMessage(`${formatMNT(partialCashShort)} дутуу байна`);
-      return;
-    }
-    if (partialRequired && partialCardRequired && !partialCardTerminalApproved) {
-      setSaleStatus("error");
-      setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
-      return;
-    }
-    if (
-      partialRequired &&
-      partialBankTransferRequired &&
-      !partialBankTransferConfirmed
-    ) {
-      setSaleStatus("error");
-      setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
       return;
     }
 
@@ -2501,29 +2556,19 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       paymentLabel: getPaymentLogLabel(),
       staffName,
       roomNumber: chargeReference,
-      cashReceived: cashRequired
-        ? cashReceived
-        : partialRequired && partialCashRequired
-          ? partialCashReceived
-          : 0,
-      changeDue: cashRequired
-        ? changeDue
-        : partialRequired && partialCashRequired
-          ? partialChangeDue
-          : 0,
+      cashReceived: cashRequired ? cashReceived : 0,
+      changeDue: cashRequired ? changeDue : 0,
       qpayInvoiceId: "",
     };
     const partialPayments = partialRequired
-      ? [
-          {
-            paymentMethod: partialPaymentLabel,
-            amount: partialPaymentAmount,
-            cashReceived: partialCashRequired ? partialCashReceived : 0,
-            changeDue: partialCashRequired ? partialChangeDue : 0,
-            qpayInvoiceId: "",
-            notes: `Initial partial sale payment; balance ${partialBalance}`,
-          },
-        ]
+      ? partialPaymentLines.map((line) => ({
+          paymentMethod: line.methodLabel,
+          amount: line.amount,
+          cashReceived: line.cashReceived,
+          changeDue: line.changeDue,
+          qpayInvoiceId: line.qpayInvoiceId,
+          notes: `Initial partial sale payment; balance ${partialRemaining}`,
+        }))
       : undefined;
 
     try {
@@ -2578,7 +2623,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         setSettlementStatus("success");
         setSettlementMessage(
           partialRequired
-            ? `${chargeReference} дээр ${formatMNT(partialBalance)} үлдэгдэл бичигдлээ.`
+            ? `${chargeReference} дээр ${formatMNT(partialRemaining)} үлдэгдэл бичигдлээ.`
             : `${chargeReference} өр хэсэгт нэмэгдлээ. Төлбөр хаахад бэлэн.`,
         );
       }
@@ -3367,9 +3412,56 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             {partialRequired && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <div className="mb-2 grid grid-cols-2 gap-2">
+                  <div className="rounded-md border border-[#d1d5db] bg-white px-2 py-1.5">
+                    <p className="text-[11px] font-bold text-[#6b7280]">
+                      Нэмсэн төлбөр
+                    </p>
+                    <p className="text-sm font-black text-[#047857]">
+                      {formatMNT(partialPaymentLineTotal)}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-[#d1d5db] bg-white px-2 py-1.5">
+                    <p className="text-[11px] font-bold text-[#6b7280]">
+                      Үлдэгдэл
+                    </p>
+                    <p className="text-sm font-black text-[#b91c1c]">
+                      {formatMNT(partialRemaining)}
+                    </p>
+                  </div>
+                </div>
+
+                {partialPaymentLines.length > 0 && (
+                  <div className="mb-2 overflow-hidden rounded-md border border-[#d1d5db] bg-white">
+                    {partialPaymentLines.map((line) => (
+                      <div
+                        key={line.id}
+                        className="flex items-center justify-between gap-2 border-b border-[#e5e7eb] px-2 py-1.5 last:border-b-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-black">
+                            {line.methodLabel}
+                          </p>
+                          <p className="text-[11px] font-bold text-[#6b7280]">
+                            {formatMNT(line.amount)}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removePartialPaymentLine(line.id)}
+                          className="h-7 w-7 rounded-md border border-[#fecaca] text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2]"
+                          aria-label="Төлбөрийн мөр устгах"
+                        >
+                          x
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mb-2 grid grid-cols-2 gap-2">
                   <label>
                     <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
-                      Эхэлж төлөх
+                      Энэ мөрийн дүн
                     </span>
                     <input
                       value={
@@ -3388,18 +3480,41 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </label>
                   <div>
                     <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
-                      Үлдэгдэл
+                      Дараа үлдэх
                     </span>
                     <div
                       className={`flex h-9 items-center justify-end rounded-md border px-2 text-sm font-black ${
-                        partialAmountValid
-                          ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                          : "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
+                        partialDraftOverRemaining || !partialDraftLeavesBalance
+                          ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
+                          : "border-[#d1d5db] bg-white text-[#111827]"
                       }`}
                     >
-                      {formatNumber(partialBalance)}
+                      {formatNumber(partialRemainingAfterDraft)}
                     </div>
                   </div>
+                </div>
+
+                <div className="mb-2 grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPartialPaymentAmount(Math.floor(partialRemaining / 2));
+                      resetPartialTenderConfirmation();
+                    }}
+                    className="h-8 rounded-md border border-[#cbd5e1] bg-white text-[11px] font-extrabold hover:bg-[#eef2ff]"
+                  >
+                    50%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPartialPaymentAmount(0);
+                      resetPartialTenderConfirmation();
+                    }}
+                    className="h-8 rounded-md border border-[#fecaca] bg-white text-[11px] font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
+                  >
+                    Арилгах
+                  </button>
                 </div>
 
                 <div className="mb-2 grid grid-cols-3 gap-1.5">
@@ -3420,70 +3535,33 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 </div>
 
                 {partialCashRequired && (
-                  <div className="mb-2">
+                  <div className="mb-2 rounded-md border border-[#d1d5db] bg-white p-2">
                     <div className="mb-1.5 grid grid-cols-2 gap-2">
-                      <label>
+                      <div>
                         <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
                           Авсан мөнгө
                         </span>
-                        <input
-                          value={
-                            partialCashReceived
-                              ? formatNumber(partialCashReceived)
-                              : ""
-                          }
-                          onChange={(event) =>
-                            setPartialCashInput(event.target.value)
-                          }
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0"
-                          className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white px-2 text-right text-sm font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
-                        />
-                      </label>
+                        <div className="flex h-9 items-center justify-end rounded-md border border-[#d1d5db] bg-white px-2 text-sm font-black">
+                          {formatNumber(partialCashReceivedForLine)}
+                        </div>
+                      </div>
                       <div>
                         <span className="mb-0.5 block text-[11px] font-bold text-[#6b7280]">
                           Хариулт
                         </span>
-                        <div
-                          className={`flex h-9 items-center justify-end rounded-md border px-2 text-sm font-black ${
-                            partialCashShort > 0
-                              ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                              : "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                          }`}
-                        >
-                          {partialCashShort > 0
-                            ? `-${formatNumber(partialCashShort)}`
-                            : formatNumber(partialChangeDue)}
+                        <div className="flex h-9 items-center justify-end rounded-md border border-[#bbf7d0] bg-[#ecfdf5] px-2 text-sm font-black text-[#047857]">
+                          {formatNumber(partialChangeDue)}
                         </div>
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setPartialCashReceived(partialPaymentAmount)}
-                        className="h-8 rounded-md border border-[#cbd5e1] bg-white text-[11px] font-extrabold hover:bg-[#eef2ff]"
-                      >
-                        Яг дүн
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPartialCashReceived(0)}
-                        className="h-8 rounded-md border border-[#fecaca] bg-white text-[11px] font-extrabold text-[#b91c1c] hover:bg-[#fef2f2]"
-                      >
-                        Арилгах
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPartialPaymentAmount(Math.floor(cartTotal / 2));
-                          resetPartialTenderConfirmation();
-                        }}
-                        className="h-8 rounded-md border border-[#cbd5e1] bg-white text-[11px] font-extrabold hover:bg-[#eef2ff]"
-                      >
-                        50%
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={addPartialPaymentLine}
+                      disabled={!canAddPartialPaymentLine}
+                      className="h-9 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                    >
+                      Мөр нэмэх
+                    </button>
                   </div>
                 )}
 
@@ -3526,6 +3604,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       }`}
                     >
                       Терминал дээр төлөгдсөн
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addPartialPaymentLine}
+                      disabled={!canAddPartialPaymentLine}
+                      className="mt-2 h-9 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                    >
+                      Мөр нэмэх
                     </button>
                   </div>
                 )}
@@ -3571,6 +3657,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       }`}
                     >
                       Мобайл банкаар орсон
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addPartialPaymentLine}
+                      disabled={!canAddPartialPaymentLine}
+                      className="mt-2 h-9 w-full rounded-md bg-[#111827] text-xs font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                    >
+                      Мөр нэмэх
                     </button>
                   </div>
                 )}
