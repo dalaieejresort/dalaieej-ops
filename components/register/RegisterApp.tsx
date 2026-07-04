@@ -961,13 +961,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     useState<SettlementMethod>("cash");
   const [settlementPaymentAmount, setSettlementPaymentAmount] = useState(0);
   const [settlementLines, setSettlementLines] = useState<SettlementPaymentLine[]>([]);
-  const [settlementCardTerminalApproved, setSettlementCardTerminalApproved] =
-    useState(false);
   const [settlementStatus, setSettlementStatus] =
     useState<SettlementStatus>("idle");
   const [settlementMessage, setSettlementMessage] = useState("");
-  const [settlementBankTransferStatus, setSettlementBankTransferStatus] =
-    useState<BankTransferStatus>("idle");
   const selectedChargeGroupKeyRef = useRef("");
   const uiPreferencesLoadedRef = useRef(false);
   const localIdSequenceRef = useRef(0);
@@ -1449,34 +1445,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     selectedChargeTotal - settlementLineTotal,
     0,
   );
-  const settlementDraftAmount =
-    settlementPaymentAmount > 0 ? settlementPaymentAmount : settlementRemaining;
-  const settlementRemainingAfterDraft = settlementRemaining - settlementDraftAmount;
-  const settlementDraftOverRemaining =
-    settlementDraftAmount > settlementRemaining;
-  const settlementCashRequired = settlementMethod === "cash";
-  const settlementCardRequired = settlementMethod === "card";
-  const settlementBankTransferRequired = settlementMethod === "bank";
-  const settlementBankTransferConfirmed = settlementBankTransferStatus === "paid";
-  const settlementCashReceivedForLine = settlementCashRequired
-    ? settlementDraftAmount
-    : 0;
-  const settlementCashShort = settlementCashRequired
-    ? Math.max(settlementDraftAmount - settlementCashReceivedForLine, 0)
-    : 0;
-  const settlementChangeDue = Math.max(
-    settlementCashReceivedForLine - settlementDraftAmount,
-    0,
-  );
+  const settlementDraftAmount = settlementPaymentAmount;
+  const settlementDraftOverRemaining = settlementDraftAmount > settlementRemaining;
   const canAddSettlementLine =
     selectedCharges.length > 0 &&
     settlementStatus !== "saving" &&
     settlementRemaining > 0 &&
     settlementDraftAmount > 0 &&
-    !settlementDraftOverRemaining &&
-    (!settlementCashRequired || settlementCashShort === 0) &&
-    (!settlementCardRequired || settlementCardTerminalApproved) &&
-    (!settlementBankTransferRequired || settlementBankTransferConfirmed);
+    !settlementDraftOverRemaining;
   const canSettleCharge =
     selectedCharges.length > 0 &&
     settlementLines.length > 0 &&
@@ -2107,14 +2083,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
-  function resetSettlementBankTransferPayment() {
-    setSettlementBankTransferStatus("idle");
-  }
-
   function resetSettlementDraft() {
+    setSettlementMethod("cash");
     setSettlementPaymentAmount(0);
-    setSettlementCardTerminalApproved(false);
-    resetSettlementBankTransferPayment();
   }
 
   function resetSettlementPaymentState() {
@@ -2128,15 +2099,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMethod(method);
     setSettlementStatus("idle");
     setSettlementMessage("");
-    setSettlementCardTerminalApproved(false);
-    resetSettlementBankTransferPayment();
   }
 
   function updateSettlementDraftAmount(amount: number) {
     const nextAmount = Number.isFinite(amount) ? amount : 0;
     setSettlementPaymentAmount(nextAmount);
-    setSettlementCardTerminalApproved(false);
-    resetSettlementBankTransferPayment();
   }
 
   function setSettlementAmountInput(value: string) {
@@ -2156,21 +2123,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         return;
       }
 
-      if (settlementCashRequired && settlementCashShort > 0) {
+      if (settlementDraftAmount <= 0) {
         setSettlementStatus("error");
-        setSettlementMessage(`${formatMNT(settlementCashShort)} дутуу байна`);
-        return;
-      }
-
-      if (settlementCardRequired && !settlementCardTerminalApproved) {
-        setSettlementStatus("error");
-        setSettlementMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
-        return;
-      }
-
-      if (settlementBankTransferRequired && !settlementBankTransferConfirmed) {
-        setSettlementStatus("error");
-        setSettlementMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
+        setSettlementMessage("Нэмэх дүнгээ оруулна уу");
         return;
       }
 
@@ -2187,50 +2142,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         method: settlementMethod,
         methodLabel,
         amount: settlementDraftAmount,
-        cashReceived: settlementCashReceivedForLine,
-        changeDue: settlementCashRequired ? settlementChangeDue : 0,
-        qpayInvoiceId: "",
-      },
-    ]);
-    setSettlementStatus("idle");
-    setSettlementMessage("");
-    resetSettlementDraft();
-  }
-
-  function addQuickSettlementLine(method: SettlementMethod) {
-    if (
-      selectedCharges.length === 0 ||
-      settlementStatus === "saving" ||
-      settlementRemaining <= 0
-    ) {
-      return;
-    }
-    if (settlementDraftAmount <= 0) {
-      setSettlementStatus("error");
-      setSettlementMessage("Нэмэх дүнгээ оруулна уу");
-      return;
-    }
-    if (settlementDraftOverRemaining) {
-      setSettlementStatus("error");
-      setSettlementMessage("Төлөх мөр үлдэгдлээс их байна");
-      return;
-    }
-
-    const methodLabel =
-      SETTLEMENT_METHODS.find((item) => item.id === method)?.label ?? method;
-    const amount = settlementDraftAmount;
-    const nextRemaining = Math.max(settlementRemaining - amount, 0);
-    const nextMethod: SettlementMethod =
-      nextRemaining > 0 && method === "cash" ? "card" : "cash";
-    setSettlementMethod(nextRemaining > 0 ? nextMethod : method);
-    setSettlementLines((current) => [
-      ...current,
-      {
-        id: getNextLocalId("payment"),
-        method,
-        methodLabel,
-        amount,
-        cashReceived: method === "cash" ? amount : 0,
+        cashReceived: settlementMethod === "cash" ? settlementDraftAmount : 0,
         changeDue: 0,
         qpayInvoiceId: "",
       },
@@ -2250,7 +2162,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     if (selectedCharges.length === 0 || settlementStatus === "saving") return;
     if (settlementLines.length === 0) return;
 
-    const receiptWindow = openPrintWindow();
+    const shouldAutoPrintSettlementReceipt = settlementRemaining === 0;
+    const receiptWindow = shouldAutoPrintSettlementReceipt
+      ? openPrintWindow()
+      : false;
     setSettlementStatus("saving");
     setSettlementMessage("");
 
@@ -2325,17 +2240,21 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         }
       }
 
-      const receiptPrinted = printReceipt(settlementReceipt, receiptWindow);
+      const receiptPrinted = shouldAutoPrintSettlementReceipt
+        ? printReceipt(settlementReceipt, receiptWindow)
+        : false;
       setSettlementStatus("success");
       setSettlementMessage(
         [
           settlementRemaining === 0
             ? `${selectedChargeGroup?.label ?? "Өр"} төлбөр хаагдлаа`
             : `${selectedChargeGroup?.label ?? "Өр"} хэсэгчилсэн төлбөр бичигдлээ`,
-          receiptPrinted
-            ? "Баримт автоматаар хэвлэгдэж байна"
-            : "Баримтын цонх нээгдсэнгүй",
-        ].join(" · "),
+          shouldAutoPrintSettlementReceipt
+            ? receiptPrinted
+              ? "Баримт автоматаар хэвлэгдэж байна"
+              : "Баримтын цонх нээгдсэнгүй"
+            : "",
+        ].filter(Boolean).join(" · "),
       );
       setSettlementLines([]);
       resetSettlementDraft();
@@ -3890,264 +3809,58 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     )}
 
                     {settlementRemaining > 0 && (
-                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                        <div className="mb-2 grid grid-cols-2 gap-3">
-                          <label>
-                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                              Энэ мөрийн дүн
-                            </span>
-                            <input
-                              value={
-                                settlementPaymentAmount
-                                  ? formatNumber(settlementPaymentAmount)
-                                  : ""
-                              }
-                              onChange={(event) =>
-                                setSettlementAmountInput(event.target.value)
-                              }
-                              type="text"
-                              inputMode="numeric"
-                              placeholder={formatNumber(settlementRemaining)}
-                              className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
-                            />
-                          </label>
-                          <div>
-                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                              Дараа үлдэх
-                            </span>
-                            <div
-                              className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
-                                settlementDraftOverRemaining
-                                  ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                                  : settlementRemainingAfterDraft === 0
-                                    ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                                    : "border-[#d1d5db] bg-white"
-                              }`}
-                            >
-                              {formatNumber(settlementRemainingAfterDraft)}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              updateSettlementDraftAmount(settlementRemaining);
-                            }}
-                            className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
-                          >
-                            Бүх үлдэгдэл
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              updateSettlementDraftAmount(0);
-                            }}
-                            className="h-10 rounded-md border border-[#cbd5e1] bg-white text-sm font-extrabold hover:bg-[#eef2ff]"
-                          >
-                            Авто
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {settlementRemaining > 0 && (
-                      <div className="mb-3 grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => addQuickSettlementLine("cash")}
-                          disabled={
-                            selectedCharges.length === 0 ||
-                            settlementStatus === "saving" ||
-                            settlementRemaining <= 0
-                          }
-                          className="h-11 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] text-sm font-extrabold text-[#047857] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
-                        >
-                          Бэлэн нэмэх
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addQuickSettlementLine("card")}
-                          disabled={
-                            selectedCharges.length === 0 ||
-                            settlementStatus === "saving" ||
-                            settlementRemaining <= 0
-                          }
-                          className="h-11 rounded-md border border-[#bfdbfe] bg-[#eff6ff] text-sm font-extrabold text-[#1d4ed8] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
-                        >
-                          Карт нэмэх
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => addQuickSettlementLine("bank")}
-                          disabled={
-                            selectedCharges.length === 0 ||
-                            settlementStatus === "saving" ||
-                            settlementRemaining <= 0
-                          }
-                          className="h-11 rounded-md border border-[#ddd6fe] bg-[#f5f3ff] text-sm font-extrabold text-[#6d28d9] hover:bg-white disabled:border-[#d1d5db] disabled:bg-[#f3f4f6] disabled:text-[#9ca3af]"
-                        >
-                          Данс нэмэх
-                        </button>
-                      </div>
-                    )}
-
-                    {settlementRemaining > 0 && settlementCashRequired && (
-                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                        <div className="mb-2 grid grid-cols-2 gap-3">
-                          <div>
-                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                              Авсан мөнгө
-                            </span>
-                            <div className="flex h-11 items-center justify-end rounded-md border border-[#d1d5db] bg-white px-3 text-base font-black">
-                              {formatNumber(settlementDraftAmount)}
-                            </div>
-                          </div>
-                          <div>
-                            <span className="mb-1 block text-xs font-bold text-[#6b7280]">
-                              Хариулт
-                            </span>
-                            <div
-                              className={`flex h-11 items-center justify-end rounded-md border px-3 text-base font-black ${
-                                settlementCashShort > 0
-                                  ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
-                                  : "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                              }`}
-                            >
-                              {settlementCashShort > 0
-                                ? `-${formatNumber(settlementCashShort)}`
-                                : formatNumber(settlementChangeDue)}
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={addSettlementLine}
-                          disabled={
-                            selectedCharges.length === 0 ||
-                            settlementStatus === "saving" ||
-                            settlementRemaining <= 0
-                          }
-                          className="mt-2 h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                        >
-                          Мөр нэмэх
-                        </button>
-                      </div>
-                    )}
-
-                    {settlementRemaining > 0 && settlementCardRequired && (
-                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <div>
+                      <div className="mb-3 rounded-md border border-[#d1d5db] bg-white p-3">
+                        {settlementLines.length > 0 && (
+                          <div className="mb-3 rounded-md border border-[#fecaca] bg-[#fef2f2] px-3 py-2">
                             <p className="text-xs font-bold text-[#6b7280]">
-                              Терминалын дүн
+                              Үлдэгдэл
                             </p>
-                            <p className="text-lg font-black">
-                              {formatMNT(settlementDraftAmount)}
+                            <p className="text-lg font-black text-[#b91c1c]">
+                              {formatMNT(settlementRemaining)}
                             </p>
                           </div>
-                          <span
-                            className={`rounded-sm px-2 py-1 text-xs font-black ${
-                              settlementCardTerminalApproved
-                                ? "bg-[#ecfdf5] text-[#047857]"
-                                : "bg-white text-[#6b7280]"
-                            }`}
-                          >
-                            {settlementCardTerminalApproved
-                              ? "Баталгаажсан"
-                              : "Хүлээгдэж байна"}
+                        )}
+
+                        <label className="mb-3 block">
+                          <span className="mb-1 block text-xs font-bold text-[#6b7280]">
+                            Төлсөн дүн
                           </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSettlementCardTerminalApproved(
-                              (current) => !current,
-                            );
-                            if (settlementStatus === "error") {
-                              setSettlementStatus("idle");
-                              setSettlementMessage("");
+                          <input
+                            value={
+                              settlementPaymentAmount
+                                ? formatNumber(settlementPaymentAmount)
+                                : ""
                             }
-                          }}
-                          className={`h-10 w-full rounded-md border text-sm font-extrabold ${
-                            settlementCardTerminalApproved
-                              ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                              : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
-                          }`}
-                        >
-                          Терминал дээр төлөгдсөн
-                        </button>
+                            onChange={(event) =>
+                              setSettlementAmountInput(event.target.value)
+                            }
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="0"
+                            className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-base font-black outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                          />
+                        </label>
+
+                        {settlementDraftOverRemaining && (
+                          <div className="mb-3 rounded-md bg-[#fef2f2] px-3 py-2 text-sm font-bold text-[#b91c1c]">
+                            Төлөх мөр үлдэгдлээс их байна
+                          </div>
+                        )}
+
                         <button
                           type="button"
                           onClick={addSettlementLine}
-                          disabled={
-                            selectedCharges.length === 0 ||
-                            settlementStatus === "saving" ||
-                            settlementRemaining <= 0
-                          }
-                          className="mt-2 h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
+                          disabled={!canAddSettlementLine}
+                          className="h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
                         >
                           Мөр нэмэх
                         </button>
                       </div>
                     )}
 
-                    {settlementRemaining > 0 && settlementBankTransferRequired && (
-                      <div className="mb-3 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-3">
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-xs font-bold text-[#6b7280]">
-                              Дансны мөрийн дүн
-                            </p>
-                            <p className="text-lg font-black">
-                              {formatMNT(settlementDraftAmount)}
-                            </p>
-                          </div>
-                          <span
-                            className={`rounded-sm px-2 py-1 text-xs font-black ${
-                              settlementBankTransferConfirmed
-                                ? "bg-[#ecfdf5] text-[#047857]"
-                                : "bg-white text-[#6b7280]"
-                            }`}
-                          >
-                            {settlementBankTransferConfirmed
-                              ? "Баталгаажсан"
-                              : "Мобайл банк шалгана"}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSettlementBankTransferStatus((current) =>
-                              current === "paid" ? "idle" : "paid",
-                            );
-                            if (settlementStatus === "error") {
-                              setSettlementStatus("idle");
-                              setSettlementMessage("");
-                            }
-                          }}
-                          className={`h-10 w-full rounded-md border text-sm font-extrabold ${
-                            settlementBankTransferConfirmed
-                              ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                              : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
-                          }`}
-                        >
-                          Мобайл банкаар орсон
-                        </button>
-                        <button
-                          type="button"
-                          onClick={addSettlementLine}
-                          disabled={
-                            selectedCharges.length === 0 ||
-                            settlementStatus === "saving" ||
-                            settlementRemaining <= 0
-                          }
-                          className="mt-2 h-11 w-full rounded-md bg-[#111827] text-sm font-black text-white hover:bg-[#374151] disabled:bg-[#9ca3af]"
-                        >
-                          Мөр нэмэх
-                        </button>
+                    {settlementRemaining === 0 && (
+                      <div className="mb-3 rounded-md border border-[#bbf7d0] bg-[#ecfdf5] px-3 py-2 text-sm font-black text-[#047857]">
+                        Бүх төлбөр нэмэгдсэн. Төлбөр хаах товчийг дарна уу.
                       </div>
                     )}
 
