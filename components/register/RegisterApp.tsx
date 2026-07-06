@@ -510,6 +510,12 @@ function printablePage(title: string, body: string) {
         font-size: 16px;
         font-weight: 900;
       }
+      .prep-ticket.with-prices .item-main {
+        grid-template-columns: 46px minmax(0, 1fr) 58px;
+      }
+      .prep-ticket.with-prices .price {
+        font-size: 12px;
+      }
       .note {
         margin-top: 9px;
         text-align: center;
@@ -676,8 +682,15 @@ function prepTicketSection(
   title: string,
   note: string,
   items: RegisterCartLine[],
+  options: { showPrices?: boolean } = {},
 ) {
-  return `<section class="prep-ticket">
+  const sectionTotal = items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0,
+  );
+  const showPrices = options.showPrices === true;
+
+  return `<section class="prep-ticket${showPrices ? " with-prices" : ""}">
     <h1>DALAI EEJ</h1>
     <h2>${escapeHtml(title)}</h2>
     <div class="meta">
@@ -698,11 +711,21 @@ function prepTicketSection(
             <div class="item-main">
               <span class="qty">${item.quantity}x</span>
               <span class="name">${escapeHtml(item.name)}</span>
+              ${
+                showPrices
+                  ? `<span class="price">${formatNumber(item.price * item.quantity)}</span>`
+                  : ""
+              }
             </div>
           </div>`,
         )
         .join("")}
     </div>
+    ${
+      showPrices
+        ? `<div class="row total"><span>Нийт</span><span>${formatMNT(sectionTotal)}</span></div>`
+        : ""
+    }
     <div class="note">${escapeHtml(note)}</div>
   </section>`;
 }
@@ -714,7 +737,9 @@ function billBody(sale: PrintableSale) {
       ? prepTicketSection(sale, "Гал тогоо", "Гал тогоонд", kitchen)
       : "",
     other.length > 0
-      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", other)
+      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", other, {
+          showPrices: true,
+        })
       : "",
   ].filter(Boolean);
 
@@ -865,6 +890,72 @@ function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
     cashReceived: sale.cashReceived ?? 0,
     changeDue: sale.changeDue ?? 0,
     qpayInvoiceId: sale.qpayInvoiceId ?? "",
+  };
+}
+
+function buildChargeBillSale(
+  charges: UnpaidChargeDetail[],
+  fallbackStaffName: string,
+  roomLabel: string,
+): PrintableSale {
+  const items = charges.flatMap((charge): RegisterCartLine[] => {
+    const detailItems = (charge.items ?? []).filter(
+      (item) => item.name && item.qty > 0 && item.unitPrice >= 0,
+    );
+
+    if (detailItems.length > 0) {
+      return detailItems.map((item, index) => {
+        const sku = item.sku?.trim() || undefined;
+        const quantity = Math.max(
+          Math.round(Number.isFinite(item.qty) ? item.qty : 1),
+          1,
+        );
+        const price = Math.max(
+          Math.round(Number.isFinite(item.unitPrice) ? item.unitPrice : 0),
+          0,
+        );
+
+        return {
+          id: `${charge.transactionId}-${sku ?? index + 1}`,
+          sku,
+          name: item.name,
+          price,
+          priceMode: item.priceMode,
+          category: item.category || "Үйлчилгээ",
+          quantity,
+          staff: charge.staff || fallbackStaffName,
+        };
+      });
+    }
+
+    return [
+      {
+        id: charge.transactionId,
+        sku: charge.transactionId,
+        name: charge.itemSummary || charge.transactionId,
+        price: charge.originalTotal || charge.total,
+        category: "Үйлчилгээ",
+        quantity: 1,
+        staff: charge.staff || fallbackStaffName,
+      },
+    ];
+  });
+
+  return {
+    id: charges.map((charge) => charge.transactionId).join(", ") || "BILL",
+    createdAt: parseSaleTimestamp(charges[0]?.timestamp ?? ""),
+    items,
+    total: items.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    isPaid: false,
+    paymentLabel: "Төлбөр хүлээгдэж байна",
+    staffName: charges[0]?.staff || fallbackStaffName,
+    roomNumber: roomLabel || charges[0]?.roomOrGuest || "",
+    cashReceived: 0,
+    changeDue: 0,
+    qpayInvoiceId: charges
+      .map((charge) => charge.qpayInvoiceId)
+      .filter(Boolean)
+      .join(", "),
   };
 }
 
@@ -2451,6 +2542,66 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("Билл хэвлэж байна");
   }
 
+  async function printSelectedChargeBill() {
+    if (selectedCharges.length === 0 || settlementStatus === "saving") return;
+
+    const chargeBillWindow = openPrintWindow();
+    if (!chargeBillWindow) {
+      setSettlementStatus("error");
+      setSettlementMessage("Биллийн цонх нээгдсэнгүй");
+      return;
+    }
+
+    const chargesToPrint = selectedCharges;
+    setSettlementStatus("saving");
+    setSettlementMessage("Билл бэлдэж байна");
+
+    const detailResults = await Promise.allSettled(
+      chargesToPrint.map(async (charge) => {
+        const response = await fetch(
+          `/api/sales?transactionId=${encodeURIComponent(charge.transactionId)}`,
+          { cache: "no-store" },
+        );
+        const data = (await response.json().catch(() => null)) as
+          | { charge?: UnpaidChargeDetail; error?: string }
+          | null;
+
+        if (!response.ok || !data?.charge) {
+          throw new Error(data?.error ?? "Өрийн захиалга уншиж чадсангүй");
+        }
+
+        return data.charge;
+      }),
+    );
+    const detailedCharges = detailResults.map((result, index) =>
+      result.status === "fulfilled" ? result.value : chargesToPrint[index],
+    );
+    const hasFallbackCharge = detailResults.some(
+      (result) => result.status === "rejected",
+    );
+    const printed = printBill(
+      buildChargeBillSale(
+        detailedCharges,
+        staffName,
+        selectedChargeGroup?.label ?? chargesToPrint[0]?.roomOrGuest ?? "",
+      ),
+      chargeBillWindow,
+    );
+
+    if (!printed) {
+      setSettlementStatus("error");
+      setSettlementMessage("Биллийн цонх нээгдсэнгүй");
+      return;
+    }
+
+    setSettlementStatus("success");
+    setSettlementMessage(
+      hasFallbackCharge
+        ? "Билл хэвлэж байна · Зарим мөрийг товчоор хэвлэв"
+        : "Билл хэвлэж байна",
+    );
+  }
+
   async function saveEditedCharge() {
     if (!editingCharge || saleStatus === "saving") return;
     const chargeReference = roomNumber.trim();
@@ -3859,6 +4010,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                         </p>
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void printSelectedChargeBill()}
+                      disabled={settlementStatus === "saving"}
+                      className="mb-3 h-11 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-black text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
+                    >
+                      Билл хэвлэх
+                    </button>
 
                     {settlementLines.length > 0 && (
                       <div className="mb-3 rounded-md border border-[#d1d5db] bg-white">
