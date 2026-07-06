@@ -184,6 +184,22 @@ type PrintableSale = {
   qpayInvoiceId: string;
 };
 
+type DayClosePrintReport = {
+  businessDate: string;
+  openedAt: string;
+  closedAt: string;
+  openedBy: string;
+  closedBy: string;
+  staffName: string;
+  startingCash: number;
+  countedCash: number;
+  expectedCash: number;
+  cashDifference: number;
+  totals: DayTotals;
+  itemTotals: DayItemTotal[];
+  notes: string;
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   all: "Бүгд",
   food: "Хоол",
@@ -789,6 +805,85 @@ function printReceipt(sale: PrintableSale, reservedWindow?: Window | false) {
 
 function printBill(sale: PrintableSale, reservedWindow?: Window | false) {
   return printHtml("Билл", billBody(sale), reservedWindow);
+}
+
+function formatDayCloseTime(value: string) {
+  return value ? formatReceiptDate(parseSaleTimestamp(value)) : "";
+}
+
+function dayCloseBody(report: DayClosePrintReport) {
+  const summaryRows: Array<[string, number]> = [
+    ["Нийт борлуулалт", report.totals.salesTotal],
+    ["Нийт төлбөр", report.totals.paymentTotal],
+    ["Бэлэн төлбөр", report.totals.cashPaymentTotal],
+    ["Карт", report.totals.cardPaymentTotal],
+    ["QPay / Данс", report.totals.qpayPaymentTotal],
+    ["Бусад төлбөр", report.totals.otherPaymentTotal],
+    ["Байшин/зочинд бичсэн", report.totals.roomChargeTotal],
+    ["Эхлэх бэлэн мөнгө", report.startingCash],
+    ["Бэлнээр байх ёстой", report.expectedCash],
+    ["Тоолсон бэлэн мөнгө", report.countedCash],
+  ];
+
+  return `<h1>DALAI EEJ</h1>
+    <h2>Өдрийн хаалт</h2>
+    <div class="meta">
+      <div class="row"><strong>Огноо</strong><span>${escapeHtml(report.businessDate)}</span></div>
+      ${
+        report.openedAt
+          ? `<div class="row"><strong>Нээсэн</strong><span>${escapeHtml(formatDayCloseTime(report.openedAt))}</span></div>`
+          : ""
+      }
+      ${
+        report.closedAt
+          ? `<div class="row"><strong>Хаасан</strong><span>${escapeHtml(formatDayCloseTime(report.closedAt))}</span></div>`
+          : ""
+      }
+      <div class="row"><strong>Нээсэн ажилтан</strong><span>${escapeHtml(report.openedBy || report.staffName)}</span></div>
+      <div class="row"><strong>Хаасан ажилтан</strong><span>${escapeHtml(report.closedBy || report.staffName)}</span></div>
+    </div>
+    <div class="items">
+      ${summaryRows
+        .map(
+          ([label, amount]) => `<div class="item">
+            <div class="row">
+              <span>${escapeHtml(label)}</span>
+              <strong>${formatMNT(amount)}</strong>
+            </div>
+          </div>`,
+        )
+        .join("")}
+    </div>
+    <div class="row total"><span>Зөрүү</span><span>${formatMNT(report.cashDifference)}</span></div>
+    ${
+      report.itemTotals.length > 0
+        ? `<h2>Бараагаар зарагдсан тоо</h2>
+          <div class="items">
+            ${report.itemTotals
+              .map(
+                (item, index) => `<div class="item">
+                  <div class="row">
+                    <span>${index + 1}. ${escapeHtml(item.name)}</span>
+                    <strong>${formatNumber(item.quantity)}</strong>
+                  </div>
+                </div>`,
+              )
+              .join("")}
+          </div>`
+        : ""
+    }
+    ${
+      report.notes.trim()
+        ? `<div class="note">Тайлбар: ${escapeHtml(report.notes.trim())}</div>`
+        : ""
+    }`;
+}
+
+function printDayCloseReport(
+  report: DayClosePrintReport,
+  reservedWindow?: Window | false,
+) {
+  return printHtml("Өдрийн хаалт", dayCloseBody(report), reservedWindow);
 }
 
 function getSettlementPaymentLabel(lines: SettlementPaymentLine[]) {
@@ -1925,6 +2020,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return;
     }
 
+    const actionMode = dayModalMode;
+    const countedCash = dayCashAmount;
+    const notes = dayNotes;
+    const dayCloseWindow = actionMode === "close" ? openPrintWindow() : false;
+
     setDayStatus("saving");
     setDayMessage("");
 
@@ -1933,12 +2033,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: dayModalMode,
+          action: actionMode,
           businessDate,
           staffName,
-          startingCash: dayModalMode === "open" ? dayCashAmount : undefined,
-          countedCash: dayModalMode === "close" ? dayCashAmount : undefined,
-          notes: dayNotes,
+          startingCash: actionMode === "open" ? dayCashAmount : undefined,
+          countedCash: actionMode === "close" ? countedCash : undefined,
+          notes,
         }),
       });
       const data = (await response.json().catch(() => null)) as
@@ -1955,18 +2055,50 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       }
 
       const nextSession = data?.session ?? null;
+      const nextTotals = data?.totals ?? EMPTY_DAY_TOTALS;
+      const nextItemTotals = data?.itemTotals ?? [];
+      const closeReportPrinted =
+        actionMode === "close" && nextSession
+          ? printDayCloseReport(
+              {
+                businessDate,
+                openedAt: nextSession.openedAt,
+                closedAt: nextSession.closedAt,
+                openedBy: nextSession.openedBy,
+                closedBy: nextSession.closedBy,
+                staffName,
+                startingCash: nextSession.startingCash,
+                countedCash,
+                expectedCash: nextTotals.expectedCash,
+                cashDifference: countedCash - nextTotals.expectedCash,
+                totals: nextTotals,
+                itemTotals: nextItemTotals,
+                notes,
+              },
+              dayCloseWindow,
+            )
+          : false;
+
       daySessionSignatureRef.current = getDaySessionSignature(nextSession);
       setDaySession(nextSession);
-      setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
-      setDayItemTotals(data?.itemTotals ?? []);
+      setDayTotals(nextTotals);
+      setDayItemTotals(nextItemTotals);
       setDayModalMode(null);
       setDayCashAmount(0);
       setDayNotes("");
       setDayStatus("ready");
       setDayMessage(
-        dayModalMode === "open" ? "Өдөр нээгдлээ" : "Өдрийн хаалт хадгалагдлаа",
+        actionMode === "open"
+          ? "Өдөр нээгдлээ"
+          : [
+              "Өдрийн хаалт хадгалагдлаа",
+              closeReportPrinted
+                ? "Хаалт хэвлэгдэж байна"
+                : "Хаалтын хэвлэх цонх нээгдсэнгүй",
+            ].join(" · "),
       );
     } catch (error) {
+      closePrintWindow(dayCloseWindow);
       setDayStatus("error");
       setDayMessage(
         error instanceof Error ? error.message : "Өдрийн төлөв хадгалж чадсангүй",
