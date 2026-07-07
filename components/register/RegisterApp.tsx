@@ -102,6 +102,7 @@ const DAY_SESSION_SYNC_INTERVAL_MS = 10000;
 const CATALOG_RETRY_DELAY_MS = 15000;
 const CATALOG_RETRY_INTERVAL_MS = 120000;
 const PRINT_BILL_BUTTON_LABEL = "Гал тогоо / Бар билл хэвлэх";
+const KITCHEN_BILL_BUTTON_LABEL = "Гал тогоо билл хэвлэх";
 
 function isRegisterMode(value: string | null): value is RegisterMode {
   return value === "sale" || value === "charges" || value === "history";
@@ -177,6 +178,8 @@ type PrintableSale = {
   items: RegisterCartLine[];
   total: number;
   isPaid: boolean;
+  includeBarOtherBill?: boolean;
+  receiptTitle?: string;
   paymentLabel: string;
   staffName: string;
   roomNumber: string;
@@ -760,11 +763,12 @@ function prepTicketSection(
 
 function billBody(sale: PrintableSale) {
   const { kitchen } = splitPrepTicketItems(sale.items);
+  const includeBarOtherBill = sale.includeBarOtherBill !== false;
   const sections = [
     kitchen.length > 0
       ? prepTicketSection(sale, "Гал тогоо", "Гал тогоонд", kitchen)
       : "",
-    sale.items.length > 0
+    includeBarOtherBill && sale.items.length > 0
       ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", sale.items, {
           showPrices: true,
         })
@@ -774,9 +778,19 @@ function billBody(sale: PrintableSale) {
   return sections.join("");
 }
 
+function hasPrintableBill(sale: PrintableSale) {
+  return billBody(sale).trim().length > 0;
+}
+
+function getPrintBillButtonLabel(sale: Pick<PrintableSale, "includeBarOtherBill">) {
+  return sale.includeBarOtherBill === false
+    ? KITCHEN_BILL_BUTTON_LABEL
+    : PRINT_BILL_BUTTON_LABEL;
+}
+
 function receiptBody(sale: PrintableSale) {
   return `<h1>DALAI EEJ</h1>
-    <h2>Төлбөрийн баримт</h2>
+    <h2>${escapeHtml(sale.receiptTitle ?? "Төлбөрийн баримт")}</h2>
     <div class="meta">
       <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
       <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
@@ -816,6 +830,8 @@ function printReceipt(sale: PrintableSale, reservedWindow?: Window | false) {
 }
 
 function printBill(sale: PrintableSale, reservedWindow?: Window | false) {
+  if (!hasPrintableBill(sale)) return false;
+
   return printHtml("Билл", billBody(sale), reservedWindow);
 }
 
@@ -915,46 +931,33 @@ function buildSettlementReceiptSale(
   roomLabel: string,
 ): PrintableSale {
   const total = lines.reduce((sum, line) => sum + line.amount, 0);
-  const items = charges.flatMap((charge): RegisterCartLine[] => {
-    const paidAmount = (
-      paymentsByTransaction.get(charge.transactionId) ?? []
-    ).reduce((sum, payment) => sum + payment.amount, 0);
-
-    if (paidAmount <= 0) return [];
-
-    return [
-      {
-        id: charge.transactionId,
-        sku: charge.transactionId,
-        name: charge.itemSummary || charge.transactionId,
-        price: paidAmount,
-        category: "Үйлчилгээ",
-        quantity: 1,
-        staff: staffName,
-      },
-    ];
-  });
+  const settledChargeCount = Array.from(paymentsByTransaction.values()).filter(
+    (payments) =>
+      payments.reduce((sum, payment) => sum + payment.amount, 0) > 0,
+  ).length;
   const singleCashLine =
     lines.length === 1 && lines[0].method === "cash" ? lines[0] : null;
+  const itemName =
+    settledChargeCount > 1
+      ? `Өр төлбөр нэгтгэл (${settledChargeCount} өр)`
+      : "Өр төлбөр нэгтгэл";
 
   return {
     id: lines[0]?.id ?? "PAY",
     createdAt: new Date(),
-    items:
-      items.length > 0
-        ? items
-        : [
-            {
-              id: "settlement",
-              name: "Өр төлбөр",
-              price: total,
-              category: "Үйлчилгээ",
-              quantity: 1,
-              staff: staffName,
-            },
-          ],
+    items: [
+      {
+        id: "settlement-summary",
+        name: itemName,
+        price: total,
+        category: "Үйлчилгээ",
+        quantity: 1,
+        staff: staffName,
+      },
+    ],
     total,
     isPaid: true,
+    receiptTitle: "Өр төлбөр нэгтгэл",
     paymentLabel: getSettlementPaymentLabel(lines),
     staffName,
     roomNumber: roomLabel,
@@ -973,16 +976,17 @@ function parseSaleTimestamp(timestamp: string) {
 }
 
 function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
+  const isDebtPayment = sale.historyKind === "payment";
+
   return {
     id: sale.transactionId,
     createdAt: parseSaleTimestamp(sale.timestamp),
     items: [
       {
         id: sale.transactionId,
-        name:
-          sale.paidStatus === "partial"
-            ? `Өр төлбөр: ${sale.itemSummary || sale.transactionId}`
-            : sale.itemSummary || sale.transactionId,
+        name: isDebtPayment
+          ? "Өр төлбөр нэгтгэл"
+          : sale.itemSummary || sale.transactionId,
         price: sale.total,
         category: "Үйлчилгээ",
         quantity: 1,
@@ -991,6 +995,7 @@ function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
     ],
     total: sale.total,
     isPaid: true,
+    receiptTitle: isDebtPayment ? "Өр төлбөр нэгтгэл" : undefined,
     paymentLabel: sale.paymentMethod,
     staffName: sale.staff,
     roomNumber: sale.roomOrGuest,
@@ -1054,6 +1059,7 @@ function buildChargeBillSale(
     items,
     total: items.reduce((sum, item) => sum + item.price * item.quantity, 0),
     isPaid: false,
+    includeBarOtherBill: true,
     paymentLabel: "Төлбөр хүлээгдэж байна",
     staffName: charges[0]?.staff || fallbackStaffName,
     roomNumber: roomLabel || charges[0]?.roomOrGuest || "",
@@ -2663,6 +2669,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       items: cart,
       total: cartTotal,
       isPaid: false,
+      includeBarOtherBill: !roomRequired,
       paymentLabel: "Төлбөр хүлээгдэж байна",
       staffName,
       roomNumber: roomNumber.trim(),
@@ -2675,7 +2682,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   function printCurrentBill() {
     if (cart.length === 0) return;
 
-    const printed = printBill(buildCurrentBillSale());
+    const currentBillSale = buildCurrentBillSale();
+    if (!hasPrintableBill(currentBillSale)) {
+      setSaleStatus("success");
+      setSaleMessage("Өр хэсэгт бичих тул бар / бусад билл хэвлэхгүй");
+      return;
+    }
+
+    const printed = printBill(currentBillSale);
     if (!printed) {
       setSaleStatus("error");
       setSaleMessage("Биллийн цонх нээгдсэнгүй");
@@ -2869,7 +2883,22 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         ? roomNumber.trim()
         : "";
     const shouldAutoPrintReceipt = !roomRequired && !partialRequired;
-    const shouldAutoPrintRoomBill = roomRequired;
+    const shouldAutoPrintRoomBill =
+      roomRequired &&
+      hasPrintableBill({
+        id: "",
+        createdAt: new Date(),
+        items: cart,
+        total: cartTotal,
+        isPaid: false,
+        includeBarOtherBill: false,
+        paymentLabel: "",
+        staffName,
+        roomNumber: chargeReference,
+        cashReceived: 0,
+        changeDue: 0,
+        qpayInvoiceId: "",
+      });
     const receiptWindow = shouldAutoPrintReceipt ? openPrintWindow() : false;
     const roomBillWindow = shouldAutoPrintRoomBill ? openPrintWindow() : false;
 
@@ -2882,6 +2911,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       items: cart,
       total: cartTotal,
       isPaid: !roomRequired && (!partialRequired || partialSaleFullyPaid),
+      includeBarOtherBill: !roomRequired && !partialSaleHasBalance,
       paymentLabel: getPaymentLogLabel(),
       staffName,
       roomNumber: chargeReference,
@@ -2979,9 +3009,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             : "",
           shouldAutoPrintRoomBill
             ? roomBillPrinted
-              ? "Билл автоматаар хэвлэгдэж байна"
+              ? "Гал тогооны билл автоматаар хэвлэгдэж байна"
               : "Биллийн цонх нээгдсэнгүй"
-            : "Билл хэвлэх товчоор гаргана уу",
+            : roomRequired || partialSaleHasBalance
+              ? "Өр хэсэгт бичсэн тул бар / бусад билл хэвлэхгүй"
+              : "Билл хэвлэх товчоор гаргана уу",
         ]
           .filter(Boolean)
           .join(" · "),
@@ -3537,7 +3569,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 disabled={cart.length === 0}
                 className="h-11 rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-extrabold leading-tight text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
               >
-                {PRINT_BILL_BUTTON_LABEL}
+                {roomRequired
+                  ? KITCHEN_BILL_BUTTON_LABEL
+                  : PRINT_BILL_BUTTON_LABEL}
               </button>
             </div>
 
@@ -3927,13 +3961,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
             {lastSale && (
               <div className="mb-2 grid gap-2">
-                <button
-                  type="button"
-                  onClick={() => printBill(lastSale)}
-                  className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold leading-tight hover:bg-[#f8fafc]"
-                >
-                  {PRINT_BILL_BUTTON_LABEL}
-                </button>
+                {hasPrintableBill(lastSale) && (
+                  <button
+                    type="button"
+                    onClick={() => printBill(lastSale)}
+                    className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold leading-tight hover:bg-[#f8fafc]"
+                  >
+                    {getPrintBillButtonLabel(lastSale)}
+                  </button>
+                )}
                 {lastSale.isPaid && (
                   <button
                     type="button"
