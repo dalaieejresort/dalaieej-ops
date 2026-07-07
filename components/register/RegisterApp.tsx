@@ -207,6 +207,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   soft: "Ундаа",
   cocktail: "Коктейль",
   dessert: "Амттан",
+  Дессерт: "Дессерт",
+  Десерт: "Дессерт",
   gift: "Карт",
   menu: "Меню",
 };
@@ -218,6 +220,8 @@ const CATEGORY_ACCENTS: Record<string, string> = {
   soft: "#2563eb",
   cocktail: "#7c3aed",
   dessert: "#be4b75",
+  Дессерт: "#be4b75",
+  Десерт: "#be4b75",
   gift: "#047857",
   menu: "#374151",
   Тамхи: "#64748b",
@@ -328,7 +332,12 @@ function inferCategory(name: string): ItemCategory {
     return "gift";
   }
 
-  if (normalized.includes("амттан") || normalized.includes("dessert")) {
+  if (
+    normalized.includes("амттан") ||
+    normalized.includes("dessert") ||
+    normalized.includes("дессерт") ||
+    normalized.includes("десерт")
+  ) {
     return "dessert";
   }
 
@@ -588,6 +597,8 @@ const KITCHEN_TICKET_KEYWORDS = [
   "salad",
   "амттан",
   "dessert",
+  "дессерт",
+  "десерт",
   "тараг",
   "yogurt",
   "бялуу",

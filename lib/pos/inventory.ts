@@ -3,6 +3,8 @@ export const UNLIMITED_INVENTORY_CATEGORIES = new Set<string>([
   "dessert",
   "Dessert",
   "Desserts",
+  "Дессерт",
+  "Десерт",
   "Амттан",
   "Амттаны",
   "Паста",
@@ -89,6 +91,8 @@ const MADE_TO_ORDER_NAME_KEYWORDS = [
   "salad",
   "амттан",
   "dessert",
+  "дессерт",
+  "десерт",
   "бялуу",
   "cake",
   "чизкейк",
@@ -144,6 +148,8 @@ export function isUnlimitedInventoryCategory(category: unknown) {
     normalized.includes("salad") ||
     normalized.includes("амттан") ||
     normalized.includes("dessert") ||
+    normalized.includes("дессерт") ||
+    normalized.includes("десерт") ||
     normalized.includes("бялуу") ||
     normalized.includes("cake") ||
     normalized.includes("чизкейк") ||
