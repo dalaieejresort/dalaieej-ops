@@ -101,6 +101,7 @@ const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 30000;
 const DAY_SESSION_SYNC_INTERVAL_MS = 10000;
 const CATALOG_RETRY_DELAY_MS = 15000;
 const CATALOG_RETRY_INTERVAL_MS = 120000;
+const PRINT_BILL_BUTTON_LABEL = "Гал тогоо / Бар билл хэвлэх";
 
 function isRegisterMode(value: string | null): value is RegisterMode {
   return value === "sale" || value === "charges" || value === "history";
@@ -758,13 +759,13 @@ function prepTicketSection(
 }
 
 function billBody(sale: PrintableSale) {
-  const { kitchen, other } = splitPrepTicketItems(sale.items);
+  const { kitchen } = splitPrepTicketItems(sale.items);
   const sections = [
     kitchen.length > 0
       ? prepTicketSection(sale, "Гал тогоо", "Гал тогоонд", kitchen)
       : "",
-    other.length > 0
-      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", other, {
+    sale.items.length > 0
+      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", sale.items, {
           showPrices: true,
         })
       : "",
@@ -3523,7 +3524,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           </div>
 
           <div className="shrink-0 border-t border-[#d1d5db] p-3">
-            <div className="mb-2 grid grid-cols-[minmax(0,1fr)_130px] items-center gap-2">
+            <div className="mb-2 grid grid-cols-[minmax(0,1fr)_156px] items-center gap-2">
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-[#6b7280]">Нийт</span>
                 <div className="truncate text-2xl font-black tracking-normal">
@@ -3534,9 +3535,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 type="button"
                 onClick={printCurrentBill}
                 disabled={cart.length === 0}
-                className="h-11 rounded-md border border-[#cbd5e1] bg-white px-2 text-xs font-extrabold text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
+                className="h-11 rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-extrabold leading-tight text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
               >
-                Билл хэвлэх
+                {PRINT_BILL_BUTTON_LABEL}
               </button>
             </div>
 
@@ -3929,9 +3930,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 <button
                   type="button"
                   onClick={() => printBill(lastSale)}
-                  className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
+                  className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold leading-tight hover:bg-[#f8fafc]"
                 >
-                  Билл хэвлэх
+                  {PRINT_BILL_BUTTON_LABEL}
                 </button>
                 {lastSale.isPaid && (
                   <button
@@ -4158,9 +4159,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                       type="button"
                       onClick={() => void printSelectedChargeBill()}
                       disabled={settlementStatus === "saving"}
-                      className="mb-3 h-11 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-black text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
+                      className="mb-3 h-11 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-black leading-tight text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
                     >
-                      Билл хэвлэх
+                      {PRINT_BILL_BUTTON_LABEL}
                     </button>
 
                     {settlementLines.length > 0 && (
