@@ -447,7 +447,7 @@ function printablePage(title: string, body: string) {
         padding: 0;
         color: #000;
         background: #fff;
-        font-family: Arial, "Helvetica Neue", sans-serif;
+        font-family: Helvetica, Arial, sans-serif;
         font-size: 11px;
         line-height: 1.25;
         -webkit-print-color-adjust: exact;
