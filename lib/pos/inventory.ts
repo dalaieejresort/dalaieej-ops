@@ -1,6 +1,10 @@
 export const UNLIMITED_INVENTORY_CATEGORIES = new Set<string>([
   "food",
   "dessert",
+  "Dessert",
+  "Desserts",
+  "Амттан",
+  "Амттаны",
   "Паста",
   "Pasta",
   "Пицца",
@@ -23,6 +27,10 @@ export const UNLIMITED_INVENTORY_CATEGORIES = new Set<string>([
   "2-р хоол",
   "2 хоол",
   "Хачир",
+  "Салат",
+  "Салад",
+  "Salad",
+  "Salads",
   "Монгол хоол",
   "Шөл",
   "Цагаан хоол",
@@ -76,6 +84,23 @@ const MADE_TO_ORDER_NAME_KEYWORDS = [
   "маргарита пицца",
   "маргарита пизза",
   "margherita pizza",
+  "салат",
+  "салад",
+  "salad",
+  "амттан",
+  "dessert",
+  "бялуу",
+  "cake",
+  "чизкейк",
+  "cheesecake",
+  "тирамису",
+  "tiramisu",
+  "панакота",
+  "panna cotta",
+  "пирог",
+  "pie",
+  "мусс",
+  "mousse",
 ];
 
 function normalizeInventorySku(sku: unknown) {
@@ -114,6 +139,23 @@ export function isUnlimitedInventoryCategory(category: unknown) {
     normalized.includes("calzone") ||
     normalized.includes("итали") ||
     normalized.includes("italian") ||
+    normalized.includes("салат") ||
+    normalized.includes("салад") ||
+    normalized.includes("salad") ||
+    normalized.includes("амттан") ||
+    normalized.includes("dessert") ||
+    normalized.includes("бялуу") ||
+    normalized.includes("cake") ||
+    normalized.includes("чизкейк") ||
+    normalized.includes("cheesecake") ||
+    normalized.includes("тирамису") ||
+    normalized.includes("tiramisu") ||
+    normalized.includes("панакота") ||
+    normalized.includes("panna cotta") ||
+    normalized.includes("пирог") ||
+    normalized.includes("pie") ||
+    normalized.includes("мусс") ||
+    normalized.includes("mousse") ||
     normalized.includes("түрээс") ||
     normalized.includes("rental") ||
     normalized.includes("халуун ундаа") ||
