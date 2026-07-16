@@ -1,36 +1,34 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dalai Eej Ops
 
-## Getting Started
+Adaptive operations app and POS for Dalai Eej Resort.
 
-First, run the development server:
+## Routes
+
+- `/` - adaptive entry: desktop register on wider screens, phone-first mobile app on mobile screens.
+- `/ops` - desktop operations dashboard, always.
+- `/register` - touch-friendly POS/register workflow for sales, room charges, settlements, refunds, and day close.
+
+## Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Checks
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm run build
+```
 
-## Learn More
+The app reads live data from Google Sheets through the existing API routes. If the Google environment variables are missing or invalid, the dashboard shows partial/error states while the register falls back to its sample catalog.
 
-To learn more about Next.js, take a look at the following resources:
+## Connectivity safeguards
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Read-only mobile and operations views retain the last successful snapshot in the browser and use it when live requests fail.
+- The register retains the active sale draft locally and restores it after a refresh or browser restart.
+- Register writes are blocked when the browser reports that it is offline. A failed write keeps the form intact and asks the cashier to check History before retrying, avoiding an accidental duplicate.
+- The installed app caches its main navigation routes so a previously loaded route can reopen during an outage.
+- Reconnecting triggers an immediate refresh. The current safeguards do not queue sales, payments, voids, or day-close actions for automatic replay.

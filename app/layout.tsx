@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
+import { ConnectivityStatus } from "@/components/system/ConnectivityStatus";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Dalai Eej POS",
-  description: "Борлуулалтын цэг — Dalai Eej Resort",
-  applicationName: "Dalai Eej POS",
+  title: "Dalai Eej Ops",
+  description: "Dalai Eej Resort adaptive operations app and POS",
+  applicationName: "Dalai Eej Ops",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: "/app-icon.svg",
@@ -13,7 +14,7 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    title: "Dalai POS",
+    title: "Dalai Ops",
     statusBarStyle: "black-translucent",
   },
 };
@@ -21,8 +22,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   themeColor: "#047857",
   colorScheme: "light",
 };
@@ -34,7 +33,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="mn" className="h-full antialiased">
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+      <body className="min-h-full flex flex-col font-sans">
+        <ConnectivityStatus />
+        {children}
+      </body>
     </html>
   );
 }

@@ -314,44 +314,6 @@ function getPaymentSummaries(rows: Array<{ get: (columnName: string) => unknown 
   );
 }
 
-function normalizeBusinessDate(value: unknown) {
-  const text = String(value ?? '').trim();
-  if (text) return text;
-
-  return new Intl.DateTimeFormat('mn-MN', {
-    timeZone: 'Asia/Ulaanbaatar',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-    .format(new Date())
-    .replace(/\//g, '.');
-}
-
-function businessDateFromTimestamp(value: unknown) {
-  const timestamp = String(value ?? '').trim();
-  const match = timestamp.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-
-  if (match) {
-    const [, month, day, year] = match;
-    return `${year}.${month.padStart(2, '0')}.${day.padStart(2, '0')}`;
-  }
-
-  const parsed = new Date(timestamp);
-  if (!Number.isNaN(parsed.getTime())) {
-    return new Intl.DateTimeFormat('mn-MN', {
-      timeZone: 'Asia/Ulaanbaatar',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    })
-      .format(parsed)
-      .replace(/\//g, '.');
-  }
-
-  return '';
-}
-
 function timestampMs(value: unknown) {
   const timestamp = String(value ?? '').trim();
   const match = timestamp.match(
@@ -378,9 +340,8 @@ function timestampMs(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
-function getBusinessDatePaymentActivity(
+function getPaymentActivity(
   rows: Array<{ get: (columnName: string) => unknown }>,
-  businessDate: string,
 ) {
   const activity = new Map<
     string,
@@ -396,8 +357,6 @@ function getBusinessDatePaymentActivity(
   >();
 
   for (const row of rows) {
-    if (businessDateFromTimestamp(row.get('timestamp')) !== businessDate) continue;
-
     const transactionId = getCell(row, 'transaction_id');
     const amount = toNumber(row.get('amount'));
     if (!transactionId || amount <= 0) continue;
@@ -475,8 +434,22 @@ function parseItemSummary(summary: string) {
 }
 
 function buildItemSummary(items: SaleEditItemInput[]) {
-  return items
-    .map(item => `${item.name ?? item.sku ?? 'Item'} x${item.qty ?? 1}`)
+  const summaryItems = new Map<string, { name: string; qty: number }>();
+
+  for (const item of items) {
+    const name = String(item.name ?? item.sku ?? 'Item').trim() || 'Item';
+    const qty = toNumber(item.qty ?? 1);
+    const key = normalizeLookup(name);
+    const existing = summaryItems.get(key);
+
+    summaryItems.set(key, {
+      name: existing?.name ?? name,
+      qty: (existing?.qty ?? 0) + (qty > 0 ? qty : 1),
+    });
+  }
+
+  return Array.from(summaryItems.values())
+    .map(item => `${item.name} x${item.qty ?? 1}`)
     .join(', ');
 }
 
@@ -537,30 +510,33 @@ function buildEditableItems(
       knownTotal += summaryItem.qty * unitPrice;
     }
 
-    const remainingTotal = saleTotal - knownTotal;
-    if (unmatchedSummaryItems.length === 1 && remainingTotal > 0) {
-      const item = unmatchedSummaryItems[0];
-      itemByKey.set(`manual:${normalizeLookup(item.name)}`, {
-        sku: '',
-        name: item.name,
-        category: 'Үйлчилгээ',
-        qty: item.qty,
-        unitPrice: Math.round(remainingTotal / item.qty),
-        priceMode: 'guest',
-        source: 'summary',
+    if (unmatchedSummaryItems.length > 0) {
+      const unmatchedTotal = Math.max(saleTotal - knownTotal, 0);
+      const unmatchedQuantity = unmatchedSummaryItems.reduce(
+        (sum, item) => sum + item.qty,
+        0,
+      );
+      let remainingUnmatchedTotal = Math.round(unmatchedTotal);
+
+      unmatchedSummaryItems.forEach((item, index) => {
+        const isLast = index === unmatchedSummaryItems.length - 1;
+        const lineTotal = isLast
+          ? remainingUnmatchedTotal
+          : Math.round((unmatchedTotal * item.qty) / unmatchedQuantity);
+        const unitPrice = item.qty > 0 ? Math.round(lineTotal / item.qty) : 0;
+
+        remainingUnmatchedTotal -= lineTotal;
+        knownTotal += unitPrice * item.qty;
+        itemByKey.set(`manual:${index}:${normalizeLookup(item.name)}`, {
+          sku: '',
+          name: item.name,
+          category: 'Үйлчилгээ',
+          qty: item.qty,
+          unitPrice,
+          priceMode: 'guest',
+          source: 'summary',
+        });
       });
-      knownTotal += remainingTotal;
-    } else if (unmatchedSummaryItems.length > 0 && remainingTotal > 0) {
-      itemByKey.set('manual:summary', {
-        sku: '',
-        name: getCell(saleRow, 'item_summary'),
-        category: 'Үйлчилгээ',
-        qty: 1,
-        unitPrice: Math.round(remainingTotal),
-        priceMode: 'guest',
-        source: 'summary',
-      });
-      knownTotal += remainingTotal;
     }
 
     const adjustedRemainingTotal = saleTotal - knownTotal;
@@ -705,7 +681,6 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const requestedTransactionId = url.searchParams.get('transactionId')?.trim();
-    const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
     const bypassCache = url.searchParams.get('fresh') === '1';
 
     if (requestedTransactionId) {
@@ -770,10 +745,7 @@ export async function GET(request: Request) {
       ]);
       const paymentTotals = getPaymentTotals(paymentRows);
       const paymentSummaries = getPaymentSummaries(paymentRows);
-      const businessDatePaymentActivity = getBusinessDatePaymentActivity(
-        paymentRows,
-        businessDate,
-      );
+      const paymentActivityByTransaction = getPaymentActivity(paymentRows);
       const unpaidCharges = salesRows
         .filter(row => getCell(row, 'paid_status').toLowerCase() === 'unpaid')
         .map(row => {
@@ -808,10 +780,8 @@ export async function GET(request: Request) {
           const saleTimestamp = getCell(row, 'timestamp');
           const saleTotal = toNumber(row.get('total'));
           const recordedPaidAmount = paymentTotals.get(transactionId) ?? 0;
-          const paymentActivity = businessDatePaymentActivity.get(transactionId);
-          const hasBusinessDatePayment = Number(paymentActivity?.amount ?? 0) > 0;
-          const saleIsFromBusinessDate =
-            businessDateFromTimestamp(saleTimestamp) === businessDate;
+          const paymentActivity = paymentActivityByTransaction.get(transactionId);
+          const hasPayment = Number(paymentActivity?.amount ?? 0) > 0;
           const paidStatus = getCell(row, 'paid_status').toLowerCase();
           const effectivePaidStatus =
             recordedPaidAmount >= saleTotal && paidStatus !== 'voided' ? 'paid' : paidStatus;
@@ -820,11 +790,11 @@ export async function GET(request: Request) {
             transactionId &&
             saleTotal > 0 &&
             paidStatus !== 'voided' &&
-            ((saleIsFromBusinessDate && isPaidSale) || hasBusinessDatePayment);
+            (isPaidSale || hasPayment);
 
           if (!shouldInclude) return [];
 
-          const displayPaidAmount = hasBusinessDatePayment
+          const displayPaidAmount = hasPayment
             ? Number(paymentActivity?.amount ?? 0)
             : isPaidSale && recordedPaidAmount <= 0
               ? saleTotal
@@ -847,7 +817,7 @@ export async function GET(request: Request) {
             paidAmount: displayPaidAmount,
             paidToDate: Math.max(recordedPaidAmount, 0),
             balance,
-            historyKind: hasBusinessDatePayment ? 'payment' : 'sale',
+            historyKind: hasPayment ? 'payment' : 'sale',
             refundableAmount: Math.max(displayPaidAmount, 0),
             itemCount: toNumber(row.get('item_count')),
             itemSummary: getCell(row, 'item_summary'),
@@ -860,7 +830,6 @@ export async function GET(request: Request) {
           }];
         })
         .sort((a, b) => b.sortTime - a.sortTime)
-        .slice(0, 50)
         .map(sale => ({
           transactionId: sale.transactionId,
           timestamp: sale.timestamp,
@@ -888,7 +857,7 @@ export async function GET(request: Request) {
     const payload = bypassCache
       ? await loadSalesList()
       : await getCachedRead(
-        `sales:list:${businessDate}`,
+        'sales:list:all',
         SALES_READ_CACHE_TTL_MS,
         loadSalesList,
       );
@@ -1087,6 +1056,7 @@ export async function PATCH(request: Request) {
       success: true,
       message: 'Payment recorded',
       balance: Math.max(balance - paymentTotal, 0),
+      settledAt: timestamp,
     });
   } catch (error) {
     console.error(`Sales PATCH Error: ${error instanceof Error ? error.message : String(error)}`);

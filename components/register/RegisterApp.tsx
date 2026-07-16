@@ -1,6 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  readOfflineCache,
+  removeOfflineCache,
+  writeOfflineCache,
+} from "@/lib/client/offline-cache";
+import {
+  canRefreshInBackground,
+  fetchWithTimeout,
+} from "@/lib/client/network";
 import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
 import type {
   CartLine,
@@ -21,7 +30,7 @@ type CatalogResponseItem = {
   stock?: number;
 };
 
-type CatalogStatus = "loading" | "ready" | "sample";
+type CatalogStatus = "loading" | "ready" | "cached" | "sample";
 type SaleStatus = "idle" | "saving" | "success" | "error";
 type RegisterCartLine = CartLine & { category: ItemCategory };
 type BankTransferStatus = "idle" | "paid";
@@ -96,6 +105,7 @@ type SettlementStatus = "idle" | "saving" | "success" | "error";
 
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
+const REGISTER_DRAFT_CACHE_KEY = "register:draft";
 const SHARED_SALES_SYNC_INTERVAL_MS = 60000;
 const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 30000;
 const DAY_SESSION_SYNC_INTERVAL_MS = 10000;
@@ -104,8 +114,49 @@ const CATALOG_RETRY_INTERVAL_MS = 120000;
 const PRINT_BILL_BUTTON_LABEL = "Гал тогоо / Бар билл хэвлэх";
 const KITCHEN_BILL_BUTTON_LABEL = "Гал тогоо билл хэвлэх";
 
+const OFFLINE_MUTATION_MESSAGE =
+  "Интернэт холболтгүй байна. Ноорог хадгалагдсан; холболт орсны дараа дахин оролдоно уу.";
+
+function registerCacheKey(section: string, businessDate?: string) {
+  return `register:${section}${businessDate ? `:${businessDate}` : ""}`;
+}
+
+async function registerFetch(input: RequestInfo | URL, init?: RequestInit) {
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (method !== "GET" && !window.navigator.onLine) {
+    throw new Error(OFFLINE_MUTATION_MESSAGE);
+  }
+
+  try {
+    return await (method === "GET"
+      ? fetchWithTimeout(input, init)
+      : fetch(input, init));
+  } catch (error) {
+    if (method !== "GET") {
+      throw new Error(
+        "Сервертэй холбогдож чадсангүй. Оруулсан мэдээлэл дэлгэц дээр хадгалагдсан. Дахин оролдохын өмнө Түүхээс бүртгэгдсэн эсэхийг шалгана уу.",
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
+}
+
 function isRegisterMode(value: string | null): value is RegisterMode {
   return value === "sale" || value === "charges" || value === "history";
+}
+
+function isPaymentMethod(value: unknown): value is PaymentMethodId {
+  return PAYMENT_METHODS.some((method) => method.id === value);
+}
+
+function isSettlementMethod(value: unknown): value is SettlementMethod {
+  return value === "cash" || value === "card" || value === "bank";
+}
+
+function isPartialPaymentOption(value: unknown): value is PartialPaymentOption {
+  return value === "balance" || isSettlementMethod(value);
 }
 
 function getDaySessionSignature(session: DaySession | null) {
@@ -128,6 +179,19 @@ type SettlementPaymentLine = {
   cashReceived: number;
   changeDue: number;
   qpayInvoiceId: string;
+};
+
+type RegisterDraft = {
+  cart: RegisterCartLine[];
+  staffName: string;
+  paymentMethod: PaymentMethodId;
+  cashReceived: number;
+  cardTerminalApproved: boolean;
+  partialPaymentMethod: SettlementMethod;
+  partialPaymentOption: PartialPaymentOption;
+  partialPaymentAmount: number;
+  partialPaymentLines: SettlementPaymentLine[];
+  roomNumber: string;
 };
 
 type UnpaidCharge = {
@@ -175,6 +239,7 @@ type ChargeGroup = {
 type PrintableSale = {
   id: string;
   createdAt: Date;
+  settledAt?: Date;
   items: RegisterCartLine[];
   total: number;
   isPaid: boolean;
@@ -271,6 +336,13 @@ const SETTLEMENT_METHODS = [
   { id: "card", label: "Карт" },
   { id: "bank", label: "Данс" },
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
+
+function getSettlementMethodLabel(methodId: SettlementMethod) {
+  return (
+    SETTLEMENT_METHODS.find((method) => method.id === methodId)?.label ??
+    methodId
+  );
+}
 
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
 const ROOM_NUMBERS = Array.from({ length: 18 }, (_, index) =>
@@ -720,6 +792,9 @@ function prepTicketSection(
     0,
   );
   const showPrices = options.showPrices === true;
+  const settlementDateRow = sale.settledAt
+    ? `<div class="row"><strong>Төлсөн цаг</strong><span>${escapeHtml(formatReceiptDate(sale.settledAt))}</span></div>`
+    : "";
 
   return `<section class="prep-ticket${showPrices ? " with-prices" : ""}">
     <h1>DALAI EEJ</h1>
@@ -729,6 +804,7 @@ function prepTicketSection(
       <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
       <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
       <div class="row"><strong>Төлөв</strong><span>${sale.isPaid ? "Төлөгдсөн" : "Төлбөр хүлээгдэж байна"}</span></div>
+      ${settlementDateRow}
       ${
         sale.roomNumber
           ? `<div class="row"><strong>Байшин/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
@@ -789,11 +865,14 @@ function getPrintBillButtonLabel(sale: Pick<PrintableSale, "includeBarOtherBill"
 }
 
 function receiptBody(sale: PrintableSale) {
+  const receiptDate = sale.settledAt ?? sale.createdAt;
+  const receiptDateLabel = sale.settledAt ? "Төлсөн цаг" : "Цаг";
+
   return `<h1>DALAI EEJ</h1>
     <h2>${escapeHtml(sale.receiptTitle ?? "Төлбөрийн баримт")}</h2>
     <div class="meta">
       <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
-      <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
+      <div class="row"><strong>${receiptDateLabel}</strong><span>${escapeHtml(formatReceiptDate(receiptDate))}</span></div>
       <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
       <div class="row"><strong>Төлбөр</strong><span>${escapeHtml(sale.paymentLabel)}</span></div>
       ${
@@ -923,41 +1002,115 @@ function getSettlementPaymentLabel(lines: SettlementPaymentLine[]) {
     .join(" + ");
 }
 
+function parseReceiptItemSummary(summary: string) {
+  const items: Array<{ name: string; quantity: number }> = [];
+  const pattern = /(.+?)\s+x(\d+(?:\.\d+)?)(?:,\s*|$)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(summary)) !== null) {
+    const name = match[1]?.trim();
+    const quantity = Number(match[2]);
+
+    if (name && Number.isFinite(quantity) && quantity > 0) {
+      items.push({ name, quantity });
+    }
+  }
+
+  return items;
+}
+
+function buildReceiptItemsFromSummary(
+  summary: string,
+  total: number,
+  staffName: string,
+  idPrefix: string,
+  fallbackName: string,
+): RegisterCartLine[] {
+  const roundedTotal = Math.max(Math.round(total), 0);
+  const parsedItems = parseReceiptItemSummary(summary);
+
+  if (parsedItems.length === 0) {
+    return [
+      {
+        id: `${idPrefix}-summary`,
+        name: fallbackName,
+        price: roundedTotal,
+        category: "Үйлчилгээ",
+        quantity: 1,
+        staff: staffName,
+      },
+    ];
+  }
+
+  const totalQuantity = parsedItems.reduce(
+    (sum, item) => sum + item.quantity,
+    0,
+  );
+  let remainingAmount = roundedTotal;
+
+  return parsedItems.map((item, index) => {
+    const isLast = index === parsedItems.length - 1;
+    const lineTotal = isLast
+      ? remainingAmount
+      : Math.round((roundedTotal * item.quantity) / totalQuantity);
+    remainingAmount -= lineTotal;
+
+    return {
+      id: `${idPrefix}-${index + 1}`,
+      name: item.name,
+      price: lineTotal / item.quantity,
+      category: inferCategory(item.name),
+      quantity: item.quantity,
+      staff: staffName,
+    };
+  });
+}
+
 function buildSettlementReceiptSale(
   charges: UnpaidCharge[],
   paymentsByTransaction: Map<string, Array<{ amount: number }>>,
   lines: SettlementPaymentLine[],
   staffName: string,
   roomLabel: string,
+  settledAt: Date,
 ): PrintableSale {
   const total = lines.reduce((sum, line) => sum + line.amount, 0);
-  const settledChargeCount = Array.from(paymentsByTransaction.values()).filter(
-    (payments) =>
-      payments.reduce((sum, payment) => sum + payment.amount, 0) > 0,
-  ).length;
   const singleCashLine =
     lines.length === 1 && lines[0].method === "cash" ? lines[0] : null;
-  const itemName =
-    settledChargeCount > 1
-      ? `Өр төлбөр нэгтгэл (${settledChargeCount} өр)`
-      : "Өр төлбөр нэгтгэл";
+  const items = charges.flatMap((charge) => {
+    const paidAmount =
+      paymentsByTransaction
+        .get(charge.transactionId)
+        ?.reduce((sum, payment) => sum + payment.amount, 0) ?? 0;
+
+    if (paidAmount <= 0) return [];
+
+    return buildReceiptItemsFromSummary(
+      charge.itemSummary,
+      paidAmount,
+      charge.staff || staffName,
+      charge.transactionId,
+      charge.itemSummary || charge.transactionId,
+    );
+  });
 
   return {
     id: lines[0]?.id ?? "PAY",
-    createdAt: new Date(),
-    items: [
-      {
-        id: "settlement-summary",
-        name: itemName,
-        price: total,
-        category: "Үйлчилгээ",
-        quantity: 1,
-        staff: staffName,
-      },
-    ],
+    createdAt: settledAt,
+    settledAt,
+    items:
+      items.length > 0
+        ? items
+        : buildReceiptItemsFromSummary(
+            "",
+            total,
+            staffName,
+            "settlement",
+            "Өрийн төлбөр",
+          ),
     total,
     isPaid: true,
-    receiptTitle: "Өр төлбөр нэгтгэл",
+    receiptTitle: "Өрийн төлбөр",
     paymentLabel: getSettlementPaymentLabel(lines),
     staffName,
     roomNumber: roomLabel,
@@ -977,25 +1130,23 @@ function parseSaleTimestamp(timestamp: string) {
 
 function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
   const isDebtPayment = sale.historyKind === "payment";
+  const createdAt = parseSaleTimestamp(sale.timestamp);
+  const items = buildReceiptItemsFromSummary(
+    sale.itemSummary,
+    sale.total,
+    sale.staff,
+    sale.transactionId,
+    sale.itemSummary || sale.transactionId,
+  );
 
   return {
     id: sale.transactionId,
-    createdAt: parseSaleTimestamp(sale.timestamp),
-    items: [
-      {
-        id: sale.transactionId,
-        name: isDebtPayment
-          ? "Өр төлбөр нэгтгэл"
-          : sale.itemSummary || sale.transactionId,
-        price: sale.total,
-        category: "Үйлчилгээ",
-        quantity: 1,
-        staff: sale.staff,
-      },
-    ],
+    createdAt,
+    settledAt: isDebtPayment ? createdAt : undefined,
+    items,
     total: sale.total,
     isPaid: true,
-    receiptTitle: isDebtPayment ? "Өр төлбөр нэгтгэл" : undefined,
+    receiptTitle: isDebtPayment ? "Өрийн төлбөр" : undefined,
     paymentLabel: sale.paymentMethod,
     staffName: sale.staff,
     roomNumber: sale.roomOrGuest,
@@ -1184,6 +1335,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [settlementMessage, setSettlementMessage] = useState("");
   const selectedChargeGroupKeyRef = useRef("");
   const uiPreferencesLoadedRef = useRef(false);
+  const draftLoadedRef = useRef(false);
   const lastSharedRefreshAtRef = useRef(0);
   const daySessionSignatureRef = useRef("");
   const localIdSequenceRef = useRef(0);
@@ -1194,8 +1346,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }
 
   const loadCatalog = useCallback(async (options?: { fresh?: boolean }) => {
+    const cacheKey = registerCacheKey("catalog");
     try {
-      const response = await fetch(
+      const response = await registerFetch(
         options?.fresh ? "/api/inventory?fresh=1" : "/api/inventory",
         { cache: "no-store" },
       );
@@ -1208,9 +1361,18 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         return;
       }
 
-      setCatalog(data.map(normalizeCatalogRow));
+      const normalizedCatalog = data.map(normalizeCatalogRow);
+      setCatalog(normalizedCatalog);
       setCatalogStatus("ready");
+      writeOfflineCache(cacheKey, normalizedCatalog);
     } catch {
+      const cached = readOfflineCache<CatalogItem[]>(cacheKey);
+      if (cached?.value.length) {
+        setCatalog(cached.value);
+        setCatalogStatus("cached");
+        return;
+      }
+
       setCatalog([]);
       setCatalogStatus("sample");
     }
@@ -1246,9 +1408,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setChargesStatus("loading");
       setChargesMessage("");
     }
+    const cacheKey = registerCacheKey("charges");
 
     try {
-      const response = await fetch(
+      const response = await registerFetch(
         options?.fresh ? "/api/sales?fresh=1" : "/api/sales",
         { cache: "no-store" },
       );
@@ -1263,8 +1426,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       const charges = Array.isArray(data?.charges) ? data.charges : [];
       applyUnpaidCharges(charges);
       setChargesStatus("ready");
+      writeOfflineCache(cacheKey, charges);
     } catch (error) {
       if (silent) return;
+
+      const cached = readOfflineCache<UnpaidCharge[]>(cacheKey);
+      if (cached) {
+        applyUnpaidCharges(cached.value);
+        setChargesStatus("cached");
+        setChargesMessage("");
+        return;
+      }
 
       setUnpaidCharges([]);
       setChargesStatus("sample");
@@ -1283,11 +1455,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setHistoryStatus("loading");
       setHistoryMessage("");
     }
+    const cacheKey = registerCacheKey("history");
 
     try {
-      const params = new URLSearchParams({ businessDate });
+      const params = new URLSearchParams();
       if (options?.fresh) params.set("fresh", "1");
-      const response = await fetch(
+      const response = await registerFetch(
         `/api/sales?${params.toString()}`,
         { cache: "no-store" },
       );
@@ -1302,8 +1475,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       const history = Array.isArray(data?.history) ? data.history : [];
       applySalesHistory(history);
       setHistoryStatus("ready");
+      writeOfflineCache(cacheKey, history);
     } catch (error) {
       if (silent) return;
+
+      const cached = readOfflineCache<RecentSale[]>(cacheKey);
+      if (cached) {
+        applySalesHistory(cached.value);
+        setHistoryStatus("cached");
+        setHistoryMessage("");
+        return;
+      }
 
       setHistorySales([]);
       setSelectedHistoryTransactionId("");
@@ -1312,7 +1494,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         error instanceof Error ? error.message : "Төлөгдсөн түүх авч чадсангүй",
       );
     }
-  }, [applySalesHistory, businessDate]);
+  }, [applySalesHistory]);
 
   const loadSharedSalesData = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -1322,11 +1504,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setChargesMessage("");
       setHistoryMessage("");
     }
+    const chargesCacheKey = registerCacheKey("charges");
+    const historyCacheKey = registerCacheKey("history");
 
     try {
-      const params = new URLSearchParams({ businessDate });
+      const params = new URLSearchParams();
       if (options?.fresh) params.set("fresh", "1");
-      const response = await fetch(
+      const response = await registerFetch(
         `/api/sales?${params.toString()}`,
         { cache: "no-store" },
       );
@@ -1338,12 +1522,30 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         throw new Error(data?.error ?? "Өр, түүх шинэчилж чадсангүй");
       }
 
-      applyUnpaidCharges(Array.isArray(data?.charges) ? data.charges : []);
-      applySalesHistory(Array.isArray(data?.history) ? data.history : []);
+      const charges = Array.isArray(data?.charges) ? data.charges : [];
+      const history = Array.isArray(data?.history) ? data.history : [];
+      applyUnpaidCharges(charges);
+      applySalesHistory(history);
       setChargesStatus("ready");
       setHistoryStatus("ready");
+      writeOfflineCache(chargesCacheKey, charges);
+      writeOfflineCache(historyCacheKey, history);
     } catch (error) {
       if (silent) return;
+
+      const cachedCharges = readOfflineCache<UnpaidCharge[]>(chargesCacheKey);
+      const cachedHistory = readOfflineCache<RecentSale[]>(historyCacheKey);
+      if (cachedCharges || cachedHistory) {
+        if (cachedCharges) applyUnpaidCharges(cachedCharges.value);
+        if (cachedHistory) applySalesHistory(cachedHistory.value);
+        setChargesStatus(cachedCharges ? "cached" : "sample");
+        setHistoryStatus(cachedHistory ? "cached" : "sample");
+        const message =
+          error instanceof Error ? error.message : "Өр, түүх шинэчилж чадсангүй";
+        setChargesMessage(cachedCharges ? "" : message);
+        setHistoryMessage(cachedHistory ? "" : message);
+        return;
+      }
 
       setUnpaidCharges([]);
       selectedChargeGroupKeyRef.current = "";
@@ -1358,7 +1560,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setChargesMessage(message);
       setHistoryMessage(message);
     }
-  }, [applySalesHistory, applyUnpaidCharges, businessDate]);
+  }, [applySalesHistory, applyUnpaidCharges]);
 
   const loadDayStatus = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -1366,11 +1568,12 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setDayStatus("loading");
       setDayMessage("");
     }
+    const cacheKey = registerCacheKey("day", businessDate);
 
     try {
       const params = new URLSearchParams({ businessDate });
       if (options?.fresh) params.set("fresh", "1");
-      const response = await fetch(
+      const response = await registerFetch(
         `/api/day?${params.toString()}`,
         { cache: "no-store" },
       );
@@ -1393,8 +1596,30 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
       setDayItemTotals(data?.itemTotals ?? []);
       setDayStatus("ready");
+      writeOfflineCache(cacheKey, {
+        session: nextSession,
+        totals: data?.totals ?? EMPTY_DAY_TOTALS,
+        itemTotals: data?.itemTotals ?? [],
+      });
     } catch (error) {
       if (silent) return;
+
+      const cached = readOfflineCache<{
+        session: DaySession | null;
+        totals: DayTotals;
+        itemTotals: DayItemTotal[];
+      }>(cacheKey);
+      if (cached) {
+        daySessionSignatureRef.current = getDaySessionSignature(
+          cached.value.session,
+        );
+        setDaySession(cached.value.session);
+        setDayTotals(cached.value.totals);
+        setDayItemTotals(cached.value.itemTotals);
+        setDayStatus("ready");
+        setDayMessage("");
+        return;
+      }
 
       setDaySession(null);
       setDayTotals(EMPTY_DAY_TOTALS);
@@ -1415,7 +1640,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         sessionOnly: "1",
       });
       if (options?.fresh) params.set("fresh", "1");
-      const response = await fetch(
+      const response = await registerFetch(
         `/api/day?${params.toString()}`,
         { cache: "no-store" },
       );
@@ -1462,6 +1687,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   useEffect(() => {
     const refreshSharedState = (force = false) => {
+      if (!canRefreshInBackground()) return;
+
       const now = Date.now();
       if (
         !force &&
@@ -1488,18 +1715,20 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     );
 
     window.addEventListener("focus", refreshWhenFocused);
+    window.addEventListener("online", refreshWhenFocused);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", refreshWhenFocused);
+      window.removeEventListener("online", refreshWhenFocused);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadDayStatus, loadSharedSalesData]);
 
   useEffect(() => {
     const syncDaySession = (options?: { fresh?: boolean }) => {
-      if (document.visibilityState === "visible") {
+      if (canRefreshInBackground()) {
         void loadDaySession(options);
       }
     };
@@ -1528,10 +1757,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   }, [loadDaySession]);
 
   useEffect(() => {
-    if (catalogStatus !== "sample") return;
+    if (catalogStatus !== "sample" && catalogStatus !== "cached") return;
 
     const retryCatalog = () => {
-      if (document.visibilityState === "visible") {
+      if (canRefreshInBackground()) {
         void loadCatalog();
       }
     };
@@ -1588,6 +1817,76 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     if (!uiPreferencesLoadedRef.current) return;
     window.localStorage.setItem(REGISTER_CATEGORY_STORAGE_KEY, activeCategory);
   }, [activeCategory]);
+
+  useEffect(() => {
+    const cached = readOfflineCache<RegisterDraft>(REGISTER_DRAFT_CACHE_KEY);
+    const draft = cached?.value;
+    const restoreTimer = window.setTimeout(() => {
+      if (draft && Array.isArray(draft.cart) && draft.cart.length > 0) {
+        setCart(draft.cart);
+        if (typeof draft.staffName === "string" && draft.staffName) {
+          setStaffName(draft.staffName);
+        }
+        if (isPaymentMethod(draft.paymentMethod)) {
+          setPaymentMethod(draft.paymentMethod);
+        }
+        setCashReceived(Number(draft.cashReceived) || 0);
+        setCardTerminalApproved(Boolean(draft.cardTerminalApproved));
+        if (isSettlementMethod(draft.partialPaymentMethod)) {
+          setPartialPaymentMethod(draft.partialPaymentMethod);
+        }
+        if (isPartialPaymentOption(draft.partialPaymentOption)) {
+          setPartialPaymentOption(draft.partialPaymentOption);
+        }
+        setPartialPaymentAmount(Number(draft.partialPaymentAmount) || 0);
+        setPartialPaymentLines(
+          Array.isArray(draft.partialPaymentLines) ? draft.partialPaymentLines : [],
+        );
+        setRoomNumber(
+          typeof draft.roomNumber === "string" ? draft.roomNumber : "",
+        );
+        setSaleMessage("Өмнөх хадгалсан нооргийг сэргээв");
+      }
+
+      draftLoadedRef.current = true;
+    }, 0);
+
+    return () => window.clearTimeout(restoreTimer);
+  }, []);
+
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+
+    if (editingCharge || cart.length === 0) {
+      removeOfflineCache(REGISTER_DRAFT_CACHE_KEY);
+      return;
+    }
+
+    writeOfflineCache<RegisterDraft>(REGISTER_DRAFT_CACHE_KEY, {
+      cart,
+      staffName,
+      paymentMethod,
+      cashReceived,
+      cardTerminalApproved,
+      partialPaymentMethod,
+      partialPaymentOption,
+      partialPaymentAmount,
+      partialPaymentLines,
+      roomNumber,
+    });
+  }, [
+    cardTerminalApproved,
+    cart,
+    cashReceived,
+    editingCharge,
+    partialPaymentAmount,
+    partialPaymentLines,
+    partialPaymentMethod,
+    partialPaymentOption,
+    paymentMethod,
+    roomNumber,
+    staffName,
+  ]);
 
   useEffect(() => {
     function syncFullscreenState() {
@@ -1922,6 +2221,32 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
   }
 
+  function updatePartialPaymentLineMethod(
+    id: string,
+    method: SettlementMethod,
+  ) {
+    const methodLabel = getSettlementMethodLabel(method);
+
+    setPartialPaymentLines((current) =>
+      current.map((line) =>
+        line.id === id
+          ? {
+              ...line,
+              method,
+              methodLabel,
+              cashReceived: method === "cash" ? line.amount : 0,
+              changeDue: 0,
+              qpayInvoiceId: method === "bank" ? line.qpayInvoiceId : "",
+            }
+          : line,
+      ),
+    );
+    if (saleStatus === "error") {
+      setSaleStatus("idle");
+      setSaleMessage("");
+    }
+  }
+
   function selectPartialBalanceOption() {
     if (partialPaymentLines.length === 0) {
       setSaleStatus("error");
@@ -1974,9 +2299,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return;
     }
 
-    const methodLabel =
-      SETTLEMENT_METHODS.find((method) => method.id === partialPaymentMethod)
-        ?.label ?? partialPaymentMethod;
+    const methodLabel = getSettlementMethodLabel(partialPaymentMethod);
     setPartialPaymentLines((current) => [
       ...current,
       {
@@ -2047,7 +2370,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setDayMessage("");
 
     try {
-      const response = await fetch("/api/day", {
+      const response = await registerFetch("/api/day", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2129,7 +2452,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setVoidMessage("");
 
     try {
-      const response = await fetch(
+      const response = await registerFetch(
         `/api/voids?businessDate=${encodeURIComponent(businessDate)}`,
         { cache: "no-store" },
       );
@@ -2187,7 +2510,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setVoidMessage("");
 
     try {
-      const response = await fetch("/api/voids", {
+      const response = await registerFetch("/api/voids", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2333,7 +2656,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMessage("Захиалга уншиж байна");
 
     try {
-      const response = await fetch(
+      const response = await registerFetch(
         `/api/sales?transactionId=${encodeURIComponent(charge.transactionId)}`,
         { cache: "no-store" },
       );
@@ -2398,7 +2721,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMessage(`${charge.transactionId} өрийг устгаж байна`);
 
     try {
-      const response = await fetch("/api/voids", {
+      const response = await registerFetch("/api/voids", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2460,6 +2783,27 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMessage("");
   }
 
+  function updateSettlementLineMethod(id: string, method: SettlementMethod) {
+    const methodLabel = getSettlementMethodLabel(method);
+
+    setSettlementLines((current) =>
+      current.map((line) =>
+        line.id === id
+          ? {
+              ...line,
+              method,
+              methodLabel,
+              cashReceived: method === "cash" ? line.amount : 0,
+              changeDue: 0,
+              qpayInvoiceId: method === "bank" ? line.qpayInvoiceId : "",
+            }
+          : line,
+      ),
+    );
+    setSettlementStatus("idle");
+    setSettlementMessage("");
+  }
+
   function updateSettlementDraftAmount(amount: number) {
     const nextAmount = Number.isFinite(amount) ? amount : 0;
     setSettlementPaymentAmount(nextAmount);
@@ -2491,9 +2835,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       return;
     }
 
-    const methodLabel =
-      SETTLEMENT_METHODS.find((method) => method.id === settlementMethod)
-        ?.label ?? settlementMethod;
+    const methodLabel = getSettlementMethodLabel(settlementMethod);
     setSettlementLines((current) => [
       ...current,
       {
@@ -2572,16 +2914,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         throw new Error("Төлбөр бичих сонгосон мөр алга байна");
       }
 
-      const settlementReceipt = buildSettlementReceiptSale(
-        selectedCharges,
-        paymentsByTransaction,
-        settlementLines,
-        staffName,
-        selectedChargeGroup?.label ?? selectedCharges[0]?.roomOrGuest ?? "",
-      );
+      let settledAt = new Date();
 
       for (const [transactionId, payments] of paymentsByTransaction) {
-        const response = await fetch("/api/sales", {
+        const response = await registerFetch("/api/sales", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2591,14 +2927,26 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           }),
         });
         const data = (await response.json().catch(() => null)) as
-          | { error?: string }
+          | { error?: string; settledAt?: string }
           | null;
 
         if (!response.ok) {
           throw new Error(data?.error ?? "Өр төлбөр хааж чадсангүй");
         }
+
+        if (data?.settledAt) {
+          settledAt = parseSaleTimestamp(data.settledAt);
+        }
       }
 
+      const settlementReceipt = buildSettlementReceiptSale(
+        selectedCharges,
+        paymentsByTransaction,
+        settlementLines,
+        staffName,
+        selectedChargeGroup?.label ?? selectedCharges[0]?.roomOrGuest ?? "",
+        settledAt,
+      );
       const receiptPrinted = shouldAutoPrintSettlementReceipt
         ? printReceipt(settlementReceipt, receiptWindow)
         : false;
@@ -2716,7 +3064,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
     const detailResults = await Promise.allSettled(
       chargesToPrint.map(async (charge) => {
-        const response = await fetch(
+        const response = await registerFetch(
           `/api/sales?transactionId=${encodeURIComponent(charge.transactionId)}`,
           { cache: "no-store" },
         );
@@ -2774,7 +3122,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("");
 
     try {
-      const response = await fetch("/api/sales", {
+      const response = await registerFetch("/api/sales", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2931,7 +3279,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       : undefined;
 
     try {
-      const response = await fetch("/api/inventory", {
+      const response = await registerFetch("/api/inventory", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3228,6 +3576,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     Google Sheets холбогдоогүй байна. Туршилтын жагсаалт ашиглаж байна.
                   </div>
                 )}
+                {catalogStatus === "cached" && (
+                  <div className="mb-3 rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-medium text-[#92400e]">
+                    Холболтгүй тул хамгийн сүүлд хадгалсан барааны жагсаалтыг харуулж байна.
+                  </div>
+                )}
 
                 {catalogStatus === "loading" ? (
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
@@ -3382,7 +3735,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   <div>
                     <h2 className="text-base font-black">Төлөгдсөн түүх</h2>
                     <p className="text-xs font-semibold text-[#6b7280]">
-                      Өнөөдрийн борлуулалт болон өр төлөлт, баримт дахин хэвлэх
+                      Бүх өдрийн борлуулалт болон өр төлөлт, баримт дахин хэвлэх
                     </p>
                   </div>
                   <button
@@ -3411,7 +3764,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   </div>
                 ) : historySales.length === 0 ? (
                   <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
-                    Өнөөдрийн борлуулалт / өр төлөлт алга.
+                    Борлуулалт / өр төлөлтийн түүх алга.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
@@ -3810,29 +4163,53 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
                 {partialPaymentLines.length > 0 && (
                   <div className="mb-2 overflow-hidden rounded-md border border-[#d1d5db] bg-white">
-                    {partialPaymentLines.map((line) => (
-                      <div
-                        key={line.id}
-                        className="flex items-center justify-between gap-2 border-b border-[#e5e7eb] px-2 py-1.5 last:border-b-0"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-black">
-                            {line.methodLabel}
-                          </p>
-                          <p className="text-[11px] font-bold text-[#6b7280]">
-                            {formatMNT(line.amount)}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removePartialPaymentLine(line.id)}
-                          className="h-7 w-7 rounded-md border border-[#fecaca] text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2]"
-                          aria-label="Төлбөрийн мөр устгах"
-                        >
-                          x
-                        </button>
-                      </div>
-                    ))}
+	                    {partialPaymentLines.map((line) => (
+	                      <div
+	                        key={line.id}
+	                        className="border-b border-[#e5e7eb] px-2 py-2 last:border-b-0"
+	                      >
+	                        <div className="mb-1.5 flex items-center justify-between gap-2">
+	                          <div className="min-w-0">
+	                            <p className="truncate text-xs font-black">
+	                              {line.methodLabel}
+	                            </p>
+	                            <p className="text-[11px] font-bold text-[#6b7280]">
+	                              {formatMNT(line.amount)}
+	                            </p>
+	                          </div>
+	                          <button
+	                            type="button"
+	                            onClick={() => removePartialPaymentLine(line.id)}
+	                            className="h-7 w-7 rounded-md border border-[#fecaca] text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2]"
+	                            aria-label="Төлбөрийн мөр устгах"
+	                          >
+	                            x
+	                          </button>
+	                        </div>
+	                        <div className="grid grid-cols-3 gap-1.5">
+	                          {SETTLEMENT_METHODS.map((method) => (
+	                            <button
+	                              key={method.id}
+	                              type="button"
+	                              onClick={() =>
+	                                updatePartialPaymentLineMethod(
+	                                  line.id,
+	                                  method.id,
+	                                )
+	                              }
+	                              disabled={saleStatus === "saving"}
+	                              className={`h-7 rounded-md border text-[11px] font-extrabold ${
+	                                line.method === method.id
+	                                  ? "border-[#111827] bg-[#111827] text-white"
+	                                  : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#eef2ff]"
+	                              } disabled:opacity-50`}
+	                            >
+	                              {method.label}
+	                            </button>
+	                          ))}
+	                        </div>
+	                      </div>
+	                    ))}
                   </div>
                 )}
 
@@ -4206,35 +4583,60 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                           Нэмсэн төлбөрүүд
                         </div>
                         <div className="divide-y divide-[#e5e7eb]">
-                          {settlementLines.map((line) => (
-                            <div
-                              key={line.id}
-                              className="flex items-center justify-between gap-2 px-3 py-2"
-                            >
-                              <div>
-                                <p className="text-sm font-black">
-                                  {line.methodLabel}
-                                </p>
-                                {line.qpayInvoiceId && (
-                                  <p className="text-xs font-bold text-[#6b7280]">
-                                    {line.qpayInvoiceId}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-black">
-                                  {formatMNT(line.amount)}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => removeSettlementLine(line.id)}
-                                  className="h-8 rounded-md border border-[#fecaca] px-2 text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2]"
-                                >
-                                  Хасах
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+	                          {settlementLines.map((line) => (
+	                            <div
+	                              key={line.id}
+	                              className="px-3 py-2"
+	                            >
+	                              <div className="mb-2 flex items-center justify-between gap-2">
+	                                <div>
+	                                  <p className="text-sm font-black">
+	                                    {line.methodLabel}
+	                                  </p>
+	                                  {line.qpayInvoiceId && (
+	                                    <p className="text-xs font-bold text-[#6b7280]">
+	                                      {line.qpayInvoiceId}
+	                                    </p>
+	                                  )}
+	                                </div>
+	                                <div className="flex items-center gap-2">
+	                                  <span className="text-sm font-black">
+	                                    {formatMNT(line.amount)}
+	                                  </span>
+	                                  <button
+	                                    type="button"
+	                                    onClick={() => removeSettlementLine(line.id)}
+	                                    disabled={settlementStatus === "saving"}
+	                                    className="h-8 rounded-md border border-[#fecaca] px-2 text-xs font-black text-[#b91c1c] hover:bg-[#fef2f2] disabled:opacity-50"
+	                                  >
+	                                    Хасах
+	                                  </button>
+	                                </div>
+	                              </div>
+	                              <div className="grid grid-cols-3 gap-1.5">
+	                                {SETTLEMENT_METHODS.map((method) => (
+	                                  <button
+	                                    key={method.id}
+	                                    type="button"
+	                                    onClick={() =>
+	                                      updateSettlementLineMethod(
+	                                        line.id,
+	                                        method.id,
+	                                      )
+	                                    }
+	                                    disabled={settlementStatus === "saving"}
+	                                    className={`h-8 rounded-md border text-xs font-extrabold ${
+	                                      line.method === method.id
+	                                        ? "border-[#111827] bg-[#111827] text-white"
+	                                        : "border-[#cbd5e1] bg-white text-[#374151] hover:bg-[#f8fafc]"
+	                                    } disabled:opacity-50`}
+	                                  >
+	                                    {method.label}
+	                                  </button>
+	                                ))}
+	                              </div>
+	                            </div>
+	                          ))}
                         </div>
                         <div className="flex items-center justify-between border-t border-[#e5e7eb] px-3 py-2 text-sm">
                           <span className="font-bold text-[#6b7280]">

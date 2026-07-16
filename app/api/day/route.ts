@@ -38,6 +38,11 @@ type DayItemTotal = {
   quantity: number;
 };
 
+type SessionWindow = {
+  openedAt?: string;
+  closedAt?: string;
+};
+
 const DAY_READ_CACHE_TTL_MS = 10000;
 const DAY_SESSION_READ_CACHE_TTL_MS = 5000;
 
@@ -171,6 +176,14 @@ function nowTimestamp() {
   return new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
 }
 
+function startOfBusinessDateTimestamp(businessDate: string) {
+  const match = businessDate.match(/^(\d{4})\.(\d{2})\.(\d{2})$/);
+  if (!match) return nowTimestamp();
+
+  const [, year, month, day] = match;
+  return `${Number(month)}/${Number(day)}/${year}, 12:00:00 AM`;
+}
+
 function todayBusinessDate() {
   return new Intl.DateTimeFormat('mn-MN', {
     timeZone: 'Asia/Ulaanbaatar',
@@ -265,6 +278,22 @@ function isInsideSessionWindow(
   return true;
 }
 
+function isInsideBusinessDay(
+  timestamp: unknown,
+  businessDate: string,
+  sessionWindow?: SessionWindow,
+) {
+  if (sessionWindow?.openedAt || sessionWindow?.closedAt) {
+    return isInsideSessionWindow(
+      timestamp,
+      sessionWindow.openedAt,
+      sessionWindow.closedAt,
+    );
+  }
+
+  return businessDateFromTimestamp(timestamp) === businessDate;
+}
+
 function classifyPaymentMethod(method: string) {
   const normalized = method.toLowerCase();
 
@@ -326,15 +355,14 @@ function serializeSession(row: SheetRow | null) {
 function getDaySalesRows(
   salesRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  sessionWindow?: { openedAt?: string; closedAt?: string },
+  sessionWindow?: SessionWindow,
 ) {
   return salesRows.filter(
     row =>
-      businessDateFromTimestamp(row.get('timestamp')) === businessDate &&
-      isInsideSessionWindow(
+      isInsideBusinessDay(
         row.get('timestamp'),
-        sessionWindow?.openedAt,
-        sessionWindow?.closedAt,
+        businessDate,
+        sessionWindow,
       ),
   );
 }
@@ -342,15 +370,14 @@ function getDaySalesRows(
 function getDayPaymentRows(
   paymentRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  sessionWindow?: { openedAt?: string; closedAt?: string },
+  sessionWindow?: SessionWindow,
 ) {
   const dayPaymentRows = paymentRows.filter(
     row =>
-      businessDateFromTimestamp(row.get('timestamp')) === businessDate &&
-      isInsideSessionWindow(
+      isInsideBusinessDay(
         row.get('timestamp'),
-        sessionWindow?.openedAt,
-        sessionWindow?.closedAt,
+        businessDate,
+        sessionWindow,
       ),
   );
 
@@ -362,7 +389,7 @@ function getDayTotals(
   paymentRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
   startingCash: number,
-  sessionWindow?: { openedAt?: string; closedAt?: string },
+  sessionWindow?: SessionWindow,
 ): DayTotals {
   const daySalesRows = getDaySalesRows(salesRows, businessDate, sessionWindow);
   const dayPaymentRows = getDayPaymentRows(paymentRows, businessDate, sessionWindow);
@@ -426,7 +453,7 @@ function parseItemSummary(summary: string) {
 function getDayItemTotals(
   salesRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  sessionWindow?: { openedAt?: string; closedAt?: string },
+  sessionWindow?: SessionWindow,
 ) {
   const totals = new Map<string, number>();
   const daySalesRows = getDaySalesRows(salesRows, businessDate, sessionWindow);
@@ -607,10 +634,19 @@ export async function POST(request: Request) {
         );
       }
 
+      const shouldBackdateOpening =
+        !sessionRow &&
+        (totals.salesTotal > 0 ||
+          totals.paymentTotal > 0 ||
+          itemTotals.length > 0);
+      const openedAt = shouldBackdateOpening
+        ? startOfBusinessDateTimestamp(businessDate)
+        : timestamp;
+
       const [newRow] = await daySheet.addRows([
         [
           businessDate,
-          timestamp,
+          openedAt,
           body.staffName || 'Staff',
           startingCash,
           'open',
@@ -630,6 +666,8 @@ export async function POST(request: Request) {
         ],
       ]);
       clearCachedReads('day:');
+      clearCachedReads('sales:');
+      clearCachedReads('business-date:');
 
       return NextResponse.json({
         success: true,
@@ -673,6 +711,8 @@ export async function POST(request: Request) {
     sessionRow.set('notes', body.notes || '');
     await sessionRow.save();
     clearCachedReads('day:');
+    clearCachedReads('sales:');
+    clearCachedReads('business-date:');
 
     return NextResponse.json({
       success: true,

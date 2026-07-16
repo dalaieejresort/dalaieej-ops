@@ -18,6 +18,11 @@ type SheetRow = {
   save: () => Promise<void>;
 };
 
+type SessionWindow = {
+  openedAt?: string;
+  closedAt?: string;
+};
+
 const INVENTORY_LOG_SHEET_TITLES = [
   process.env.GOOGLE_LOG_SHEET_TITLE,
   'Inventory_Log',
@@ -232,6 +237,32 @@ function businessDateFromTimestamp(value: unknown) {
   return '';
 }
 
+function timestampMs(value: unknown) {
+  const timestamp = String(value ?? '').trim();
+  const match = timestamp.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i,
+  );
+
+  if (match) {
+    const [, month, day, year, hour, minute, second = '0', meridiem = ''] = match;
+    let hour24 = Number(hour);
+    if (meridiem.toUpperCase() === 'PM' && hour24 !== 12) hour24 += 12;
+    if (meridiem.toUpperCase() === 'AM' && hour24 === 12) hour24 = 0;
+
+    return Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      hour24,
+      Number(minute),
+      Number(second),
+    );
+  }
+
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
 function toNumber(value: unknown) {
   const cleaned = String(value ?? '').replace(/[₮,\s]/g, '');
   const numberValue = Number(cleaned);
@@ -268,6 +299,49 @@ function getLatestSession(rows: SheetRow[], businessDate: string) {
   return rows
     .filter(row => getCell(row, 'business_date') === businessDate)
     .at(-1) ?? null;
+}
+
+function getSessionWindow(row: SheetRow | null): SessionWindow | undefined {
+  if (!row) return undefined;
+
+  return {
+    openedAt: getCell(row, 'opened_at'),
+    closedAt: getCell(row, 'closed_at'),
+  };
+}
+
+function isInsideSessionWindow(
+  timestamp: unknown,
+  openedAt?: string,
+  closedAt?: string,
+) {
+  if (!openedAt && !closedAt) return true;
+
+  const rowMs = timestampMs(timestamp);
+  const openedMs = openedAt ? timestampMs(openedAt) : 0;
+  const closedMs = closedAt ? timestampMs(closedAt) : 0;
+
+  if (!rowMs) return false;
+  if (openedMs && rowMs < openedMs) return false;
+  if (closedMs && rowMs > closedMs) return false;
+
+  return true;
+}
+
+function isInsideBusinessDay(
+  timestamp: unknown,
+  businessDate: string,
+  sessionWindow?: SessionWindow,
+) {
+  if (sessionWindow?.openedAt || sessionWindow?.closedAt) {
+    return isInsideSessionWindow(
+      timestamp,
+      sessionWindow.openedAt,
+      sessionWindow.closedAt,
+    );
+  }
+
+  return businessDateFromTimestamp(timestamp) === businessDate;
 }
 
 function getPaymentTotals(rows: Array<{ get: (columnName: string) => unknown }>) {
@@ -373,19 +447,26 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
     const doc = await loadSpreadsheet();
+    const daySessionSheet = await getOrCreateSheet(
+      doc,
+      DAY_SESSION_SHEET_TITLES,
+      DAY_SESSION_HEADERS,
+    );
     const salesLogSheet = await getOrCreateSheet(doc, SALES_LOG_SHEET_TITLES, SALES_LOG_HEADERS);
     const paymentsLogSheet = await getOrCreateSheet(
       doc,
       PAYMENTS_LOG_SHEET_TITLES,
       PAYMENTS_LOG_HEADERS,
     );
-    const [salesRows, paymentRows] = await Promise.all([
+    const [dayRows, salesRows, paymentRows] = await Promise.all([
+      daySessionSheet.getRows() as Promise<SheetRow[]>,
       salesLogSheet.getRows() as Promise<SheetRow[]>,
       paymentsLogSheet.getRows(),
     ]);
+    const sessionWindow = getSessionWindow(getLatestSession(dayRows, businessDate));
     const paymentTotals = getPaymentTotals(paymentRows);
     const sales = salesRows
-      .filter(row => businessDateFromTimestamp(row.get('timestamp')) === businessDate)
+      .filter(row => isInsideBusinessDay(row.get('timestamp'), businessDate, sessionWindow))
       .filter(row => getCell(row, 'paid_status').toLowerCase() !== 'voided')
       .map(row => getRecentSale(row, paymentTotals))
       .filter(sale => sale.transactionId)
