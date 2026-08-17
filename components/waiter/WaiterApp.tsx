@@ -392,15 +392,15 @@ export function WaiterApp({
   }
 
   return (
-    <main className="min-h-dvh bg-[#f3f6f4] pb-32 text-[#17211c]">
-      <header className="sticky top-0 z-40 border-b border-[#dbe5df] bg-white/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur">
+    <main className="min-h-dvh bg-[#e8e8e8] pb-32 text-[#151515]">
+      <header className="sticky top-0 z-40 border-b border-[#2b2b2b] bg-[#2b2b2b] px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-[#f7f7f7]">
         <div className="mx-auto flex max-w-3xl items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#15803d]">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#f5a623]">
               Dalai Eej · Зөөгч
             </p>
             <h1 className="truncate text-xl font-black">{authenticatedStaffName}</h1>
-            <p className="mt-0.5 text-xs font-bold text-[#64748b]">
+            <p className="mt-0.5 text-xs font-bold text-[#c9c9c9]">
               {displayDate(businessDate)} · зөвхөн захиалга
             </p>
           </div>
@@ -408,8 +408,8 @@ export function WaiterApp({
             <span
               className={`rounded-full border px-2.5 py-1.5 text-xs font-black ${
                 dayOpen
-                  ? "border-[#86efac] bg-[#ecfdf5] text-[#047857]"
-                  : "border-[#fdba74] bg-[#fff7ed] text-[#c2410c]"
+                  ? "border-[#b9e3ff] bg-[#b9e3ff] text-[#102033]"
+                  : "border-[#f5a623] bg-[#d4c4a8] text-[#7c2d12]"
               }`}
             >
               {loadingOverview ? "Шалгаж байна…" : dayOpen ? "Өдөр нээлттэй" : "Өдөр хаалттай"}
@@ -418,7 +418,7 @@ export function WaiterApp({
               type="button"
               onClick={() => void logOut()}
               disabled={loggingOut}
-              className="min-h-10 rounded-xl border border-[#cbd5e1] bg-white px-3 text-xs font-black text-[#475569] disabled:opacity-50"
+              className="min-h-10 rounded-xl border border-[#555555] bg-[#3a3a3a] px-3 text-xs font-black text-white disabled:opacity-50"
             >
               Гарах
             </button>
@@ -447,7 +447,7 @@ export function WaiterApp({
         {activeTab === "new" ? (
           <div className="space-y-4">
             {editingTransactionId && (
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm font-bold text-[#1d4ed8]">
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#3b9dd4] bg-[#b9e3ff] px-4 py-3 text-sm font-bold text-[#102033]">
                 <span className="min-w-0 truncate">Засаж байна: {editingTransactionId}</span>
                 <button type="button" onClick={startNewOrder} className="shrink-0 underline">
                   Цуцлах
@@ -455,7 +455,7 @@ export function WaiterApp({
               </div>
             )}
 
-            <section className="rounded-3xl border border-[#dbe5df] bg-white p-4 shadow-sm">
+            <section className="rounded-3xl border border-[#a7a7a7] bg-[#d4c4a8] p-4 shadow-sm">
               <label htmlFor="waiter-reference" className="text-sm font-black">
                 Ширээ / байшин / зочин
               </label>
@@ -469,7 +469,7 @@ export function WaiterApp({
                 }}
                 placeholder="Жишээ: Ширээ 4"
                 autoComplete="off"
-                className="mt-2 min-h-14 w-full rounded-2xl border-2 border-[#cbd5e1] bg-[#f8fafc] px-4 text-lg font-black outline-none focus:border-[#16a34a] focus:bg-white"
+                className="mt-2 min-h-14 w-full rounded-2xl border-2 border-[#a7a7a7] bg-white px-4 text-lg font-black outline-none focus:border-[#f5a623]"
               />
               <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                 {QUICK_REFERENCES.map((value) => {
@@ -485,8 +485,8 @@ export function WaiterApp({
                       }}
                       className={`min-h-11 min-w-12 shrink-0 rounded-xl border px-3 text-sm font-black ${
                         reference === label
-                          ? "border-[#16a34a] bg-[#dcfce7] text-[#166534]"
-                          : "border-[#dbe5df] bg-white text-[#475569]"
+                          ? "border-[#f5a623] bg-[#f5a623] text-[#111111]"
+                          : "border-[#3b9dd4] bg-[#b9e3ff] text-[#102033]"
                       }`}
                     >
                       {value}
@@ -497,13 +497,13 @@ export function WaiterApp({
             </section>
 
             <section>
-              <div className="sticky top-[5.7rem] z-30 -mx-3 space-y-2 bg-[#f3f6f4]/95 px-3 py-2 backdrop-blur">
+              <div className="sticky top-[5.7rem] z-30 -mx-3 space-y-2 bg-[#e8e8e8]/95 px-3 py-2 backdrop-blur">
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Бараа хайх…"
                   type="search"
-                  className="min-h-12 w-full rounded-2xl border border-[#cbd5e1] bg-white px-4 text-base font-bold outline-none focus:border-[#16a34a]"
+                  className="min-h-12 w-full rounded-2xl border border-[#a7a7a7] bg-white px-4 text-base font-bold outline-none focus:border-[#f5a623]"
                 />
                 <div className="flex gap-2 overflow-x-auto pb-1">
                   {categories.map((value) => (
@@ -513,8 +513,8 @@ export function WaiterApp({
                       onClick={() => setCategory(value)}
                       className={`min-h-10 shrink-0 rounded-full px-4 text-sm font-black ${
                         category === value
-                          ? "bg-[#17211c] text-white"
-                          : "border border-[#dbe5df] bg-white text-[#475569]"
+                          ? "bg-[#f5a623] text-[#111111]"
+                          : "border border-[#3b9dd4] bg-[#3b9dd4] text-white"
                       }`}
                     >
                       {value}
@@ -542,10 +542,10 @@ export function WaiterApp({
                         key={item.sku}
                         type="button"
                         onClick={() => addItem(item)}
-                        className="relative flex min-h-32 flex-col justify-between rounded-2xl border border-[#dbe5df] bg-white p-3 text-left shadow-sm active:scale-[0.98] active:bg-[#f0fdf4]"
+                        className="relative flex min-h-32 flex-col justify-between rounded-2xl border border-[#d4c4a8] bg-[#d4c4a8] p-3 text-left shadow-sm active:scale-[0.98] active:brightness-95"
                       >
                         {quantity > 0 && (
-                          <span className="absolute right-2 top-2 flex h-7 min-w-7 items-center justify-center rounded-full bg-[#16a34a] px-2 text-xs font-black text-white">
+                          <span className="absolute right-2 top-2 flex h-7 min-w-7 items-center justify-center rounded-full bg-[#f5a623] px-2 text-xs font-black text-[#111111]">
                             {formatNumber(quantity)}
                           </span>
                         )}
@@ -554,7 +554,7 @@ export function WaiterApp({
                           <span className="block text-[11px] font-bold text-[#94a3b8]">
                             {item.category || "Үйлчилгээ"}
                           </span>
-                          <span className="mt-1 block text-base font-black text-[#166534]">
+                          <span className="mt-1 block text-base font-black text-[#102033]">
                             {formatMNT(item.guestPrice ?? item.price)}
                           </span>
                         </span>
@@ -578,7 +578,7 @@ export function WaiterApp({
                 type="button"
                 onClick={() => void refreshOverview()}
                 disabled={refreshing}
-                className="min-h-11 rounded-xl border border-[#cbd5e1] bg-white px-4 text-sm font-black disabled:opacity-50"
+                className="min-h-11 rounded-xl border border-[#3b9dd4] bg-[#3b9dd4] px-4 text-sm font-black text-white disabled:opacity-50"
               >
                 {refreshing ? "Шинэчилж…" : "Шинэчлэх"}
               </button>
@@ -599,7 +599,7 @@ export function WaiterApp({
                   <article
                     key={order.transactionId}
                     className={`rounded-3xl border bg-white p-4 shadow-sm ${
-                      mine ? "border-[#86efac]" : "border-[#dbe5df]"
+                      mine ? "border-[#f5a623]" : "border-[#a7a7a7]"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -607,7 +607,7 @@ export function WaiterApp({
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-lg font-black">{order.roomOrGuest || "Нэргүй"}</h3>
                           {mine && (
-                            <span className="rounded-full bg-[#dcfce7] px-2 py-1 text-[11px] font-black text-[#166534]">
+                            <span className="rounded-full bg-[#b9e3ff] px-2 py-1 text-[11px] font-black text-[#102033]">
                               Миний
                             </span>
                           )}
@@ -616,7 +616,7 @@ export function WaiterApp({
                           {order.staff} · {displayTime(order.timestamp)}
                         </p>
                       </div>
-                      <p className="shrink-0 text-lg font-black text-[#166534]">
+                      <p className="shrink-0 text-lg font-black text-[#2d8fc8]">
                         {formatMNT(order.balance ?? order.total)}
                       </p>
                     </div>
@@ -631,7 +631,7 @@ export function WaiterApp({
                         <button
                           type="button"
                           onClick={() => editOrder(order)}
-                          className="min-h-11 shrink-0 rounded-xl bg-[#17211c] px-4 text-sm font-black text-white"
+                          className="min-h-11 shrink-0 rounded-xl bg-[#3b9dd4] px-4 text-sm font-black text-white"
                         >
                           Нэмэх / засах
                         </button>
@@ -649,7 +649,7 @@ export function WaiterApp({
         <button
           type="button"
           onClick={() => setShowCart(true)}
-          className="fixed bottom-[4.75rem] left-3 right-3 z-50 mx-auto flex min-h-16 max-w-3xl items-center justify-between rounded-2xl bg-[#16a34a] px-5 text-left text-white shadow-[0_12px_35px_rgba(22,101,52,0.35)]"
+          className="fixed bottom-[4.75rem] left-3 right-3 z-50 mx-auto flex min-h-16 max-w-3xl items-center justify-between rounded-2xl bg-[#f5a623] px-5 text-left text-[#111111] shadow-[0_12px_35px_rgba(15,23,42,0.28)]"
         >
           <span>
             <span className="block text-xs font-black opacity-80">{formatNumber(cartQuantity)} бараа</span>
@@ -659,13 +659,13 @@ export function WaiterApp({
         </button>
       )}
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#dbe5df] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#555555] bg-[#2b2b2b] pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto grid max-w-3xl grid-cols-2 gap-2 p-2">
           <button
             type="button"
             onClick={() => setActiveTab("new")}
             className={`min-h-14 rounded-2xl text-sm font-black ${
-              activeTab === "new" ? "bg-[#17211c] text-white" : "text-[#64748b]"
+              activeTab === "new" ? "bg-[#f5a623] text-[#111111]" : "text-[#f7f7f7]"
             }`}
           >
             ＋ Шинэ захиалга {cartQuantity > 0 ? `· ${formatNumber(cartQuantity)}` : ""}
@@ -674,7 +674,7 @@ export function WaiterApp({
             type="button"
             onClick={() => setActiveTab("open")}
             className={`min-h-14 rounded-2xl text-sm font-black ${
-              activeTab === "open" ? "bg-[#17211c] text-white" : "text-[#64748b]"
+              activeTab === "open" ? "bg-[#f5a623] text-[#111111]" : "text-[#f7f7f7]"
             }`}
           >
             Нээлттэй · {formatNumber(orders.length)}
@@ -683,23 +683,23 @@ export function WaiterApp({
       </nav>
 
       {showCart && (
-        <div className="fixed inset-0 z-[100] flex flex-col bg-[#f3f6f4]">
-          <header className="flex items-center justify-between border-b border-[#dbe5df] bg-white px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div className="fixed inset-0 z-[100] flex flex-col bg-[#e8e8e8]">
+          <header className="flex items-center justify-between border-b border-[#2b2b2b] bg-[#2b2b2b] px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-white">
             <div>
-              <p className="text-xs font-black text-[#15803d]">{reference.trim() || "Ширээ сонгоогүй"}</p>
+              <p className="text-xs font-black text-[#f5a623]">{reference.trim() || "Ширээ сонгоогүй"}</p>
               <h2 className="text-xl font-black">{editingTransactionId ? "Захиалга засах" : "Захиалгын сагс"}</h2>
             </div>
             <button
               type="button"
               onClick={() => setShowCart(false)}
-              className="min-h-11 rounded-xl border border-[#cbd5e1] px-4 text-sm font-black"
+              className="min-h-11 rounded-xl border border-[#555555] bg-[#3a3a3a] px-4 text-sm font-black text-white"
             >
               Буцах
             </button>
           </header>
           <div className="flex-1 space-y-3 overflow-y-auto p-3">
             {cart.map((item) => (
-              <div key={item.sku} className="rounded-2xl border border-[#dbe5df] bg-white p-4 shadow-sm">
+              <div key={item.sku} className="rounded-2xl border border-[#a7a7a7] bg-[#f1f1f1] p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="font-black">{item.name}</p>
@@ -723,7 +723,7 @@ export function WaiterApp({
                     type="button"
                     aria-label={`${item.name} нэгээр нэмэх`}
                     onClick={() => changeQuantity(item.sku, 1)}
-                    className="h-12 w-12 rounded-xl bg-[#17211c] text-2xl font-black text-white"
+                    className="h-12 w-12 rounded-xl bg-[#3b9dd4] text-2xl font-black text-white"
                   >
                     +
                   </button>
@@ -731,7 +731,7 @@ export function WaiterApp({
               </div>
             ))}
           </div>
-          <footer className="border-t border-[#dbe5df] bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <footer className="border-t border-[#a7a7a7] bg-[#f1f1f1] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             {saveMessage && (
               <p className={`mb-3 text-sm font-bold ${saveStatus === "error" ? "text-[#b91c1c]" : "text-[#047857]"}`}>
                 {saveMessage}
@@ -745,7 +745,7 @@ export function WaiterApp({
               type="button"
               onClick={() => void submitOrder()}
               disabled={saveStatus === "saving" || cart.length === 0 || !dayOpen}
-              className="min-h-16 w-full rounded-2xl bg-[#16a34a] px-5 text-lg font-black text-white disabled:bg-[#94a3b8]"
+              className="min-h-16 w-full rounded-2xl bg-[#f5a623] px-5 text-lg font-black text-[#111111] disabled:bg-[#94a3b8]"
             >
               {saveStatus === "saving"
                 ? "Илгээж байна…"

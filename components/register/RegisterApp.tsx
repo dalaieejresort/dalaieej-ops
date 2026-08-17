@@ -6025,7 +6025,7 @@ export function RegisterApp({
       {!voidModalOpen && !dayModalMode ? (
         <nav
           aria-label="Гар утасны үндсэн цэс"
-          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#d1d5db] bg-white/95 px-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:hidden"
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 gap-1 border-t border-[#555555] bg-[#2b2b2b] px-1.5 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.2)] md:hidden"
         >
           {([
             ["sale", "+", "Зарах"],
@@ -6040,8 +6040,8 @@ export function RegisterApp({
               onClick={() => selectRegisterMode(mode)}
               className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
                 registerMode === mode && !mobileCartOpen
-                  ? "bg-[#eef2ff] text-[#111827]"
-                  : "text-[#64748b]"
+                  ? "bg-[#f5a623] text-[#111111]"
+                  : "text-[#f7f7f7]"
               }`}
             >
               <span className="text-lg leading-none" aria-hidden="true">
@@ -6060,8 +6060,8 @@ export function RegisterApp({
             }}
             className={`relative flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
               mobileCartOpen
-                ? "bg-[#111827] text-white"
-                : "text-[#64748b]"
+                ? "bg-[#f5a623] text-[#111111]"
+                : "text-[#f7f7f7]"
             }`}
           >
             <span className="text-lg leading-none" aria-hidden="true">▣</span>
