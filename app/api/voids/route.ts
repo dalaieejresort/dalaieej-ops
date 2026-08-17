@@ -6,6 +6,8 @@ import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
 import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
+import { clearCachedReads } from '@/lib/server/read-cache';
+import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
 import {
   makeUniformControlNumber,
   PAYMENT_LOG_HEADERS,
@@ -14,6 +16,15 @@ import {
   DAY_SESSION_HEADERS,
   getActiveBusinessSession,
 } from '@/lib/server/business-session';
+import {
+  operationFingerprint,
+  operationTimestamp,
+} from '@/lib/server/operation-controls';
+import {
+  appendRowsRequest,
+  executeAtomicBatch,
+  updateRowRequest,
+} from '@/lib/server/sheets-atomic';
 
 type VoidSaleBody = {
   transactionId?: string;
@@ -21,6 +32,7 @@ type VoidSaleBody = {
   staffName?: string;
   reason?: string;
   refundMethod?: string;
+  clientRequestId?: string;
 };
 
 type SheetDoc = GoogleSpreadsheet;
@@ -29,6 +41,7 @@ type SheetRow = {
   get: (columnName: string) => unknown;
   set: (columnName: string, value: unknown) => void;
   save: () => Promise<void>;
+  rowNumber: number;
 };
 
 type SessionWindow = {
@@ -79,6 +92,11 @@ const INVENTORY_LOG_HEADERS = [
   'Room Number',
   'Session ID',
   'Business Date',
+  'Adjustment Reason',
+  'Client Request ID',
+  'Operation Status',
+  'Request Fingerprint',
+  'Operation Updated At',
 ];
 
 const SALES_LOG_HEADERS = [
@@ -103,6 +121,11 @@ const SALES_LOG_HEADERS = [
   'client_request_id',
   'operation_status',
   'receipt_id',
+  'request_fingerprint',
+  'operation_error',
+  'operation_updated_at',
+  'last_edit_request_id',
+  'last_edit_fingerprint',
 ];
 
 const VOIDS_LOG_HEADERS = [
@@ -119,7 +142,19 @@ const VOIDS_LOG_HEADERS = [
   'notes',
   'session_id',
   'business_date',
+  'client_request_id',
+  'operation_status',
+  'request_fingerprint',
+  'operation_error',
+  'operation_updated_at',
 ];
+
+function valuesFor(
+  sheet: GoogleSpreadsheetWorksheet,
+  record: Record<string, unknown>,
+) {
+  return sheet.headerValues.map(header => record[header] ?? '');
+}
 
 const INVENTORY_COLUMNS = {
   transactionId: ['Transaction ID', 'transaction_id'],
@@ -501,6 +536,7 @@ async function handlePOST(request: Request) {
     const transactionId = body.transactionId?.trim();
     const reason = body.reason?.trim();
     const refundMethod = body.refundMethod?.trim() || 'No refund';
+    const clientRequestId = body.clientRequestId?.trim() ?? '';
 
     if (!transactionId) {
       return NextResponse.json({ error: 'transactionId is required' }, { status: 400 });
@@ -508,6 +544,12 @@ async function handlePOST(request: Request) {
 
     if (!reason) {
       return NextResponse.json({ error: 'reason is required' }, { status: 400 });
+    }
+    if (!clientRequestId || clientRequestId.length > 128) {
+      return NextResponse.json(
+        { error: 'clientRequestId is required and must be 128 characters or less' },
+        { status: 400 },
+      );
     }
 
     const doc = await loadSpreadsheet();
@@ -528,18 +570,61 @@ async function handlePOST(request: Request) {
       PAYMENT_LOG_HEADERS,
     );
     const voidsLogSheet = await getOrCreateSheet(doc, VOIDS_LOG_SHEET_TITLES, VOIDS_LOG_HEADERS);
-    const [dayRows, inventoryRows, salesRows, paymentRows] = await Promise.all([
+    const [dayRows, inventoryRows, salesRows, paymentRows, voidRows] = await Promise.all([
       daySessionSheet.getRows() as Promise<SheetRow[]>,
       inventoryLogSheet.getRows(),
       salesLogSheet.getRows() as Promise<SheetRow[]>,
       paymentsLogSheet.getRows(),
+      voidsLogSheet.getRows() as Promise<SheetRow[]>,
     ]);
-    const activeBusinessSession = getActiveBusinessSession(dayRows);
+    const requestFingerprint = operationFingerprint({
+      action: 'void',
+      transactionId,
+      reason,
+      refundMethod,
+    });
+    const existingVoid = voidRows.find(
+      row => getCell(row, 'client_request_id') === clientRequestId,
+    );
+    if (existingVoid && getCell(existingVoid, 'operation_status') === 'complete') {
+      return NextResponse.json({
+        success: true,
+        duplicateRequest: true,
+        message: 'Sale voided',
+        voidId: getCell(existingVoid, 'void_id'),
+        transactionId,
+        refundAmount: toNumber(existingVoid.get('refund_amount')),
+      });
+    }
+    if (existingVoid) {
+      const storedFingerprint = getCell(existingVoid, 'request_fingerprint');
+      if (!storedFingerprint || storedFingerprint !== requestFingerprint) {
+        return NextResponse.json(
+          {
+            error: !storedFingerprint
+              ? 'This legacy pending void needs manager review before retrying.'
+              : 'This request ID was already used for different void data. Refresh and retry once.',
+          },
+          { status: 409 },
+        );
+      }
+    }
+    const activeBusinessSession = existingVoid
+      ? {
+          sessionId: getCell(existingVoid, 'session_id'),
+          businessDate: getCell(existingVoid, 'business_date'),
+          openedAt: '',
+        }
+      : getActiveBusinessSession(dayRows);
     if (!activeBusinessSession) {
       return NextResponse.json(
         { error: 'Open the day before voiding or refunding a sale' },
         { status: 400 },
       );
+    }
+    if (!existingVoid) {
+      const staleResponse = staleBusinessDayResponse(activeBusinessSession.businessDate);
+      if (staleResponse) return staleResponse;
     }
 
     const saleRow = salesRows.find(row => getCell(row, 'transaction_id') === transactionId);
@@ -559,12 +644,16 @@ async function handlePOST(request: Request) {
       return NextResponse.json({ error: 'Sale is already voided' }, { status: 400 });
     }
 
-    const timestamp = nowTimestamp();
+    const timestamp = existingVoid
+      ? getCell(existingVoid, 'timestamp')
+      : nowTimestamp();
     const originalTotal = toNumber(saleRow.get('total'));
     const paidAmount = getPaymentTotals(paymentRows).get(transactionId) ?? 0;
     const refundAmount = Math.max(paidAmount, 0);
     const itemSummary = getCell(saleRow, 'item_summary');
-    const voidId = createVoidId();
+    const voidId = existingVoid
+      ? getCell(existingVoid, 'void_id')
+      : createVoidId();
     const currentInventoryBalances = getCurrentInventoryBalances(transactionId, inventoryRows);
     const reversalRows: Array<Array<string | number>> = currentInventoryBalances.map(item => [
       `${transactionId}-VOID`,
@@ -581,56 +670,74 @@ async function handlePOST(request: Request) {
       activeBusinessSession.businessDate,
     ]);
 
-    await Promise.all([
-      voidsLogSheet.addRows([
-        [
-          voidId,
-          transactionId,
-          timestamp,
-          actorName,
-          reason,
-          originalStatus || 'paid',
-          originalTotal,
-          refundAmount > 0 ? refundMethod : 'No refund',
-          refundAmount,
-          itemSummary,
-          '',
-          activeBusinessSession.sessionId,
-          activeBusinessSession.businessDate,
-        ],
-      ]),
-      reversalRows.length > 0
-        ? inventoryLogSheet.addRows(reversalRows)
-        : Promise.resolve(),
-      refundAmount > 0
-        ? paymentsLogSheet.addRows([
-            {
-              payment_id: makeUniformControlNumber('RFN'),
-              transaction_id: transactionId,
-              timestamp,
-              staff: actorName,
-              payment_method: `Буцаалт - ${refundMethod}`,
-              amount: -refundAmount,
-              cash_received: '',
-              change_due: '',
-              qpay_invoice_id: getCell(saleRow, 'qpay_invoice_id'),
-              notes: `Void ${voidId}: ${reason}`,
-              receipt_id: '',
-              session_id: activeBusinessSession.sessionId,
-              business_date: activeBusinessSession.businessDate,
-            },
-          ])
-        : Promise.resolve(),
+    const voidRecord: Record<string, string | number> = {
+      void_id: voidId,
+      transaction_id: transactionId,
+      timestamp,
+      staff: actorName,
+      reason,
+      original_status: originalStatus || 'paid',
+      original_total: originalTotal,
+      refund_method: refundAmount > 0 ? refundMethod : 'No refund',
+      refund_amount: refundAmount,
+      item_summary: itemSummary,
+      notes: '',
+      session_id: activeBusinessSession.sessionId,
+      business_date: activeBusinessSession.businessDate,
+      client_request_id: clientRequestId,
+      operation_status: 'pending',
+      request_fingerprint: requestFingerprint,
+      operation_error: '',
+      operation_updated_at: operationTimestamp(),
+    };
+    const voidRow = existingVoid ?? (await voidsLogSheet.addRows([voidRecord]))[0];
+    voidRecord.operation_status = 'complete';
+    voidRecord.operation_updated_at = operationTimestamp();
+    const saleValues = salesLogSheet.headerValues.map(header => {
+      if (header === 'paid_status') return 'voided';
+      if (header === 'notes') {
+        return [getCell(saleRow, 'notes'), `Voided ${timestamp}: ${reason}`]
+          .filter(Boolean)
+          .join(' | ');
+      }
+      return saleRow.get(header) ?? '';
+    });
+    const refundRecord: Record<string, unknown> = {
+      payment_id: makeUniformControlNumber('RFN'),
+      transaction_id: transactionId,
+      timestamp,
+      staff: actorName,
+      payment_method: `Буцаалт - ${refundMethod}`,
+      amount: -refundAmount,
+      cash_received: '',
+      change_due: '',
+      qpay_invoice_id: getCell(saleRow, 'qpay_invoice_id'),
+      notes: `Void ${voidId}: ${reason}`,
+      receipt_id: '',
+      session_id: activeBusinessSession.sessionId,
+      business_date: activeBusinessSession.businessDate,
+    };
+    await executeAtomicBatch(doc, [
+      updateRowRequest(
+        voidsLogSheet,
+        voidRow.rowNumber,
+        valuesFor(voidsLogSheet, voidRecord),
+      ),
+      updateRowRequest(salesLogSheet, saleRow.rowNumber, saleValues),
+      ...(reversalRows.length > 0
+        ? [appendRowsRequest(inventoryLogSheet, reversalRows)]
+        : []),
+      ...(refundAmount > 0
+        ? [
+            appendRowsRequest(paymentsLogSheet, [
+              valuesFor(paymentsLogSheet, refundRecord),
+            ]),
+          ]
+        : []),
     ]);
-
-    saleRow.set('paid_status', 'voided');
-    saleRow.set(
-      'notes',
-      [getCell(saleRow, 'notes'), `Voided ${timestamp}: ${reason}`]
-        .filter(Boolean)
-        .join(' | '),
-    );
-    await saleRow.save();
+    clearCachedReads('sales:');
+    clearCachedReads('day:');
+    clearCachedReads('inventory:');
 
     return NextResponse.json({
       success: true,

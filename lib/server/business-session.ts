@@ -30,6 +30,14 @@ export const DAY_SESSION_HEADERS = [
   "receipt_count",
   "first_receipt_id",
   "last_receipt_id",
+  "current_sale_payment_total",
+  "prior_debt_collected_total",
+  "refund_total",
+  "new_room_debt_total",
+  "client_request_id",
+  "operation_status",
+  "operation_error",
+  "operation_updated_at",
 ] as const;
 
 export type BusinessSessionRow = {

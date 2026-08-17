@@ -47,6 +47,10 @@ type DayTotals = {
   qpayPaymentTotal: number;
   otherPaymentTotal: number;
   roomChargeTotal: number;
+  currentSalePaymentTotal: number;
+  priorDebtCollectedTotal: number;
+  refundTotal: number;
+  newRoomDebtTotal: number;
   expectedCash: number;
   receiptCount: number;
   firstReceiptId: string;
@@ -396,6 +400,10 @@ const EMPTY_DAY_TOTALS: DayTotals = {
   qpayPaymentTotal: 0,
   otherPaymentTotal: 0,
   roomChargeTotal: 0,
+  currentSalePaymentTotal: 0,
+  priorDebtCollectedTotal: 0,
+  refundTotal: 0,
+  newRoomDebtTotal: 0,
   expectedCash: 0,
   receiptCount: 0,
   firstReceiptId: "",
@@ -1691,6 +1699,18 @@ export function RegisterApp({
     fingerprint: string;
     requestId: string;
   } | null>(null);
+  const pendingVoidRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
+  const pendingDayRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
+  const pendingEditRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
   const settlementRequestInFlightRef = useRef(false);
 
   function getNextLocalId(prefix: string) {
@@ -2772,6 +2792,18 @@ export function RegisterApp({
     const actionMode = dayModalMode;
     const countedCash = dayCashAmount;
     const notes = dayNotes;
+    const requestFingerprint = JSON.stringify({
+      action: actionMode,
+      businessDate,
+      startingCash: actionMode === "open" ? dayCashAmount : undefined,
+      countedCash: actionMode === "close" ? countedCash : undefined,
+      notes,
+    });
+    const pendingDayRequest =
+      pendingDayRequestRef.current?.fingerprint === requestFingerprint
+        ? pendingDayRequestRef.current
+        : { fingerprint: requestFingerprint, requestId: window.crypto.randomUUID() };
+    pendingDayRequestRef.current = pendingDayRequest;
     const dayCloseWindow = actionMode === "close" ? openPrintWindow() : false;
 
     setDayStatus("saving");
@@ -2788,6 +2820,7 @@ export function RegisterApp({
           startingCash: actionMode === "open" ? dayCashAmount : undefined,
           countedCash: actionMode === "close" ? countedCash : undefined,
           notes,
+          clientRequestId: pendingDayRequest.requestId,
         }),
       });
       const data = (await response.json().catch(() => null)) as
@@ -2852,6 +2885,7 @@ export function RegisterApp({
       setDayCashAmount(0);
       setDayNotes("");
       setDayStatus("ready");
+      pendingDayRequestRef.current = null;
       setDayMessage(
         actionMode === "open"
           ? "Өдөр нээгдлээ"
@@ -2932,6 +2966,20 @@ export function RegisterApp({
 
     setVoidStatus("saving");
     setVoidMessage("");
+    const normalizedRefundMethod =
+      selectedVoidSale.refundableAmount > 0
+        ? voidRefundMethod
+        : "No refund";
+    const requestFingerprint = JSON.stringify({
+      transactionId: selectedVoidSale.transactionId,
+      reason: voidReason.trim(),
+      refundMethod: normalizedRefundMethod,
+    });
+    const pendingVoidRequest =
+      pendingVoidRequestRef.current?.fingerprint === requestFingerprint
+        ? pendingVoidRequestRef.current
+        : { fingerprint: requestFingerprint, requestId: window.crypto.randomUUID() };
+    pendingVoidRequestRef.current = pendingVoidRequest;
 
     try {
       const response = await registerFetch("/api/voids", {
@@ -2942,10 +2990,8 @@ export function RegisterApp({
           businessDate,
           staffName,
           reason: voidReason,
-          refundMethod:
-            selectedVoidSale.refundableAmount > 0
-              ? voidRefundMethod
-              : "No refund",
+          refundMethod: normalizedRefundMethod,
+          clientRequestId: pendingVoidRequest.requestId,
         }),
       });
       const data = (await response.json().catch(() => null)) as
@@ -2957,6 +3003,7 @@ export function RegisterApp({
       }
 
       setVoidReason("");
+      pendingVoidRequestRef.current = null;
       await Promise.all([
         loadVoidableSales(),
         loadDayStatus({ fresh: true }),
@@ -3166,6 +3213,17 @@ export function RegisterApp({
     setDeletingChargeId(charge.transactionId);
     setSettlementStatus("saving");
     setSettlementMessage(`${charge.transactionId} өрийг устгаж байна`);
+    const deleteReason = `Өрөөс устгасан: ${charge.roomOrGuest || charge.transactionId}`;
+    const requestFingerprint = JSON.stringify({
+      transactionId: charge.transactionId,
+      reason: deleteReason,
+      refundMethod: "No refund",
+    });
+    const pendingVoidRequest =
+      pendingVoidRequestRef.current?.fingerprint === requestFingerprint
+        ? pendingVoidRequestRef.current
+        : { fingerprint: requestFingerprint, requestId: window.crypto.randomUUID() };
+    pendingVoidRequestRef.current = pendingVoidRequest;
 
     try {
       const response = await registerFetch("/api/voids", {
@@ -3175,8 +3233,9 @@ export function RegisterApp({
           transactionId: charge.transactionId,
           businessDate,
           staffName,
-          reason: `Өрөөс устгасан: ${charge.roomOrGuest || charge.transactionId}`,
+          reason: deleteReason,
           refundMethod: "No refund",
+          clientRequestId: pendingVoidRequest.requestId,
         }),
       });
       const data = (await response.json().catch(() => null)) as
@@ -3190,6 +3249,7 @@ export function RegisterApp({
       setSelectedChargeIds((current) =>
         current.filter((id) => id !== charge.transactionId),
       );
+      pendingVoidRequestRef.current = null;
       if (editingCharge?.transactionId === charge.transactionId) {
         clearCurrentSale();
       }
@@ -3642,6 +3702,25 @@ export function RegisterApp({
 
     setSaleStatus("saving");
     setSaleMessage("");
+    const editItems = cart.map((line) => ({
+      sku: line.sku ?? "",
+      name: line.name,
+      category: line.category,
+      qty: line.quantity,
+      unitPrice: line.price,
+      priceMode: line.priceMode,
+    }));
+    const requestFingerprint = JSON.stringify({
+      transactionId: editingCharge.transactionId,
+      room: chargeReference,
+      total: cartTotal,
+      items: editItems,
+    });
+    const pendingEditRequest =
+      pendingEditRequestRef.current?.fingerprint === requestFingerprint
+        ? pendingEditRequestRef.current
+        : { fingerprint: requestFingerprint, requestId: window.crypto.randomUUID() };
+    pendingEditRequestRef.current = pendingEditRequest;
 
     try {
       const response = await registerFetch("/api/sales", {
@@ -3653,14 +3732,8 @@ export function RegisterApp({
           staffName,
           room: chargeReference,
           total: cartTotal,
-          items: cart.map((line) => ({
-            sku: line.sku ?? "",
-            name: line.name,
-            category: line.category,
-            qty: line.quantity,
-            unitPrice: line.price,
-            priceMode: line.priceMode,
-          })),
+          items: editItems,
+          clientRequestId: pendingEditRequest.requestId,
         }),
       });
       const data = (await response.json().catch(() => null)) as
@@ -3672,6 +3745,7 @@ export function RegisterApp({
       }
 
       const editedTransactionId = editingCharge.transactionId;
+      pendingEditRequestRef.current = null;
       selectedChargeGroupKeyRef.current = getChargeReferenceKey(chargeReference);
       setEditingCharge(null);
       setCart([]);

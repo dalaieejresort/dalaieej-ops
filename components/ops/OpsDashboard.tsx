@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   readOfflineCache,
@@ -20,6 +20,10 @@ type DayTotals = {
   qpayPaymentTotal: number;
   otherPaymentTotal: number;
   roomChargeTotal: number;
+  currentSalePaymentTotal: number;
+  priorDebtCollectedTotal: number;
+  refundTotal: number;
+  newRoomDebtTotal: number;
   expectedCash: number;
 };
 
@@ -76,6 +80,18 @@ type CatalogItem = {
   stock?: number;
 };
 
+type PendingOperation = {
+  type: "sale" | "settlement" | "void" | "day";
+  requestId: string;
+  resourceId: string;
+  businessDate: string;
+  actor: string;
+  timestamp: string;
+  updatedAt: string;
+  error: string;
+  recoverable: boolean;
+};
+
 type DashboardData = {
   session: DaySession | null;
   totals: DayTotals;
@@ -83,6 +99,7 @@ type DashboardData = {
   charges: Charge[];
   history: HistorySale[];
   catalog: CatalogItem[];
+  pendingOperations: PendingOperation[];
 };
 
 type LoadState = "loading" | "ready" | "partial" | "error";
@@ -95,6 +112,10 @@ const EMPTY_TOTALS: DayTotals = {
   qpayPaymentTotal: 0,
   otherPaymentTotal: 0,
   roomChargeTotal: 0,
+  currentSalePaymentTotal: 0,
+  priorDebtCollectedTotal: 0,
+  refundTotal: 0,
+  newRoomDebtTotal: 0,
   expectedCash: 0,
 };
 
@@ -105,7 +126,23 @@ const EMPTY_DATA: DashboardData = {
   charges: [],
   history: [],
   catalog: [],
+  pendingOperations: [],
 };
+
+function normalizeDashboardData(value: Partial<DashboardData>): DashboardData {
+  return {
+    ...EMPTY_DATA,
+    ...value,
+    totals: { ...EMPTY_TOTALS, ...(value.totals ?? {}) },
+    itemTotals: Array.isArray(value.itemTotals) ? value.itemTotals : [],
+    charges: Array.isArray(value.charges) ? value.charges : [],
+    history: Array.isArray(value.history) ? value.history : [],
+    catalog: Array.isArray(value.catalog) ? value.catalog : [],
+    pendingOperations: Array.isArray(value.pendingOperations)
+      ? value.pendingOperations
+      : [],
+  };
+}
 
 type OpsDashboardProps = {
   businessDate: string;
@@ -260,6 +297,15 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
   const [errors, setErrors] = useState<string[]>([]);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [adjustmentSku, setAdjustmentSku] = useState("");
+  const [adjustmentDelta, setAdjustmentDelta] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [adjustmentMessage, setAdjustmentMessage] = useState("");
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
+  const pendingAdjustmentRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
 
   const loadDashboard = useCallback(
     async (fresh = false) => {
@@ -267,7 +313,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       const cached = readOfflineCache<DashboardData>(cacheKey);
 
       if (cached) {
-        setData(cached.value);
+        setData(normalizeDashboardData(cached.value));
         setLastUpdatedAt(new Date(cached.savedAt));
       }
       setLoadState((current) =>
@@ -275,7 +321,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       );
       const nextErrors: string[] = [];
 
-      const [dayResult, salesResult, inventoryResult] =
+      const [dayResult, salesResult, inventoryResult, operationsResult] =
         await Promise.allSettled([
           fetchWithTimeout(
             buildDashboardUrl("/api/day", businessDate, fresh),
@@ -287,6 +333,10 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
           ).then(readJson),
           fetchWithTimeout(
             buildDashboardUrl("/api/inventory", businessDate, fresh),
+            { cache: "no-store" },
+          ).then(readJson),
+          fetchWithTimeout(
+            buildDashboardUrl("/api/operations", businessDate, fresh),
             { cache: "no-store" },
           ).then(readJson),
         ]);
@@ -311,6 +361,10 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         Array.isArray(inventoryResult.value)
           ? (inventoryResult.value as CatalogItem[])
           : cached?.value.catalog ?? [];
+      const operationsPayload =
+        operationsResult.status === "fulfilled"
+          ? (operationsResult.value as { pending?: PendingOperation[] })
+          : { pending: cached?.value.pendingOperations ?? [] };
 
       if (dayResult.status === "rejected") {
         nextErrors.push(`Өдрийн төлөв: ${dayResult.reason.message}`);
@@ -323,10 +377,13 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       if (inventoryResult.status === "rejected") {
         nextErrors.push(`Бараа: ${inventoryResult.reason.message}`);
       }
+      if (operationsResult.status === "rejected") {
+        nextErrors.push(`Ажиллагаа: ${operationsResult.reason.message}`);
+      }
 
       const nextData: DashboardData = {
         session: dayPayload?.session ?? null,
-        totals: dayPayload?.totals ?? EMPTY_TOTALS,
+        totals: { ...EMPTY_TOTALS, ...(dayPayload?.totals ?? {}) },
         itemTotals: Array.isArray(dayPayload?.itemTotals)
           ? dayPayload.itemTotals
           : [],
@@ -337,6 +394,9 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
           ? salesPayload.history
           : [],
         catalog: inventoryPayload,
+        pendingOperations: Array.isArray(operationsPayload.pending)
+          ? operationsPayload.pending
+          : [],
       };
 
       setData(nextData);
@@ -344,6 +404,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         dayResult.status === "fulfilled" ||
         salesResult.status === "fulfilled" ||
         inventoryResult.status === "fulfilled"
+        || operationsResult.status === "fulfilled"
       ) {
         writeOfflineCache(cacheKey, nextData);
         setLastUpdatedAt(new Date());
@@ -352,7 +413,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       setLoadState(
         nextErrors.length === 0
           ? "ready"
-          : nextErrors.length === 3
+          : nextErrors.length === 4
             ? "error"
             : "partial",
       );
@@ -389,6 +450,60 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
     };
   }, [autoRefresh, loadDashboard]);
 
+  async function submitInventoryAdjustment() {
+    const quantityDelta = Number(adjustmentDelta);
+    const selectedItem = data.catalog.find(item => item.sku === adjustmentSku);
+    if (!selectedItem || !Number.isFinite(quantityDelta) || quantityDelta === 0) {
+      setAdjustmentMessage("Бараа болон 0-ээс өөр зөрүү сонгоно уу.");
+      return;
+    }
+    if (!adjustmentReason.trim()) {
+      setAdjustmentMessage("Тооллогын тайлбар заавал бичнэ үү.");
+      return;
+    }
+    const fingerprint = JSON.stringify({
+      sku: selectedItem.sku,
+      quantityDelta,
+      reason: adjustmentReason.trim(),
+    });
+    const pending =
+      pendingAdjustmentRef.current?.fingerprint === fingerprint
+        ? pendingAdjustmentRef.current
+        : { fingerprint, requestId: window.crypto.randomUUID() };
+    pendingAdjustmentRef.current = pending;
+    setAdjustmentSaving(true);
+    setAdjustmentMessage("");
+    try {
+      const response = await fetchWithTimeout("/api/inventory-adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: pending.requestId,
+          reason: adjustmentReason.trim(),
+          adjustments: [
+            {
+              sku: selectedItem.sku,
+              name: selectedItem.name,
+              quantityDelta,
+            },
+          ],
+        }),
+      });
+      await readJson(response);
+      pendingAdjustmentRef.current = null;
+      setAdjustmentDelta("");
+      setAdjustmentReason("");
+      setAdjustmentMessage("Тооллогын тохируулга аудитын мөрөөр хадгалагдлаа.");
+      await loadDashboard(true);
+    } catch (error) {
+      setAdjustmentMessage(
+        error instanceof Error ? error.message : "Тохируулга хадгалж чадсангүй.",
+      );
+    } finally {
+      setAdjustmentSaving(false);
+    }
+  }
+
   const unpaidBalance = useMemo(
     () => totalChargeBalance(data.charges),
     [data.charges],
@@ -404,14 +519,6 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
   const topItems = data.itemTotals.slice(0, 6);
   const recentHistory = data.history.slice(0, 8);
   const visibleCharges = data.charges.slice(0, 8);
-  const nonCashTotal =
-    data.totals.cardPaymentTotal +
-    data.totals.qpayPaymentTotal +
-    data.totals.otherPaymentTotal;
-  const collectionRate =
-    data.totals.salesTotal > 0
-      ? Math.round((data.totals.paymentTotal / data.totals.salesTotal) * 100)
-      : 0;
   const paymentTotal = paymentBreakdownTotal(data.totals);
   const isInitialLoading = loadState === "loading" && !lastUpdatedAt;
 
@@ -478,18 +585,18 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
               <MetricCard
                 label="Өдрийн борлуулалт"
                 value={formatMNT(data.totals.salesTotal)}
-                detail={`${formatNumber(data.history.length)} хаагдсан мөр · ${collectionRate}% цугласан`}
+                detail={`Тухайн өдрийн төлөлт ${formatMNT(data.totals.currentSalePaymentTotal)}`}
                 tone="green"
               />
               <MetricCard
                 label="Төлбөр авсан"
                 value={formatMNT(data.totals.paymentTotal)}
-                detail={`Бэлэн ${formatMNT(data.totals.cashPaymentTotal)} · Бусад ${formatMNT(nonCashTotal)}`}
+                detail={`Хуучин өр ${formatMNT(data.totals.priorDebtCollectedTotal)} · Буцаалт ${formatMNT(data.totals.refundTotal)}`}
               />
               <MetricCard
                 label="Хүлээгдэж буй өр"
                 value={formatMNT(unpaidBalance)}
-                detail={`${formatNumber(data.charges.length)} хаагдаагүй төлбөр`}
+                detail={`Өнөөдөр шинээр ${formatMNT(data.totals.newRoomDebtTotal)} · ${formatNumber(data.charges.length)} мөр`}
                 tone={unpaidBalance > 0 ? "amber" : "neutral"}
               />
               <MetricCard
@@ -731,6 +838,97 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   ))
                 )}
               </div>
+            </div>
+          </SectionShell>
+
+          <SectionShell
+            title="Дуусаагүй ажиллагаа"
+            action={
+              <span className={`text-xs font-black ${data.pendingOperations.length > 0 ? "text-[#b45309]" : "text-[#047857]"}`}>
+                {formatNumber(data.pendingOperations.length)}
+              </span>
+            }
+          >
+            {data.pendingOperations.length === 0 ? (
+              <EmptyState>Гацсан эсвэл хүлээгдэж буй ажиллагаа алга.</EmptyState>
+            ) : (
+              <div className="divide-y divide-[#e5eaf1]">
+                {data.pendingOperations.slice(0, 10).map(operation => (
+                  <div key={`${operation.type}-${operation.requestId}-${operation.resourceId}`} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm font-black">
+                        {operation.resourceId || operation.requestId || operation.type}
+                      </p>
+                      <span className="rounded bg-[#fff7ed] px-2 py-1 text-[11px] font-black text-[#b45309]">
+                        {operation.type}
+                      </span>
+                    </div>
+                    <p className="mt-1 break-words text-xs font-bold text-[#64748b]">
+                      {operation.businessDate || "Огноогүй"} · {operation.actor || "Тодорхойгүй"}
+                    </p>
+                    <p className="mt-1 text-xs font-bold text-[#94a3b8]">
+                      {operation.recoverable
+                        ? "Ижил Save хүсэлтээр автоматаар үргэлжлүүлнэ"
+                        : "Менежер гараар шалгана"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionShell>
+
+          <SectionShell title="Барааны тооллогын тохируулга">
+            <div className="grid gap-3 p-4">
+              <label className="grid gap-1 text-xs font-black text-[#475569]">
+                Бараа
+                <select
+                  value={adjustmentSku}
+                  onChange={event => setAdjustmentSku(event.target.value)}
+                  className="h-11 rounded-lg border border-[#cbd5e1] bg-white px-3 text-sm font-bold text-[#111827]"
+                >
+                  <option value="">Сонгох</option>
+                  {data.catalog.map(item => (
+                    <option key={item.sku} value={item.sku}>
+                      {item.name} ({item.sku}) · {formatNumber(item.stock ?? 0)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-black text-[#475569]">
+                Зөрүү (+ нэмнэ, − хасна)
+                <input
+                  type="number"
+                  step="1"
+                  value={adjustmentDelta}
+                  onChange={event => setAdjustmentDelta(event.target.value)}
+                  className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-black text-[#475569]">
+                Тооллогын тайлбар
+                <input
+                  value={adjustmentReason}
+                  onChange={event => setAdjustmentReason(event.target.value)}
+                  placeholder="Жишээ: 2026.08.17 биечлэн тоолсон"
+                  className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={adjustmentSaving}
+                onClick={() => void submitInventoryAdjustment()}
+                className="h-11 rounded-lg bg-[#111827] px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {adjustmentSaving ? "Хадгалж байна…" : "Аудитын мөр хадгалах"}
+              </button>
+              {adjustmentMessage && (
+                <p className="break-words text-xs font-bold text-[#64748b]">
+                  {adjustmentMessage}
+                </p>
+              )}
+              <p className="text-xs font-bold leading-5 text-[#94a3b8]">
+                Каталогийн тоог шууд дарж өөрчлөхгүй; засвар бүр Inventory_Log-д нэр, шалтгаан, хүсэлтийн ID-тай хадгалагдана.
+              </p>
             </div>
           </SectionShell>
 

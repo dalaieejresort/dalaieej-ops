@@ -24,6 +24,16 @@ import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
 import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
+import {
+  operationFingerprint,
+  operationTimestamp,
+} from '@/lib/server/operation-controls';
+import {
+  appendClaimRow,
+  appendRowsRequest,
+  executeAtomicBatch,
+  updateRowRequest,
+} from '@/lib/server/sheets-atomic';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -95,6 +105,7 @@ const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedSpreadsheet:
   | { expiresAt: number; promise: Promise<SheetDoc> }
   | undefined;
+let settlementSchemaReady: Promise<void> | undefined;
 
 const SALES_LOG_SHEET_TITLES = [
   process.env.GOOGLE_SALES_SHEET_TITLE,
@@ -156,6 +167,11 @@ const SALES_LOG_HEADERS = [
   'client_request_id',
   'operation_status',
   'receipt_id',
+  'request_fingerprint',
+  'operation_error',
+  'operation_updated_at',
+  'last_edit_request_id',
+  'last_edit_fingerprint',
 ];
 
 const INVENTORY_LOG_HEADERS = [
@@ -171,6 +187,11 @@ const INVENTORY_LOG_HEADERS = [
   'Room Number',
   'Session ID',
   'Business Date',
+  'Adjustment Reason',
+  'Client Request ID',
+  'Operation Status',
+  'Request Fingerprint',
+  'Operation Updated At',
 ];
 
 const INVENTORY_COLUMNS = {
@@ -347,6 +368,28 @@ async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
   });
 }
 
+async function ensureSettlementSchema(
+  salesLogSheet: GoogleSpreadsheetWorksheet,
+  paymentsLogSheet: GoogleSpreadsheetWorksheet,
+  receiptsLogSheet: GoogleSpreadsheetWorksheet,
+  daySessionSheet: GoogleSpreadsheetWorksheet,
+) {
+  if (!settlementSchemaReady) {
+    settlementSchemaReady = Promise.all([
+      ensureSheetHeaders(salesLogSheet, SALES_LOG_HEADERS),
+      ensureSheetHeaders(paymentsLogSheet, PAYMENT_LOG_HEADERS),
+      ensureSheetHeaders(receiptsLogSheet, RECEIPT_LOG_HEADERS),
+      ensureSheetHeaders(daySessionSheet, DAY_SESSION_HEADERS),
+    ]).then(() => undefined);
+  }
+  try {
+    await settlementSchemaReady;
+  } catch (error) {
+    settlementSchemaReady = undefined;
+    throw error;
+  }
+}
+
 function findCatalogSheet(doc: SheetDoc) {
   for (const title of CATALOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
@@ -427,49 +470,6 @@ async function batchReadSheetTables(
   );
 }
 
-function userEnteredCell(value: unknown) {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return { userEnteredValue: { numberValue: value } };
-  }
-  if (typeof value === 'boolean') {
-    return { userEnteredValue: { boolValue: value } };
-  }
-  return { userEnteredValue: { stringValue: String(value ?? '') } };
-}
-
-function rowData(values: unknown[]) {
-  return { values: values.map(userEnteredCell) };
-}
-
-async function appendReceiptClaim(
-  doc: SheetDoc,
-  sheet: GoogleSpreadsheetWorksheet,
-  values: unknown[],
-) {
-  const response = await doc.sheetsApi.post(
-    `values/${sheet.encodedA1SheetName}!A1:append`,
-    {
-      searchParams: {
-        valueInputOption: 'USER_ENTERED',
-        insertDataOption: 'INSERT_ROWS',
-        includeValuesInResponse: 'false',
-      },
-      json: { values: [values] },
-    },
-  );
-  const payload = (await response.json()) as {
-    updates?: { updatedRange?: string };
-  };
-  const rowNumber = payload.updates?.updatedRange?.match(
-    /![A-Z]+([0-9]+):?/,
-  )?.[1];
-  const parsedRowNumber = Number(rowNumber);
-  if (!Number.isInteger(parsedRowNumber) || parsedRowNumber < 2) {
-    throw new Error('Google Sheets did not return the appended receipt row');
-  }
-  return parsedRowNumber;
-}
-
 async function completeReceiptAndAppendPayments(
   doc: SheetDoc,
   receiptsLogSheet: GoogleSpreadsheetWorksheet,
@@ -478,33 +478,12 @@ async function completeReceiptAndAppendPayments(
   paymentsLogSheet: GoogleSpreadsheetWorksheet,
   paymentValues: unknown[][],
 ) {
-  await doc.sheetsApi.post(':batchUpdate', {
-    json: {
-      requests: [
-        {
-          updateCells: {
-            range: {
-              sheetId: receiptsLogSheet.sheetId,
-              startRowIndex: receiptRowNumber - 1,
-              endRowIndex: receiptRowNumber,
-              startColumnIndex: 0,
-              endColumnIndex: receiptValues.length,
-            },
-            rows: [rowData(receiptValues)],
-            fields: 'userEnteredValue',
-          },
-        },
-        {
-          appendCells: {
-            sheetId: paymentsLogSheet.sheetId,
-            rows: paymentValues.map(rowData),
-            fields: 'userEnteredValue',
-          },
-        },
-      ],
-      includeSpreadsheetInResponse: false,
-    },
-  });
+  await executeAtomicBatch(doc, [
+    updateRowRequest(receiptsLogSheet, receiptRowNumber, receiptValues),
+    ...(paymentValues.length > 0
+      ? [appendRowsRequest(paymentsLogSheet, paymentValues)]
+      : []),
+  ]);
 }
 
 function toNumber(value: unknown) {
@@ -1323,11 +1302,31 @@ async function handlePATCH(request: Request) {
     const actorName = sessionOrResponse.displayName;
     const body = (await request.json()) as SettleSaleBody;
     settlementRequestId = String(body.clientRequestId ?? '').trim();
+    if (!settlementRequestId || settlementRequestId.length > 128) {
+      return NextResponse.json(
+        { error: 'clientRequestId is required and must be 128 characters or less' },
+        { status: 400 },
+      );
+    }
     const transactionId = body.transactionId?.trim() ?? '';
     const requestedSettlementBodies =
       Array.isArray(body.settlements) && body.settlements.length > 0
         ? body.settlements
         : [{ transactionId, payments: body.payments }];
+    const requestFingerprint = operationFingerprint({
+      action: 'settle',
+      settlements: requestedSettlementBodies.map(settlement => ({
+        transactionId: settlement.transactionId?.trim() ?? '',
+        payments: (settlement.payments ?? body.payments ?? []).map(payment => ({
+          paymentMethod: payment.paymentMethod?.trim() ?? '',
+          amount: Number(payment.amount ?? 0),
+          cashReceived: Number(payment.cashReceived ?? 0),
+          changeDue: Number(payment.changeDue ?? 0),
+          qpayInvoiceId: payment.qpayInvoiceId?.trim() ?? '',
+          notes: payment.notes?.trim() ?? '',
+        })),
+      })),
+    });
 
     console.info('[sales:settlement] started', {
       requestId: settlementRequestId || 'legacy',
@@ -1416,6 +1415,30 @@ async function handlePATCH(request: Request) {
         return NextResponse.json({ error: 'total must be greater than zero' }, { status: 400 });
       }
 
+      const editRequestId = settlementRequestId || crypto.randomUUID();
+      const editFingerprint = operationFingerprint({
+        action: 'edit_unpaid',
+        transactionId,
+        room,
+        total,
+        items,
+      });
+      if (getCell(row, 'last_edit_request_id') === editRequestId) {
+        if (getCell(row, 'last_edit_fingerprint') !== editFingerprint) {
+          return NextResponse.json(
+            { error: 'This request ID was already used for different edit data' },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json({
+          success: true,
+          duplicateRequest: true,
+          message: 'Sale updated',
+          transactionId,
+          total: toNumber(row.get('total')),
+        });
+      }
+
       const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
       const inventoryLogSheet = await getOrCreateInventoryLogSheet(doc);
       const inventoryRows = await inventoryLogSheet.getRows();
@@ -1451,30 +1474,36 @@ async function handlePATCH(request: Request) {
           activeSession.businessDate,
         ]);
 
-      if (reversalRows.length > 0 || newInventoryRows.length > 0) {
-        await inventoryLogSheet.addRows([...reversalRows, ...newInventoryRows]);
-      }
-
-      row.set('staff', actorName);
-      row.set('payment_method', 'Байшин/Зочин');
-      row.set('paid_status', 'unpaid');
-      row.set('room_or_guest', room);
-      row.set('subtotal', subtotal);
-      row.set('discount', 0);
-      row.set('total', total);
-      row.set('cash_received', '');
-      row.set('change_due', '');
-      row.set('item_count', items.reduce((sum, item) => sum + item.qty, 0));
-      row.set('item_summary', buildItemSummary(items));
-      row.set('qpay_invoice_id', '');
-      row.set('item_details', serializeSaleItemDetails(items));
-      row.set(
-        'notes',
-        [getCell(row, 'notes'), `Edited ${timestamp} by ${actorName}`]
+      const updates: Record<string, unknown> = {
+        staff: actorName,
+        payment_method: 'Байшин/Зочин',
+        paid_status: 'unpaid',
+        room_or_guest: room,
+        subtotal,
+        discount: 0,
+        total,
+        cash_received: '',
+        change_due: '',
+        item_count: items.reduce((sum, item) => sum + item.qty, 0),
+        item_summary: buildItemSummary(items),
+        qpay_invoice_id: '',
+        item_details: serializeSaleItemDetails(items),
+        notes: [getCell(row, 'notes'), `Edited ${timestamp} by ${actorName}`]
           .filter(Boolean)
           .join(' | '),
+        last_edit_request_id: editRequestId,
+        last_edit_fingerprint: editFingerprint,
+      };
+      const saleValues = salesLogSheet.headerValues.map(
+        header => updates[header] ?? row.get(header) ?? '',
       );
-      await row.save();
+      const inventoryChanges = [...reversalRows, ...newInventoryRows];
+      await executeAtomicBatch(doc, [
+        updateRowRequest(salesLogSheet, row.rowNumber, saleValues),
+        ...(inventoryChanges.length > 0
+          ? [appendRowsRequest(inventoryLogSheet, inventoryChanges)]
+          : []),
+      ]);
       clearCachedReads('sales:');
       clearCachedReads('day:');
 
@@ -1510,6 +1539,13 @@ async function handlePATCH(request: Request) {
       );
     }
 
+    await ensureSettlementSchema(
+      salesLogSheet,
+      paymentsLogSheet,
+      receiptsLogSheet,
+      daySessionSheet,
+    );
+
     const [salesTable, paymentsTable, receiptsTable, daySessionTable] =
       await batchReadSheetTables(doc, [
         { sheet: salesLogSheet, requiredHeaders: SALES_LOG_HEADERS },
@@ -1529,9 +1565,27 @@ async function handlePATCH(request: Request) {
             normalizedClientRequestId,
         )
       : undefined;
+    let resumedReceipt = false;
     if (existingReceipt) {
       const operationStatus = getCell(existingReceipt, 'operation_status');
-      if (operationStatus !== 'complete') {
+      if (operationStatus === 'complete') {
+        console.info('[sales:settlement] replay-complete', {
+          requestId: normalizedClientRequestId,
+          receiptId: getCell(existingReceipt, 'receipt_id'),
+          durationMs: Date.now() - requestStartedAt,
+        });
+        return NextResponse.json({
+          success: true,
+          duplicateRequest: true,
+          receiptId: getCell(existingReceipt, 'receipt_id'),
+          settledAt: getCell(existingReceipt, 'timestamp'),
+          sessionId: getCell(existingReceipt, 'session_id'),
+          businessDate: getCell(existingReceipt, 'business_date'),
+        });
+      }
+
+      const storedFingerprint = getCell(existingReceipt, 'request_fingerprint');
+      if (!storedFingerprint || storedFingerprint !== requestFingerprint) {
         console.warn('[sales:settlement] replay-pending', {
           requestId: normalizedClientRequestId,
           receiptId: getCell(existingReceipt, 'receipt_id'),
@@ -1540,30 +1594,32 @@ async function handlePATCH(request: Request) {
         return NextResponse.json(
           {
             error:
-              'This payment request reached the ledger but did not finish. Check History before retrying.',
+              !storedFingerprint
+                ? 'This legacy pending payment needs manager review before retrying.'
+                : 'This request ID was already used for different payment data. Refresh and retry once.',
             receiptId: getCell(existingReceipt, 'receipt_id'),
           },
           { status: 409 },
         );
       }
-
-      console.info('[sales:settlement] replay-complete', {
+      resumedReceipt = true;
+      console.info('[sales:settlement] resuming-pending', {
         requestId: normalizedClientRequestId,
         receiptId: getCell(existingReceipt, 'receipt_id'),
         durationMs: Date.now() - requestStartedAt,
       });
-      return NextResponse.json({
-        success: true,
-        duplicateRequest: true,
-        receiptId: getCell(existingReceipt, 'receipt_id'),
-        settledAt: getCell(existingReceipt, 'timestamp'),
-        sessionId: getCell(existingReceipt, 'session_id'),
-        businessDate: getCell(existingReceipt, 'business_date'),
-      });
     }
-    const activeSession = requireActiveBusinessSession(daySessionRows);
-    const staleResponse = staleBusinessDayResponse(activeSession.businessDate);
-    if (staleResponse) return staleResponse;
+    const activeSession = resumedReceipt && existingReceipt
+      ? {
+          sessionId: getCell(existingReceipt, 'session_id'),
+          businessDate: getCell(existingReceipt, 'business_date'),
+          openedAt: '',
+        }
+      : requireActiveBusinessSession(daySessionRows);
+    if (!resumedReceipt) {
+      const staleResponse = staleBusinessDayResponse(activeSession.businessDate);
+      if (staleResponse) return staleResponse;
+    }
     const paymentTotals = getPaymentTotals(paymentRows);
 
     const plannedSettlements: Array<{
@@ -1660,7 +1716,9 @@ async function handlePATCH(request: Request) {
       });
     }
 
-    const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
+    const timestamp = resumedReceipt && existingReceipt
+      ? getCell(existingReceipt, 'timestamp')
+      : new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
     const receiptTotal = plannedSettlements.reduce(
       (sum, settlement) => sum + settlement.paymentTotal,
       0,
@@ -1700,18 +1758,24 @@ async function handlePATCH(request: Request) {
         .join(', ')}`,
       client_request_id: normalizedClientRequestId,
       operation_status: 'pending',
+      request_fingerprint: requestFingerprint,
+      operation_error: '',
+      operation_updated_at: operationTimestamp(),
     };
-    const receiptRowNumber = await appendReceiptClaim(
-      doc,
-      receiptsLogSheet,
-      receiptsTable.valuesFor(receiptRecord),
-    );
+    const receiptRowNumber = resumedReceipt && existingReceipt
+      ? existingReceipt.rowNumber
+      : await appendClaimRow(
+          doc,
+          receiptsLogSheet,
+          receiptsTable.valuesFor(receiptRecord),
+        );
     const receiptId = makeUniformReceiptNumber(
       receiptRowNumber,
       activeSession.businessDate,
     );
     receiptRecord.receipt_id = receiptId;
     receiptRecord.operation_status = 'complete';
+    receiptRecord.operation_updated_at = operationTimestamp();
     let paymentLineIndex = 0;
     const paymentRecords = plannedSettlements.flatMap(settlement =>
       settlement.payments.map(payment => {

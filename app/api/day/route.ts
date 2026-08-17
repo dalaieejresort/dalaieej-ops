@@ -10,6 +10,7 @@ import {
   DAY_SESSION_HEADERS,
   getSessionBusinessDate,
   getSessionId,
+  businessDateFromTimestamp,
   rowBelongsToBusinessDate,
 } from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
@@ -26,6 +27,7 @@ type DayPostBody = {
   startingCash?: number;
   countedCash?: number;
   notes?: string;
+  clientRequestId?: string;
 };
 
 type SheetDoc = GoogleSpreadsheet;
@@ -45,6 +47,10 @@ type DayTotals = {
   qpayPaymentTotal: number;
   otherPaymentTotal: number;
   roomChargeTotal: number;
+  currentSalePaymentTotal: number;
+  priorDebtCollectedTotal: number;
+  refundTotal: number;
+  newRoomDebtTotal: number;
   expectedCash: number;
   receiptCount: number;
   firstReceiptId: string;
@@ -99,6 +105,11 @@ const SALES_LOG_HEADERS = [
   'client_request_id',
   'operation_status',
   'receipt_id',
+  'request_fingerprint',
+  'operation_error',
+  'operation_updated_at',
+  'last_edit_request_id',
+  'last_edit_fingerprint',
 ];
 
 function requiredEnv(name: string) {
@@ -292,6 +303,12 @@ function serializeSession(row: SheetRow | null) {
     receiptCount: toNumber(row.get('receipt_count')),
     firstReceiptId: getCell(row, 'first_receipt_id'),
     lastReceiptId: getCell(row, 'last_receipt_id'),
+    currentSalePaymentTotal: toNumber(row.get('current_sale_payment_total')),
+    priorDebtCollectedTotal: toNumber(row.get('prior_debt_collected_total')),
+    refundTotal: toNumber(row.get('refund_total')),
+    newRoomDebtTotal: toNumber(row.get('new_room_debt_total')),
+    clientRequestId: getCell(row, 'client_request_id'),
+    operationStatus: getCell(row, 'operation_status'),
   };
 }
 
@@ -341,6 +358,10 @@ function getDayTotals(
     qpayPaymentTotal: 0,
     otherPaymentTotal: 0,
     roomChargeTotal: 0,
+    currentSalePaymentTotal: 0,
+    priorDebtCollectedTotal: 0,
+    refundTotal: 0,
+    newRoomDebtTotal: 0,
     expectedCash: startingCash,
     receiptCount: 0,
     firstReceiptId: '',
@@ -348,6 +369,12 @@ function getDayTotals(
   };
 
   const paymentTotals = getPaymentTotals(paymentRows);
+  const saleDates = new Map(
+    salesRows.map(row => [
+      getCell(row, 'transaction_id'),
+      getCell(row, 'business_date') || businessDateFromTimestamp(row.get('timestamp')),
+    ]),
+  );
 
   for (const row of daySalesRows) {
     if (getCell(row, 'paid_status').toLowerCase() === 'voided') continue;
@@ -360,10 +387,19 @@ function getDayTotals(
       totals.roomChargeTotal += Math.max(total - (paymentTotals.get(transactionId) ?? 0), 0);
     }
   }
+  totals.newRoomDebtTotal = totals.roomChargeTotal;
 
   for (const row of dayPaymentRows) {
     const amount = toNumber(row.get('amount'));
     totals.paymentTotal += amount;
+
+    if (amount < 0) {
+      totals.refundTotal += Math.abs(amount);
+    } else {
+      const saleDate = saleDates.get(getCell(row, 'transaction_id')) ?? '';
+      if (saleDate === businessDate) totals.currentSalePaymentTotal += amount;
+      else totals.priorDebtCollectedTotal += amount;
+    }
 
     const methodType = classifyPaymentMethod(getCell(row, 'payment_method'));
     if (methodType === 'cash') totals.cashPaymentTotal += amount;
@@ -588,9 +624,16 @@ async function handlePOST(request: Request) {
     const body = (await request.json()) as DayPostBody;
     const action = body.action;
     const requestedBusinessDate = normalizeBusinessDate(body.businessDate);
+    const clientRequestId = body.clientRequestId?.trim() ?? '';
 
     if (action !== 'open' && action !== 'close') {
       return NextResponse.json({ error: 'action must be open or close' }, { status: 400 });
+    }
+    if (!clientRequestId || clientRequestId.length > 128) {
+      return NextResponse.json(
+        { error: 'clientRequestId is required and must be 128 characters or less' },
+        { status: 400 },
+      );
     }
 
     const sessionOrResponse = requireApiSession(
@@ -606,6 +649,33 @@ async function handlePOST(request: Request) {
       salesRows,
       paymentRows,
     } = await getDayContext(requestedBusinessDate);
+    const completedRequestRow = dayRows.find(
+      row =>
+        getCell(row, 'client_request_id') === clientRequestId &&
+        getCell(row, 'operation_status') === 'complete',
+    );
+    if (completedRequestRow) {
+      const completedBusinessDate = getSessionBusinessDate(completedRequestRow);
+      const completedMetrics = getDayMetrics(
+        salesRows,
+        paymentRows,
+        completedBusinessDate,
+        completedRequestRow,
+      );
+      return NextResponse.json({
+        success: true,
+        duplicateRequest: true,
+        message: action === 'close' ? 'Day closed' : 'Day opened',
+        businessDate: completedBusinessDate,
+        activeBusinessDate:
+          getCell(completedRequestRow, 'status').toLowerCase() === 'open'
+            ? completedBusinessDate
+            : todayBusinessDate(),
+        session: serializeSession(completedRequestRow),
+        totals: completedMetrics.totals,
+        itemTotals: completedMetrics.itemTotals,
+      });
+    }
     const activeSession = getActiveSession(dayRows);
     const businessDate = activeSession
       ? getSessionBusinessDate(activeSession)
@@ -677,7 +747,6 @@ async function handlePOST(request: Request) {
         ? startOfBusinessDateTimestamp(businessDate)
         : timestamp;
 
-      const provisionalSessionId = makeUniformControlNumber('SES');
       const [newRow] = await daySheet.addRows([
         {
           business_date: businessDate,
@@ -698,18 +767,20 @@ async function handlePOST(request: Request) {
           room_charge_total: 0,
           sales_total: 0,
           notes: body.notes || '',
-          session_id: provisionalSessionId,
+          session_id: makeUniformControlNumber('SES'),
           receipt_count: 0,
           first_receipt_id: '',
           last_receipt_id: '',
+          current_sale_payment_total: 0,
+          prior_debt_collected_total: 0,
+          refund_total: 0,
+          new_room_debt_total: 0,
+          client_request_id: clientRequestId,
+          operation_status: 'complete',
+          operation_error: '',
+          operation_updated_at: new Date().toISOString(),
         },
       ]);
-      const sessionId = makeUniformSessionNumber(
-        newRow.rowNumber,
-        businessDate,
-      );
-      newRow.set('session_id', sessionId);
-      await newRow.save();
       clearCachedReads('day:');
       clearCachedReads('sales:');
       clearCachedReads('business-date:');
@@ -757,6 +828,14 @@ async function handlePOST(request: Request) {
     activeSession.set('receipt_count', totals.receiptCount);
     activeSession.set('first_receipt_id', totals.firstReceiptId);
     activeSession.set('last_receipt_id', totals.lastReceiptId);
+    activeSession.set('current_sale_payment_total', totals.currentSalePaymentTotal);
+    activeSession.set('prior_debt_collected_total', totals.priorDebtCollectedTotal);
+    activeSession.set('refund_total', totals.refundTotal);
+    activeSession.set('new_room_debt_total', totals.newRoomDebtTotal);
+    activeSession.set('client_request_id', clientRequestId);
+    activeSession.set('operation_status', 'complete');
+    activeSession.set('operation_error', '');
+    activeSession.set('operation_updated_at', new Date().toISOString());
     activeSession.set('notes', body.notes || '');
     await activeSession.save();
     clearCachedReads('day:');

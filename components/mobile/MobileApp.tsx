@@ -21,6 +21,10 @@ type DayTotals = {
   qpayPaymentTotal: number;
   otherPaymentTotal: number;
   roomChargeTotal: number;
+  currentSalePaymentTotal: number;
+  priorDebtCollectedTotal: number;
+  refundTotal: number;
+  newRoomDebtTotal: number;
   expectedCash: number;
 };
 
@@ -96,6 +100,10 @@ const EMPTY_TOTALS: DayTotals = {
   qpayPaymentTotal: 0,
   otherPaymentTotal: 0,
   roomChargeTotal: 0,
+  currentSalePaymentTotal: 0,
+  priorDebtCollectedTotal: 0,
+  refundTotal: 0,
+  newRoomDebtTotal: 0,
   expectedCash: 0,
 };
 

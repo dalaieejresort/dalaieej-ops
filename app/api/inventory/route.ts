@@ -24,6 +24,15 @@ import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
 import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
+import {
+  operationFingerprint,
+  operationTimestamp,
+} from '@/lib/server/operation-controls';
+import {
+  appendRowsRequest,
+  executeAtomicBatch,
+  updateRowRequest,
+} from '@/lib/server/sheets-atomic';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -58,6 +67,11 @@ type InventoryPaymentInput = {
 type SheetDoc = GoogleSpreadsheet;
 
 const INVENTORY_READ_CACHE_TTL_MS = 30000;
+const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cachedSpreadsheet:
+  | { expiresAt: number; promise: Promise<SheetDoc> }
+  | undefined;
 
 const CATALOG_SHEET_TITLES = [
   process.env.GOOGLE_CATALOG_SHEET_TITLE,
@@ -119,6 +133,11 @@ const SALES_LOG_HEADERS = [
   'client_request_id',
   'operation_status',
   'receipt_id',
+  'request_fingerprint',
+  'operation_error',
+  'operation_updated_at',
+  'last_edit_request_id',
+  'last_edit_fingerprint',
 ];
 
 const INVENTORY_LOG_HEADERS = [
@@ -134,6 +153,11 @@ const INVENTORY_LOG_HEADERS = [
   'Room Number',
   'Session ID',
   'Business Date',
+  'Adjustment Reason',
+  'Client Request ID',
+  'Operation Status',
+  'Request Fingerprint',
+  'Operation Updated At',
 ];
 
 const CATALOG_COLUMNS = {
@@ -214,9 +238,32 @@ function createDoc(): SheetDoc {
 }
 
 async function loadSpreadsheet() {
-  const doc = createDoc();
-  await doc.loadInfo();
-  return doc;
+  const now = Date.now();
+  if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
+    return cachedSpreadsheet.promise;
+  }
+  const promise = (async () => {
+    const doc = createDoc();
+    await doc.loadInfo();
+    return doc;
+  })();
+  cachedSpreadsheet = {
+    expiresAt: now + SHEET_METADATA_CACHE_TTL_MS,
+    promise,
+  };
+  try {
+    return await promise;
+  } catch (error) {
+    if (cachedSpreadsheet?.promise === promise) cachedSpreadsheet = undefined;
+    throw error;
+  }
+}
+
+function valuesFor(
+  sheet: GoogleSpreadsheetWorksheet,
+  record: Record<string, unknown>,
+) {
+  return sheet.headerValues.map(header => record[header] ?? '');
 }
 
 function findSheet(doc: SheetDoc, titles: string[], purpose: string) {
@@ -516,14 +563,18 @@ async function handlePOST(request: Request) {
           DAY_SESSION_HEADERS,
         ),
       ]);
-    const [daySessionRows, existingSalesRows] = await Promise.all([
+    const [daySessionRows, existingSalesRows, existingReceiptRows] = await Promise.all([
       daySessionSheet.getRows(),
       clientRequestId ? salesLogSheet.getRows() : Promise.resolve([]),
+      clientRequestId ? receiptsLogSheet.getRows() : Promise.resolve([]),
     ]);
-    const activeSession = requireActiveBusinessSession(daySessionRows);
-    const staleResponse = staleBusinessDayResponse(activeSession.businessDate);
-    if (staleResponse) return staleResponse;
     const normalizedClientRequestId = String(clientRequestId ?? '').trim();
+    if (!normalizedClientRequestId || normalizedClientRequestId.length > 128) {
+      return NextResponse.json(
+        { error: 'clientRequestId is required and must be 128 characters or less' },
+        { status: 400 },
+      );
+    }
     const existingSale = normalizedClientRequestId
       ? existingSalesRows.find(
           row =>
@@ -532,47 +583,9 @@ async function handlePOST(request: Request) {
         )
       : undefined;
 
-    if (existingSale) {
-      const existingOrderId = String(
-        existingSale.get('transaction_id') ?? '',
-      ).trim();
-      const existingReceiptId = String(
-        existingSale.get('receipt_id') ?? '',
-      ).trim();
-      const operationStatus = String(
-        existingSale.get('operation_status') ?? '',
-      ).trim();
-
-      if (operationStatus !== 'complete') {
-        return NextResponse.json(
-          {
-            error:
-              'This order request already reached the ledger but did not finish. Check History before retrying.',
-            orderId: existingOrderId,
-          },
-          { status: 409 },
-        );
-      }
-
-      return NextResponse.json({
-        success: true,
-        duplicateRequest: true,
-        transactionId: existingOrderId,
-        orderId: existingOrderId,
-        receiptId: existingReceiptId || undefined,
-        sessionId: String(existingSale.get('session_id') ?? '').trim(),
-        businessDate: String(
-          existingSale.get('business_date') ?? '',
-        ).trim(),
-        paidAt: existingReceiptId
-          ? String(existingSale.get('timestamp') ?? '').trim()
-          : undefined,
-      });
-    }
-
     // Lock the timestamp to Ulaanbaatar time regardless of where Vercel's servers are
     const saleCreatedAt = new Date();
-    const timestamp = saleCreatedAt.toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
+    let timestamp = saleCreatedAt.toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
     let transactionId = makeUniformControlNumber('ORD', saleCreatedAt);
     const saleSubtotal = items.reduce(
       (sum, item) => sum + (item.unitPrice ?? 0) * (item.qty ?? 1),
@@ -612,6 +625,74 @@ async function handlePOST(request: Request) {
         { error: 'Partial unpaid sales must leave a remaining balance' },
         { status: 400 },
       );
+    }
+
+    const requestFingerprint = operationFingerprint({
+      action: 'sale',
+      items: items.map(item => ({
+        sku: item.sku?.trim() ?? '',
+        name: item.name?.trim() ?? '',
+        category: item.category?.trim() ?? '',
+        qty: Number(item.qty ?? 1),
+        unitPrice: Number(item.unitPrice ?? 0),
+        priceMode: item.priceMode ?? '',
+      })),
+      room: room?.trim() ?? '',
+      paidStatus: normalizedPaidStatus,
+      total: Number(saleTotal),
+      payments: inventoryPayments,
+    });
+    let resumedSale = false;
+    if (existingSale) {
+      const existingOrderId = String(existingSale.get('transaction_id') ?? '').trim();
+      const existingReceiptId = String(existingSale.get('receipt_id') ?? '').trim();
+      const operationStatus = String(existingSale.get('operation_status') ?? '').trim();
+      if (operationStatus === 'complete') {
+        return NextResponse.json({
+          success: true,
+          duplicateRequest: true,
+          transactionId: existingOrderId,
+          orderId: existingOrderId,
+          receiptId: existingReceiptId || undefined,
+          sessionId: String(existingSale.get('session_id') ?? '').trim(),
+          businessDate: String(existingSale.get('business_date') ?? '').trim(),
+          paidAt: existingReceiptId
+            ? String(existingSale.get('timestamp') ?? '').trim()
+            : undefined,
+        });
+      }
+      const storedFingerprint = String(
+        existingSale.get('request_fingerprint') ?? '',
+      ).trim();
+      if (!storedFingerprint || storedFingerprint !== requestFingerprint) {
+        return NextResponse.json(
+          {
+            error: !storedFingerprint
+              ? 'This legacy pending order needs manager review before retrying.'
+              : 'This request ID was already used for different order data. Refresh and retry once.',
+            orderId: existingOrderId,
+          },
+          { status: 409 },
+        );
+      }
+      resumedSale = true;
+      timestamp = String(existingSale.get('timestamp') ?? timestamp).trim();
+      transactionId = makeUniformOrderNumber(
+        existingSale.rowNumber,
+        String(existingSale.get('business_date') ?? '').trim(),
+      );
+    }
+
+    const activeSession = resumedSale && existingSale
+      ? {
+          sessionId: String(existingSale.get('session_id') ?? '').trim(),
+          businessDate: String(existingSale.get('business_date') ?? '').trim(),
+          openedAt: '',
+        }
+      : requireActiveBusinessSession(daySessionRows);
+    if (!resumedSale) {
+      const staleResponse = staleBusinessDayResponse(activeSession.businessDate);
+      if (staleResponse) return staleResponse;
     }
 
     const paymentMethod =
@@ -679,29 +760,29 @@ async function handlePOST(request: Request) {
       client_request_id: normalizedClientRequestId,
       operation_status: 'pending',
       receipt_id: '',
+      request_fingerprint: requestFingerprint,
+      operation_error: '',
+      operation_updated_at: operationTimestamp(),
     };
 
     // The permanent order number uses the append-only Sales_Log row number.
-    const [createdSaleRow] = await salesLogSheet.addRows([salesRow]);
+    const createdSaleRow = existingSale ?? (await salesLogSheet.addRows([salesRow]))[0];
     transactionId = makeUniformOrderNumber(
       createdSaleRow.rowNumber,
       activeSession.businessDate,
     );
-    createdSaleRow.set('transaction_id', transactionId);
-    await createdSaleRow.save();
+    salesRow.transaction_id = transactionId;
     newRows.forEach(row => {
       row[0] = transactionId;
     });
     let receiptId: string | undefined;
-    let receiptRowToFinalize:
-      | {
-          set: (columnName: string, value: unknown) => void;
-          save: () => Promise<void>;
-        }
-      | undefined;
+    let receiptRowNumber: number | undefined;
+    let receiptRecord: Record<string, string | number> | undefined;
     if (shouldAppendPayment && inventoryPayments.length > 0) {
-      const [createdReceiptRow] = await receiptsLogSheet.addRows([
-        {
+      const existingReceipt = existingReceiptRows.find(
+        row => String(row.get('client_request_id') ?? '').trim() === normalizedClientRequestId,
+      );
+      receiptRecord = {
           receipt_id: makeUniformControlNumber('RCP'),
           timestamp,
           session_id: activeSession.sessionId,
@@ -721,15 +802,19 @@ async function handlePOST(request: Request) {
               : `Payment for ${transactionId}`,
           client_request_id: normalizedClientRequestId,
           operation_status: 'pending',
-        },
-      ]);
+          request_fingerprint: requestFingerprint,
+          operation_error: '',
+          operation_updated_at: operationTimestamp(),
+      };
+      const createdReceiptRow = existingReceipt ?? (await receiptsLogSheet.addRows([
+        receiptRecord,
+      ]))[0];
+      receiptRowNumber = createdReceiptRow.rowNumber;
       receiptId = makeUniformReceiptNumber(
         createdReceiptRow.rowNumber,
         activeSession.businessDate,
       );
-      createdReceiptRow.set('receipt_id', receiptId);
-      await createdReceiptRow.save();
-      receiptRowToFinalize = createdReceiptRow;
+      receiptRecord.receipt_id = receiptId;
     }
     const paymentRows = inventoryPayments.map((payment, index) => ({
       payment_id: receiptId
@@ -749,20 +834,38 @@ async function handlePOST(request: Request) {
       business_date: activeSession.businessDate,
     }));
 
-    // Fire the linked inventory and payment records into Google Sheets.
-    await Promise.all([
-      newRows.length > 0 ? logSheet.addRows(newRows) : Promise.resolve(),
-      shouldAppendPayment && paymentRows.length > 0
-        ? paymentsLogSheet.addRows(paymentRows)
-        : Promise.resolve([]),
-    ]);
-    if (receiptRowToFinalize) {
-      receiptRowToFinalize.set('operation_status', 'complete');
-      await receiptRowToFinalize.save();
+    salesRow.receipt_id = receiptId ?? '';
+    salesRow.operation_status = 'complete';
+    salesRow.operation_updated_at = operationTimestamp();
+    if (receiptRecord) {
+      receiptRecord.operation_status = 'complete';
+      receiptRecord.operation_updated_at = operationTimestamp();
     }
-    createdSaleRow.set('receipt_id', receiptId ?? '');
-    createdSaleRow.set('operation_status', 'complete');
-    await createdSaleRow.save();
+    await executeAtomicBatch(doc, [
+      updateRowRequest(
+        salesLogSheet,
+        createdSaleRow.rowNumber,
+        valuesFor(salesLogSheet, salesRow),
+      ),
+      ...(receiptRecord && receiptRowNumber
+        ? [
+            updateRowRequest(
+              receiptsLogSheet,
+              receiptRowNumber,
+              valuesFor(receiptsLogSheet, receiptRecord),
+            ),
+          ]
+        : []),
+      ...(newRows.length > 0 ? [appendRowsRequest(logSheet, newRows)] : []),
+      ...(shouldAppendPayment && paymentRows.length > 0
+        ? [
+            appendRowsRequest(
+              paymentsLogSheet,
+              paymentRows.map(record => valuesFor(paymentsLogSheet, record)),
+            ),
+          ]
+        : []),
+    ]);
     clearCachedReads('day:');
     clearCachedReads('sales:');
     clearCachedReads('inventory:');

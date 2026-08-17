@@ -29,6 +29,9 @@ export const RECEIPT_LOG_HEADERS = [
   'notes',
   'client_request_id',
   'operation_status',
+  'request_fingerprint',
+  'operation_error',
+  'operation_updated_at',
 ];
 
 export function makeUniformControlNumber(
