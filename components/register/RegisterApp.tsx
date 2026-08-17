@@ -2366,6 +2366,10 @@ export function RegisterApp({
     (sum, line) => sum + line.price * line.quantity,
     0,
   );
+  const cartItemCount = cart.reduce(
+    (sum, line) => sum + line.quantity,
+    0,
+  );
   const isEditingCharge = Boolean(editingCharge);
   const selectedPayment =
     PAYMENT_METHODS.find((method) => method.id === paymentMethod) ??
@@ -4096,17 +4100,17 @@ export function RegisterApp({
 
   return (
     <div className={`${styles.dayansoftPos} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
-      <header className="flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-4 py-3">
+      <header className="sticky top-0 z-30 flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-3 py-3 md:static md:px-4">
         <div>
           <h1 className="text-lg font-bold leading-tight">Dalai Eej POS</h1>
           <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
         </div>
 
-        <div className="flex rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-1">
+        <div className="order-3 flex w-full max-w-full overflow-x-auto rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-1 md:order-none md:w-auto">
           <button
             type="button"
             onClick={() => selectRegisterMode("sale")}
-            className={`h-9 rounded px-3 text-sm font-extrabold ${
+            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "sale"
                 ? "bg-[#111827] text-white"
                 : "text-[#374151] hover:bg-white"
@@ -4117,7 +4121,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("charges")}
-            className={`h-9 rounded px-3 text-sm font-extrabold ${
+            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "charges"
                 ? "bg-[#111827] text-white"
                 : "text-[#374151] hover:bg-white"
@@ -4129,7 +4133,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("history")}
-            className={`h-9 rounded px-3 text-sm font-extrabold ${
+            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "history"
                 ? "bg-[#111827] text-white"
                 : "text-[#374151] hover:bg-white"
@@ -4141,7 +4145,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("day-close")}
-            className={`h-9 rounded px-3 text-sm font-extrabold ${
+            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "day-close"
                 ? "bg-[#111827] text-white"
                 : "text-[#374151] hover:bg-white"
@@ -4151,7 +4155,7 @@ export function RegisterApp({
           </button>
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-2 md:order-none">
           <div
             className={`flex h-10 items-center rounded-md border px-3 text-xs font-black ${
               dayOpen
@@ -4191,7 +4195,7 @@ export function RegisterApp({
               Буцаалт
             </button>
           )}
-          <span className="flex h-10 items-center rounded-md border border-[#cbd5e1] bg-[#f8fafc] px-3 text-sm font-black text-[#334155]">
+          <span className="hidden h-10 items-center rounded-md border border-[#cbd5e1] bg-[#f8fafc] px-3 text-sm font-black text-[#334155] sm:flex">
             {staffName}
           </span>
           <button
@@ -4208,7 +4212,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
+            className="hidden h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc] sm:block"
           >
             {isFullscreen ? "Цонхтой" : "Бүтэн дэлгэц"}
           </button>
@@ -4216,7 +4220,7 @@ export function RegisterApp({
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
-        <section className="flex min-h-[360px] flex-col border-r border-[#d1d5db] lg:min-h-0">
+        <section className="flex min-h-[360px] max-h-[70dvh] flex-col border-r border-[#d1d5db] lg:min-h-0 lg:max-h-none">
           {registerMode === "day-close" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
@@ -4843,7 +4847,10 @@ export function RegisterApp({
           )}
         </section>
 
-        <aside className="flex min-h-[420px] flex-col bg-white">
+        <aside
+          id="register-cart"
+          className="flex min-h-[420px] scroll-mt-40 flex-col bg-white pb-20 lg:scroll-mt-0 lg:pb-0"
+        >
           {registerMode === "day-close" ? (
             <>
               <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
@@ -5993,6 +6000,31 @@ export function RegisterApp({
           )}
         </aside>
       </main>
+
+      {registerMode === "sale" &&
+        cart.length > 0 &&
+        !voidModalOpen &&
+        !dayModalMode && (
+          <div className="fixed inset-x-3 bottom-3 z-40 lg:hidden">
+            <button
+              type="button"
+              aria-controls="register-cart"
+              onClick={() =>
+                document
+                  .getElementById("register-cart")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+              className="flex min-h-14 w-full items-center justify-between gap-3 rounded-xl border border-[#111827] bg-[#111827] px-4 text-left text-white shadow-xl"
+            >
+              <span className="text-sm font-black">
+                Сагс харах · {formatNumber(cartItemCount)} бараа
+              </span>
+              <span className="shrink-0 text-base font-black">
+                {formatMNT(cartTotal)}
+              </span>
+            </button>
+          </div>
+        )}
 
       {voidModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
