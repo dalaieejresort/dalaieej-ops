@@ -72,7 +72,7 @@ function getAccounts(): StoredAccount[] {
     throw new Error("OPS_AUTH_ACCOUNTS must be an array");
   }
 
-  return parsed.map((value, index) => {
+  const accounts = parsed.map((value, index) => {
     if (!value || typeof value !== "object") {
       throw new Error(`OPS_AUTH_ACCOUNTS[${index}] is invalid`);
     }
@@ -96,6 +96,43 @@ function getAccounts(): StoredAccount[] {
       passwordHash: account.passwordHash,
     };
   });
+
+  const kitchenRaw = process.env.OPS_KITCHEN_ACCOUNT?.trim();
+  if (!kitchenRaw) return accounts;
+
+  let kitchenValue: unknown;
+  try {
+    kitchenValue = JSON.parse(kitchenRaw);
+  } catch {
+    throw new Error("OPS_KITCHEN_ACCOUNT must be valid JSON");
+  }
+  if (!kitchenValue || typeof kitchenValue !== "object") {
+    throw new Error("OPS_KITCHEN_ACCOUNT is invalid");
+  }
+  const kitchenAccount = kitchenValue as Partial<StoredAccount>;
+  if (
+    typeof kitchenAccount.username !== "string" ||
+    typeof kitchenAccount.displayName !== "string" ||
+    kitchenAccount.role !== "kitchen" ||
+    typeof kitchenAccount.salt !== "string" ||
+    typeof kitchenAccount.passwordHash !== "string"
+  ) {
+    throw new Error("OPS_KITCHEN_ACCOUNT is incomplete");
+  }
+  const normalizedKitchenAccount: StoredAccount = {
+    username: kitchenAccount.username.trim().toLowerCase(),
+    displayName: kitchenAccount.displayName.trim(),
+    role: "kitchen",
+    salt: kitchenAccount.salt,
+    passwordHash: kitchenAccount.passwordHash,
+  };
+
+  return [
+    ...accounts.filter(
+      (account) => account.username !== normalizedKitchenAccount.username,
+    ),
+    normalizedKitchenAccount,
+  ];
 }
 
 function encode(value: string | Buffer) {
