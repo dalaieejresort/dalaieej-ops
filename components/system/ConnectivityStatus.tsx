@@ -75,8 +75,11 @@ export function ConnectivityStatus() {
 
   if (state === "healthy") {
     return (
-      <div className="fixed bottom-3 left-3 z-[110] rounded-lg border border-[#bbf7d0] bg-white/95 px-3 py-2 text-xs font-black text-[#047857] shadow-md backdrop-blur print:hidden">
-        Sheets холбогдсон · {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })}
+      <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-2 z-45 rounded-lg border border-[#bbf7d0] bg-white/95 px-2.5 py-2 text-xs font-black text-[#047857] shadow-md backdrop-blur print:hidden md:bottom-3 md:left-3 md:z-[110] md:px-3">
+        <span className="md:hidden">Sheets ✓</span>
+        <span className="hidden md:inline">
+          Sheets холбогдсон · {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })}
+        </span>
       </div>
     );
   }

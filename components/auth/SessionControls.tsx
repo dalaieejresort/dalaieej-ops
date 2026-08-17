@@ -27,9 +27,10 @@ export function SessionControls({
   }
 
   return (
-    <div className="fixed bottom-3 right-3 z-[120] flex items-center gap-2 rounded-xl border border-[#cbd5e1] bg-white/95 px-3 py-2 text-xs shadow-lg backdrop-blur print:hidden">
-      <span className="max-w-36 truncate font-black text-[#334155]">
-        {displayName} · {ROLE_LABELS[role]}
+    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-2 z-45 flex items-center gap-1.5 rounded-xl border border-[#cbd5e1] bg-white/95 px-2 py-1.5 text-xs shadow-lg backdrop-blur print:hidden md:bottom-3 md:right-3 md:z-[120] md:gap-2 md:px-3 md:py-2">
+      <span className="max-w-24 truncate font-black text-[#334155] sm:max-w-36">
+        <span className="md:hidden">{displayName}</span>
+        <span className="hidden md:inline">{displayName} · {ROLE_LABELS[role]}</span>
       </span>
       <button
         type="button"
@@ -40,7 +41,7 @@ export function SessionControls({
           router.replace("/login");
           router.refresh();
         }}
-        className="rounded-lg border border-[#cbd5e1] px-2 py-1 font-black hover:bg-[#f1f5f9] disabled:opacity-50"
+        className="min-h-8 rounded-lg border border-[#cbd5e1] px-2 py-1 font-black hover:bg-[#f1f5f9] disabled:opacity-50"
       >
         Гарах
       </button>

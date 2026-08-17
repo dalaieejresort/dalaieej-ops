@@ -4225,7 +4225,7 @@ export function RegisterApp({
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
-        <section className="flex h-[calc(100dvh-11rem)] min-h-[420px] flex-col border-r border-[#d1d5db] pb-16 md:h-auto md:min-h-[360px] md:max-h-[70dvh] md:pb-0 lg:min-h-0 lg:max-h-none">
+        <section className="flex h-[calc(100dvh-11rem)] min-h-[420px] flex-col border-r border-[#d1d5db] md:h-auto md:min-h-[360px] md:max-h-[70dvh] lg:min-h-0 lg:max-h-none">
           {registerMode === "day-close" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
@@ -4246,7 +4246,7 @@ export function RegisterApp({
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="min-h-0 flex-1 overflow-y-auto p-4 pb-24 md:pb-4">
                 {!dayOpen ? (
                   <div className="flex min-h-64 items-center justify-center rounded-md border border-dashed border-[#cbd5e1] bg-white px-6 text-center">
                     <div>
@@ -4501,7 +4501,7 @@ export function RegisterApp({
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 md:pb-3">
                 {catalogStatus === "error" && (
                   <div className="mb-3 rounded-md border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-sm font-medium text-[#b91c1c]">
                     Каталог шинэчлэгдсэнгүй: {catalogMessage}
@@ -4640,7 +4640,7 @@ export function RegisterApp({
                 </p>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 md:pb-3">
                 {chargesStatus === "loading" ? (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                     {Array.from({ length: 6 }).map((_, index) => (
@@ -4778,7 +4778,7 @@ export function RegisterApp({
                 </p>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 md:pb-3">
                 {historyStatus === "loading" ? (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                     {Array.from({ length: 6 }).map((_, index) => (
@@ -4854,12 +4854,12 @@ export function RegisterApp({
 
         <aside
           id="register-cart"
-          className={`min-h-[420px] flex-col bg-white pb-20 md:static md:inset-auto md:z-auto md:flex md:h-auto md:pb-0 ${
+          className={`min-h-[420px] flex-col bg-white md:static md:inset-auto md:z-auto md:flex md:h-auto ${
             registerMode === "sale"
               ? mobileCartOpen
-                ? "fixed inset-0 z-50 flex h-dvh"
+                ? "fixed inset-0 z-50 flex h-dvh pb-[env(safe-area-inset-bottom)]"
                 : "hidden"
-              : "flex"
+              : "mb-20 flex md:mb-0"
           }`}
         >
           {registerMode === "day-close" ? (
@@ -6025,7 +6025,7 @@ export function RegisterApp({
       {!voidModalOpen && !dayModalMode ? (
         <nav
           aria-label="Гар утасны үндсэн цэс"
-          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#d1d5db] bg-white/95 px-1 pb-1 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:hidden"
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#d1d5db] bg-white/95 px-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:hidden"
         >
           {([
             ["sale", "+", "Зарах"],
