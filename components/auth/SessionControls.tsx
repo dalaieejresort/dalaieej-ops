@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { OpsRole } from "@/lib/auth-types";
 
 const ROLE_LABELS: Record<OpsRole, string> = {
+  kitchen: "Гал тогоо",
   waiter: "Зөөгч",
   cashier: "Кассчин",
   manager: "Менежер",
@@ -22,7 +23,13 @@ export function SessionControls({
   const pathname = usePathname();
   const [submitting, setSubmitting] = useState(false);
 
-  if (pathname === "/login" || pathname === "/waiter" || role === "waiter") {
+  if (
+    pathname === "/login" ||
+    pathname === "/waiter" ||
+    pathname === "/kitchen" ||
+    role === "waiter" ||
+    role === "kitchen"
+  ) {
     return null;
   }
 

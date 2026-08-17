@@ -34,6 +34,7 @@ import {
   executeAtomicBatch,
   updateRowRequest,
 } from '@/lib/server/sheets-atomic';
+import { syncKitchenOrderSafely } from '@/lib/server/kitchen-queue';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -1440,6 +1441,13 @@ async function handlePATCH(request: Request) {
             { status: 409 },
           );
         }
+        await syncKitchenOrderSafely({
+          orderId: transactionId,
+          businessDate: activeSession.businessDate,
+          roomOrGuest: room,
+          staff: actorName,
+          items,
+        });
         return NextResponse.json({
           success: true,
           duplicateRequest: true,
@@ -1516,6 +1524,13 @@ async function handlePATCH(request: Request) {
       ]);
       clearCachedReads('sales:');
       clearCachedReads('day:');
+      await syncKitchenOrderSafely({
+        orderId: transactionId,
+        businessDate: activeSession.businessDate,
+        roomOrGuest: room,
+        staff: actorName,
+        items,
+      });
 
       return NextResponse.json({
         success: true,

@@ -32,6 +32,7 @@ type StoredAccount = {
 };
 
 const ROLE_RANK: Record<OpsRole, number> = {
+  kitchen: 0,
   waiter: 0,
   cashier: 1,
   manager: 2,
@@ -40,6 +41,7 @@ const ROLE_RANK: Record<OpsRole, number> = {
 
 function isRole(value: unknown): value is OpsRole {
   return (
+    value === "kitchen" ||
     value === "waiter" ||
     value === "cashier" ||
     value === "manager" ||
@@ -200,16 +202,24 @@ export async function getServerSession() {
 }
 
 export function hasMinimumRole(session: OpsSession, minimumRole: OpsRole) {
+  if (minimumRole === "kitchen") {
+    return (
+      session.role === "kitchen" ||
+      session.role === "manager" ||
+      session.role === "owner"
+    );
+  }
+  if (session.role === "kitchen") return false;
   return ROLE_RANK[session.role] >= ROLE_RANK[minimumRole];
 }
 
 export async function requirePageSession(
   nextPath: string,
-  minimumRole: OpsRole = "cashier",
+  minimumRole: OpsRole | "any" = "cashier",
 ) {
   const session = await getServerSession();
   if (!session) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
-  if (!hasMinimumRole(session, minimumRole)) redirect("/");
+  if (minimumRole !== "any" && !hasMinimumRole(session, minimumRole)) redirect("/");
   return session;
 }
 

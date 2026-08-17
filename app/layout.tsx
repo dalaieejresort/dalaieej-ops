@@ -42,7 +42,7 @@ export default async function RootLayout({
   return (
     <html lang="mn" className="h-full antialiased">
       <body className="min-h-full flex flex-col font-sans">
-        <ConnectivityStatus />
+        <ConnectivityStatus role={session?.role} />
         {children}
         {session && (
           <SessionControls displayName={session.displayName} role={session.role} />

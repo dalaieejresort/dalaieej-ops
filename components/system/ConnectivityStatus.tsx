@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { OpsRole } from "@/lib/auth-types";
 
 type ConnectionState =
   | "checking"
@@ -20,7 +21,7 @@ function statusMessage(state: ConnectionState) {
   return "";
 }
 
-export function ConnectivityStatus() {
+export function ConnectivityStatus({ role }: { role?: OpsRole }) {
   const [state, setState] = useState<ConnectionState>("checking");
   const [lastHealthyAt, setLastHealthyAt] = useState<Date | null>(null);
 
@@ -74,6 +75,7 @@ export function ConnectivityStatus() {
   }, [checkHealth]);
 
   if (state === "healthy") {
+    if (role === "kitchen") return null;
     return (
       <div className="fixed bottom-3 left-3 z-[110] hidden rounded-lg border border-[#bbf7d0] bg-white/95 px-3 py-2 text-xs font-black text-[#047857] shadow-md backdrop-blur print:hidden md:block">
         Sheets холбогдсон · {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })}

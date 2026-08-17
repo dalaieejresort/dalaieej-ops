@@ -33,6 +33,7 @@ import {
   executeAtomicBatch,
   updateRowRequest,
 } from '@/lib/server/sheets-atomic';
+import { syncKitchenOrderSafely } from '@/lib/server/kitchen-queue';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -670,6 +671,13 @@ async function handlePOST(request: Request) {
       const existingReceiptId = String(existingSale.get('receipt_id') ?? '').trim();
       const operationStatus = String(existingSale.get('operation_status') ?? '').trim();
       if (operationStatus === 'complete') {
+        await syncKitchenOrderSafely({
+          orderId: existingOrderId,
+          businessDate: String(existingSale.get('business_date') ?? '').trim(),
+          roomOrGuest: String(existingSale.get('room_or_guest') ?? '').trim(),
+          staff: String(existingSale.get('staff') ?? staffName).trim(),
+          items,
+        });
         return NextResponse.json({
           success: true,
           duplicateRequest: true,
@@ -891,6 +899,14 @@ async function handlePOST(request: Request) {
     clearCachedReads('day:');
     clearCachedReads('sales:');
     clearCachedReads('inventory:');
+    await syncKitchenOrderSafely({
+      orderId: transactionId,
+      businessDate: activeSession.businessDate,
+      roomOrGuest: room,
+      staff: staffName || 'Staff',
+      items,
+      createdAt: saleCreatedAt.toISOString(),
+    });
 
     return NextResponse.json({
       success: true,

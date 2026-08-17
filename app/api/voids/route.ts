@@ -25,6 +25,7 @@ import {
   executeAtomicBatch,
   updateRowRequest,
 } from '@/lib/server/sheets-atomic';
+import { removeKitchenOrderSafely } from '@/lib/server/kitchen-queue';
 
 type VoidSaleBody = {
   transactionId?: string;
@@ -616,6 +617,7 @@ async function handlePOST(request: Request) {
       row => getCell(row, 'client_request_id') === clientRequestId,
     );
     if (existingVoid && getCell(existingVoid, 'operation_status') === 'complete') {
+      await removeKitchenOrderSafely(transactionId);
       return NextResponse.json({
         success: true,
         duplicateRequest: true,
@@ -767,6 +769,7 @@ async function handlePOST(request: Request) {
     clearCachedReads('sales:');
     clearCachedReads('day:');
     clearCachedReads('inventory:');
+    await removeKitchenOrderSafely(transactionId);
 
     return NextResponse.json({
       success: true,
