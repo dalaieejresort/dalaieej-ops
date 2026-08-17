@@ -62,8 +62,13 @@ type DayItemTotal = {
   quantity: number;
 };
 
-const DAY_READ_CACHE_TTL_MS = 10000;
-const DAY_SESSION_READ_CACHE_TTL_MS = 5000;
+const DAY_READ_CACHE_TTL_MS = 60000;
+const DAY_SESSION_READ_CACHE_TTL_MS = 30000;
+const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cachedSpreadsheet:
+  | { expiresAt: number; promise: Promise<SheetDoc> }
+  | undefined;
 
 const DAY_SESSION_SHEET_TITLES = [
   process.env.GOOGLE_DAY_SESSION_SHEET_TITLE,
@@ -147,9 +152,98 @@ function createDoc(): SheetDoc {
 }
 
 async function loadSpreadsheet() {
-  const doc = createDoc();
-  await doc.loadInfo();
-  return doc;
+  const now = Date.now();
+  if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
+    return cachedSpreadsheet.promise;
+  }
+  const promise = (async () => {
+    const doc = createDoc();
+    await doc.loadInfo();
+    return doc;
+  })();
+  cachedSpreadsheet = {
+    expiresAt: now + SHEET_METADATA_CACHE_TTL_MS,
+    promise,
+  };
+  try {
+    return await promise;
+  } catch (error) {
+    if (cachedSpreadsheet?.promise === promise) cachedSpreadsheet = undefined;
+    throw error;
+  }
+}
+
+function findExistingSheet(doc: SheetDoc, titles: string[]) {
+  return titles.map(title => doc.sheetsByTitle[title]).find(Boolean) ?? null;
+}
+
+function rowsFromValues(values: unknown[][]): SheetRow[] {
+  const headers = (values[0] ?? []).map(value => String(value ?? '').trim());
+  return values.slice(1).map((rowValues, index) => ({
+    rowNumber: index + 2,
+    get: (columnName: string) => {
+      const columnIndex = headers.indexOf(columnName);
+      return columnIndex >= 0 ? rowValues[columnIndex] : undefined;
+    },
+    set: () => {
+      throw new Error('Read-only Google Sheets row');
+    },
+    save: async () => {
+      throw new Error('Read-only Google Sheets row');
+    },
+  }));
+}
+
+async function batchReadRows(
+  doc: SheetDoc,
+  sheets: Array<NonNullable<ReturnType<typeof findExistingSheet>>>,
+) {
+  const rangeQuery = sheets
+    .map(sheet => `ranges=${encodeURIComponent(`${sheet.a1SheetName}!A:ZZ`)}`)
+    .join('&');
+  const response = await doc.sheetsApi.get(`values:batchGet?${rangeQuery}`, {
+    searchParams: {
+      majorDimension: 'ROWS',
+      valueRenderOption: 'FORMATTED_VALUE',
+    },
+  });
+  const payload = (await response.json()) as {
+    valueRanges?: Array<{ values?: unknown[][] }>;
+  };
+  return sheets.map((_, index) =>
+    rowsFromValues(payload.valueRanges?.[index]?.values ?? []),
+  );
+}
+
+async function getDayReadContext(businessDate: string) {
+  const doc = await loadSpreadsheet();
+  const daySheet = findExistingSheet(doc, DAY_SESSION_SHEET_TITLES);
+  const salesLogSheet = findExistingSheet(doc, SALES_LOG_SHEET_TITLES);
+  const paymentsLogSheet = findExistingSheet(doc, PAYMENTS_LOG_SHEET_TITLES);
+  if (!daySheet || !salesLogSheet || !paymentsLogSheet) {
+    throw new Error('Day, sales, or payments sheet is not initialized');
+  }
+  const [dayRows, salesRows, paymentRows] = await batchReadRows(doc, [
+    daySheet,
+    salesLogSheet,
+    paymentsLogSheet,
+  ]);
+  const sessionRow = getLatestSession(dayRows, businessDate);
+  const { totals, itemTotals } = getDayMetrics(
+    salesRows,
+    paymentRows,
+    businessDate,
+    sessionRow,
+  );
+  return { dayRows, sessionRow, totals, itemTotals };
+}
+
+async function getDaySessionReadContext(businessDate: string) {
+  const doc = await loadSpreadsheet();
+  const daySheet = findExistingSheet(doc, DAY_SESSION_SHEET_TITLES);
+  if (!daySheet) throw new Error('Day session sheet is not initialized');
+  const [dayRows] = await batchReadRows(doc, [daySheet]);
+  return { sessionRow: getLatestSession(dayRows, businessDate) };
 }
 
 async function getOrCreateSheet(
@@ -485,6 +579,10 @@ function getDayMetrics(
 function dayErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error);
 
+  if (/429|quota|rate limit/i.test(message)) {
+    return 'Google Sheets хүсэлтийн хязгаарт хүрсэн. 60 секунд хүлээгээд дахин оролдоно уу.';
+  }
+
   if (message.includes('GOOGLE_PRIVATE_KEY')) {
     return 'Google Sheets credentials are invalid. Replace GOOGLE_PRIVATE_KEY with the full service-account private_key.';
   }
@@ -545,42 +643,26 @@ async function getDayContext(businessDate: string) {
   };
 }
 
-async function getDaySessionContext(businessDate: string) {
-  const doc = await loadSpreadsheet();
-  const daySheet = await getOrCreateSheet(
-    doc,
-    DAY_SESSION_SHEET_TITLES,
-    DAY_SESSION_HEADERS,
-  );
-  const dayRows = await daySheet.getRows() as SheetRow[];
-  const sessionRow = getLatestSession(dayRows, businessDate);
-
-  return { sessionRow };
-}
-
 async function handleGET(request: Request) {
   try {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
-    const bypassCache = url.searchParams.get('fresh') === '1';
     const sessionOnly = url.searchParams.get('sessionOnly') === '1';
 
     if (sessionOnly) {
       const loadDaySessionPayload = async () => {
-        const { sessionRow } = await getDaySessionContext(businessDate);
+        const { sessionRow } = await getDaySessionReadContext(businessDate);
 
         return {
           businessDate,
           session: serializeSession(sessionRow),
         };
       };
-      const payload = bypassCache
-        ? await loadDaySessionPayload()
-        : await getCachedRead(
-          `day:session:${businessDate}`,
-          DAY_SESSION_READ_CACHE_TTL_MS,
-          loadDaySessionPayload,
-        );
+      const payload = await getCachedRead(
+        `day:session:${businessDate}`,
+        DAY_SESSION_READ_CACHE_TTL_MS,
+        loadDaySessionPayload,
+      );
 
       return NextResponse.json(payload);
     }
@@ -591,7 +673,7 @@ async function handleGET(request: Request) {
         sessionRow,
         totals,
         itemTotals,
-      } = await getDayContext(businessDate);
+      } = await getDayReadContext(businessDate);
 
       return {
         businessDate,
@@ -601,20 +683,24 @@ async function handleGET(request: Request) {
         closeHistory: getClosedSessionHistory(dayRows),
       };
     };
-    const payload = bypassCache
-      ? await loadDayPayload()
-      : await getCachedRead(
-        `day:${businessDate}`,
-        DAY_READ_CACHE_TTL_MS,
-        loadDayPayload,
-      );
+    const payload = await getCachedRead(
+      `day:${businessDate}`,
+      DAY_READ_CACHE_TTL_MS,
+      loadDayPayload,
+    );
 
     return NextResponse.json(payload);
   } catch (error) {
     console.error(`Day GET Error: ${error instanceof Error ? error.message : String(error)}`);
+    const rateLimited = /429|quota|rate limit/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     return NextResponse.json(
       { error: dayErrorMessage(error, 'Failed to fetch day status') },
-      { status: 500 },
+      {
+        status: rateLimited ? 429 : 500,
+        headers: rateLimited ? { 'Retry-After': '60' } : undefined,
+      },
     );
   }
 }
@@ -856,9 +942,15 @@ async function handlePOST(request: Request) {
     });
   } catch (error) {
     console.error(`Day POST Error: ${error instanceof Error ? error.message : String(error)}`);
+    const rateLimited = /429|quota|rate limit/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     return NextResponse.json(
       { error: dayErrorMessage(error, 'Failed to save day status') },
-      { status: 500 },
+      {
+        status: rateLimited ? 429 : 500,
+        headers: rateLimited ? { 'Retry-After': '60' } : undefined,
+      },
     );
   }
 }

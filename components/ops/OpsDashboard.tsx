@@ -438,7 +438,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
-    const timer = window.setInterval(refresh, 60000);
+    const timer = window.setInterval(refresh, 3 * 60 * 1000);
 
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);

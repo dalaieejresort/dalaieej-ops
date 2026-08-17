@@ -3,6 +3,13 @@ import { JWT } from "google-auth-library";
 import { NextResponse } from "next/server";
 import { requireApiSession } from "@/lib/server/auth";
 import { withProtectedApiRoute } from "@/lib/server/api-route";
+import { getCachedRead } from "@/lib/server/read-cache";
+
+const OPERATIONS_CACHE_TTL_MS = 60_000;
+const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+let cachedSpreadsheet:
+  | { expiresAt: number; promise: Promise<GoogleSpreadsheet> }
+  | undefined;
 
 const OPERATION_SHEETS = [
   {
@@ -50,43 +57,94 @@ function createDoc() {
   return new GoogleSpreadsheet(requiredEnv("GOOGLE_SHEET_ID"), auth);
 }
 
+async function loadSpreadsheet() {
+  const now = Date.now();
+  if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
+    return cachedSpreadsheet.promise;
+  }
+  const promise = (async () => {
+    const doc = createDoc();
+    await doc.loadInfo();
+    return doc;
+  })();
+  cachedSpreadsheet = {
+    expiresAt: now + SHEET_METADATA_CACHE_TTL_MS,
+    promise,
+  };
+  try {
+    return await promise;
+  } catch (error) {
+    if (cachedSpreadsheet?.promise === promise) cachedSpreadsheet = undefined;
+    throw error;
+  }
+}
+
 async function handleGET(request: Request) {
   const sessionOrResponse = requireApiSession(request, "manager");
   if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
 
   try {
-    const doc = createDoc();
-    await doc.loadInfo();
-    const pending = (
-      await Promise.all(
-        OPERATION_SHEETS.map(async config => {
+    const pending = await getCachedRead(
+      "operations:pending",
+      OPERATIONS_CACHE_TTL_MS,
+      async () => {
+        const doc = await loadSpreadsheet();
+        const available = OPERATION_SHEETS.flatMap(config => {
           const sheet = config.titles
             .filter(Boolean)
             .map(title => doc.sheetsByTitle[String(title)])
             .find(Boolean);
-          if (!sheet) return [];
-          await sheet.loadHeaderRow();
-          if (!sheet.headerValues.includes("operation_status")) return [];
-          const rows = await sheet.getRows();
-          return rows
-            .filter(row => String(row.get("operation_status") ?? "").trim() === "pending")
-            .map(row => ({
+          return sheet ? [{ config, sheet }] : [];
+        });
+        if (available.length === 0) return [];
+        const rangeQuery = available
+          .map(({ sheet }) =>
+            `ranges=${encodeURIComponent(`${sheet.a1SheetName}!A:ZZ`)}`,
+          )
+          .join("&");
+        const response = await doc.sheetsApi.get(
+          `values:batchGet?${rangeQuery}`,
+          {
+            searchParams: {
+              majorDimension: "ROWS",
+              valueRenderOption: "FORMATTED_VALUE",
+            },
+          },
+        );
+        const payload = (await response.json()) as {
+          valueRanges?: Array<{ values?: unknown[][] }>;
+        };
+        return available.flatMap(({ config }, index) => {
+          const values = payload.valueRanges?.[index]?.values ?? [];
+          const headers = (values[0] ?? []).map(value =>
+            String(value ?? "").trim(),
+          );
+          const get = (row: unknown[], column: string) => {
+            const columnIndex = headers.indexOf(column);
+            return columnIndex >= 0
+              ? String(row[columnIndex] ?? "").trim()
+              : "";
+          };
+          return values.slice(1).flatMap(row => {
+            if (get(row, "operation_status") !== "pending") return [];
+            const requestId = get(row, "client_request_id");
+            return [{
               type: config.type,
-              requestId: String(row.get("client_request_id") ?? "").trim(),
-              resourceId: String(row.get(config.idColumn) ?? "").trim(),
-              businessDate: String(row.get("business_date") ?? "").trim(),
-              actor: String(row.get(config.actorColumn) ?? "").trim(),
-              timestamp: String(row.get(config.timestampColumn) ?? "").trim(),
-              updatedAt: String(row.get("operation_updated_at") ?? "").trim(),
-              error: String(row.get("operation_error") ?? "").trim(),
+              requestId,
+              resourceId: get(row, config.idColumn),
+              businessDate: get(row, "business_date"),
+              actor: get(row, config.actorColumn),
+              timestamp: get(row, config.timestampColumn),
+              updatedAt: get(row, "operation_updated_at"),
+              error: get(row, "operation_error"),
               recoverable: Boolean(
-                String(row.get("client_request_id") ?? "").trim() &&
-                  String(row.get("request_fingerprint") ?? "").trim(),
+                requestId && get(row, "request_fingerprint"),
               ),
-            }));
-        }),
-      )
-    ).flat();
+            }];
+          });
+        });
+      },
+    );
 
     return NextResponse.json({ pending });
   } catch (error) {

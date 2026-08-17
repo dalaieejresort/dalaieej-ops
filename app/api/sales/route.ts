@@ -99,13 +99,12 @@ type CatalogRowItem = {
   price: number;
 };
 
-const SALES_READ_CACHE_TTL_MS = 10000;
+const SALES_READ_CACHE_TTL_MS = 60000;
 const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
 
 let cachedSpreadsheet:
   | { expiresAt: number; promise: Promise<SheetDoc> }
   | undefined;
-let settlementSchemaReady: Promise<void> | undefined;
 
 const SALES_LOG_SHEET_TITLES = [
   process.env.GOOGLE_SALES_SHEET_TITLE,
@@ -366,28 +365,6 @@ async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
     title: PAYMENTS_LOG_SHEET_TITLES[0] ?? 'Payments_Log',
     headerValues: PAYMENT_LOG_HEADERS,
   });
-}
-
-async function ensureSettlementSchema(
-  salesLogSheet: GoogleSpreadsheetWorksheet,
-  paymentsLogSheet: GoogleSpreadsheetWorksheet,
-  receiptsLogSheet: GoogleSpreadsheetWorksheet,
-  daySessionSheet: GoogleSpreadsheetWorksheet,
-) {
-  if (!settlementSchemaReady) {
-    settlementSchemaReady = Promise.all([
-      ensureSheetHeaders(salesLogSheet, SALES_LOG_HEADERS),
-      ensureSheetHeaders(paymentsLogSheet, PAYMENT_LOG_HEADERS),
-      ensureSheetHeaders(receiptsLogSheet, RECEIPT_LOG_HEADERS),
-      ensureSheetHeaders(daySessionSheet, DAY_SESSION_HEADERS),
-    ]).then(() => undefined);
-  }
-  try {
-    await settlementSchemaReady;
-  } catch (error) {
-    settlementSchemaReady = undefined;
-    throw error;
-  }
 }
 
 function findCatalogSheet(doc: SheetDoc) {
@@ -908,6 +885,10 @@ function getSettlementPayments(body: SettleSaleBody) {
 function salesErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error);
 
+  if (/429|quota|rate limit/i.test(message)) {
+    return 'Google Sheets хүсэлтийн хязгаарт хүрсэн. 60 секунд хүлээгээд дахин оролдоно уу.';
+  }
+
   if (message.includes('GOOGLE_PRIVATE_KEY')) {
     return 'Google Sheets credentials are invalid. Replace GOOGLE_PRIVATE_KEY with the full service-account private_key.';
   }
@@ -938,7 +919,6 @@ async function handleGET(request: Request) {
     const settlementRequestId = url.searchParams
       .get('settlementRequestId')
       ?.trim();
-    const bypassCache = url.searchParams.get('fresh') === '1';
 
     if (settlementRequestId) {
       if (settlementRequestId.length > 128) {
@@ -1052,21 +1032,21 @@ async function handleGET(request: Request) {
 
     const loadSalesList = async () => {
       const doc = await loadSpreadsheet();
-      const [salesLogSheet, paymentsLogSheet, receiptsLogSheet] =
-        await Promise.all([
-          getOrCreateSalesLogSheet(doc),
-          getOrCreatePaymentsLogSheet(doc),
-          getOrCreateSheet(
-            doc,
-            RECEIPTS_LOG_SHEET_TITLES,
-            RECEIPT_LOG_HEADERS,
-          ),
+      const salesLogSheet = findExistingSheet(doc, SALES_LOG_SHEET_TITLES);
+      const paymentsLogSheet = findExistingSheet(doc, PAYMENTS_LOG_SHEET_TITLES);
+      const receiptsLogSheet = findExistingSheet(doc, RECEIPTS_LOG_SHEET_TITLES);
+      if (!salesLogSheet || !paymentsLogSheet || !receiptsLogSheet) {
+        throw new Error('Sales, payments, or receipts sheet is not initialized');
+      }
+      const [salesTable, paymentsTable, receiptsTable] =
+        await batchReadSheetTables(doc, [
+          { sheet: salesLogSheet, requiredHeaders: SALES_LOG_HEADERS },
+          { sheet: paymentsLogSheet, requiredHeaders: PAYMENT_LOG_HEADERS },
+          { sheet: receiptsLogSheet, requiredHeaders: RECEIPT_LOG_HEADERS },
         ]);
-      const [salesRows, paymentRows, receiptRows] = await Promise.all([
-        salesLogSheet.getRows() as Promise<SheetRow[]>,
-        paymentsLogSheet.getRows(),
-        receiptsLogSheet.getRows(),
-      ]);
+      const salesRows = salesTable.rows;
+      const paymentRows = paymentsTable.rows;
+      const receiptRows = receiptsTable.rows;
       const paymentTotals = getPaymentTotals(paymentRows);
       const paymentSummaries = getPaymentSummaries(paymentRows);
       const paymentActivityByTransaction = getPaymentActivity(paymentRows);
@@ -1204,7 +1184,7 @@ async function handleGET(request: Request) {
             .filter(Boolean);
           const orderRows = orderIds
             .map(orderId => salesByTransactionId.get(orderId))
-            .filter((saleRow): saleRow is SheetRow => Boolean(saleRow));
+            .filter((saleRow): saleRow is ReadonlySheetRow => Boolean(saleRow));
           const total = toNumber(row.get('total'));
           const saleTotal = orderRows.reduce(
             (sum, saleRow) => sum + toNumber(saleRow.get('total')),
@@ -1274,20 +1254,24 @@ async function handleGET(request: Request) {
 
       return { charges: unpaidCharges, history };
     };
-    const payload = bypassCache
-      ? await loadSalesList()
-      : await getCachedRead(
-        'sales:list:all',
-        SALES_READ_CACHE_TTL_MS,
-        loadSalesList,
-      );
+    const payload = await getCachedRead(
+      'sales:list:all',
+      SALES_READ_CACHE_TTL_MS,
+      loadSalesList,
+    );
 
     return NextResponse.json(payload);
   } catch (error) {
     console.error(`Sales GET Error: ${error instanceof Error ? error.message : String(error)}`);
+    const rateLimited = /429|quota|rate limit/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     return NextResponse.json(
       { error: salesErrorMessage(error, 'Failed to fetch sales') },
-      { status: 500 },
+      {
+        status: rateLimited ? 429 : 500,
+        headers: rateLimited ? { 'Retry-After': '60' } : undefined,
+      },
     );
   }
 }
@@ -1538,13 +1522,6 @@ async function handlePATCH(request: Request) {
         'Settlement sheets are not initialized. Open the register once and retry.',
       );
     }
-
-    await ensureSettlementSchema(
-      salesLogSheet,
-      paymentsLogSheet,
-      receiptsLogSheet,
-      daySessionSheet,
-    );
 
     const [salesTable, paymentsTable, receiptsTable, daySessionTable] =
       await batchReadSheetTables(doc, [
@@ -1846,9 +1823,15 @@ async function handlePATCH(request: Request) {
       durationMs: Date.now() - requestStartedAt,
       error: error instanceof Error ? error.message : String(error),
     });
+    const rateLimited = /429|quota|rate limit/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     return NextResponse.json(
       { error: salesErrorMessage(error, 'Failed to settle sale') },
-      { status: 500 },
+      {
+        status: rateLimited ? 429 : 500,
+        headers: rateLimited ? { 'Retry-After': '60' } : undefined,
+      },
     );
   }
 }

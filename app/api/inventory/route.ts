@@ -66,7 +66,7 @@ type InventoryPaymentInput = {
 
 type SheetDoc = GoogleSpreadsheet;
 
-const INVENTORY_READ_CACHE_TTL_MS = 30000;
+const INVENTORY_READ_CACHE_TTL_MS = 120000;
 const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
 
 let cachedSpreadsheet:
@@ -417,6 +417,10 @@ function getInventoryPayments(
 function inventoryErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error);
 
+  if (/429|quota|rate limit/i.test(message)) {
+    return 'Google Sheets хүсэлтийн хязгаарт хүрсэн. 60 секунд хүлээгээд дахин оролдоно уу.';
+  }
+
   if (
     message.includes('Google Sheets API has not been used') ||
     message.includes('sheets.googleapis.com') ||
@@ -460,10 +464,8 @@ function logInventoryError(label: string, error: unknown) {
 // ==========================================
 // GET: Fetch the Catalog for the iPad Screen
 // ==========================================
-async function handleGET(request: Request) {
+async function handleGET() {
   try {
-    const url = new URL(request.url);
-    const bypassCache = url.searchParams.get('fresh') === '1';
     const loadCatalog = async () => {
       const doc = await loadSpreadsheet();
       const catalogSheet = findSheet(doc, CATALOG_SHEET_TITLES, 'inventory catalogue');
@@ -492,20 +494,24 @@ async function handleGET(request: Request) {
           p.price > 0,
       );
     };
-    const validProducts = bypassCache
-      ? await loadCatalog()
-      : await getCachedRead(
-        'inventory:catalog',
-        INVENTORY_READ_CACHE_TTL_MS,
-        loadCatalog,
-      );
+    const validProducts = await getCachedRead(
+      'inventory:catalog',
+      INVENTORY_READ_CACHE_TTL_MS,
+      loadCatalog,
+    );
 
     return NextResponse.json(validProducts);
   } catch (error) {
     logInventoryError('Inventory GET Error', error);
+    const rateLimited = /429|quota|rate limit/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     return NextResponse.json(
       { error: inventoryErrorMessage(error, 'Failed to fetch catalog') },
-      { status: 500 },
+      {
+        status: rateLimited ? 429 : 500,
+        headers: rateLimited ? { 'Retry-After': '60' } : undefined,
+      },
     );
   }
 }
@@ -882,9 +888,15 @@ async function handlePOST(request: Request) {
     });
   } catch (error) {
     logInventoryError('Inventory POST Error', error);
+    const rateLimited = /429|quota|rate limit/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     return NextResponse.json(
       { error: inventoryErrorMessage(error, 'Failed to log transaction') },
-      { status: 500 },
+      {
+        status: rateLimited ? 429 : 500,
+        headers: rateLimited ? { 'Retry-After': '60' } : undefined,
+      },
     );
   }
 }

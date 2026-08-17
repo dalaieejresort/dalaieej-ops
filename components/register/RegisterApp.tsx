@@ -128,9 +128,9 @@ type SettlementResult = {
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
 const REGISTER_DRAFT_CACHE_KEY = "register:draft";
-const SHARED_SALES_SYNC_INTERVAL_MS = 60000;
-const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 30000;
-const DAY_SESSION_SYNC_INTERVAL_MS = 10000;
+const SHARED_SALES_SYNC_INTERVAL_MS = 3 * 60 * 1000;
+const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 60000;
+const DAY_SESSION_SYNC_INTERVAL_MS = 60000;
 const CATALOG_RETRY_DELAY_MS = 15000;
 const CATALOG_RETRY_INTERVAL_MS = 120000;
 const REGISTER_MUTATION_TIMEOUT_MS = 30000;
@@ -2131,7 +2131,7 @@ export function RegisterApp({
         void loadDaySession(options);
       }
     };
-    const syncFreshDaySession = () => syncDaySession({ fresh: true });
+    const syncFreshDaySession = () => syncDaySession();
     const syncDaySessionWhenVisible = () => {
       if (document.visibilityState === "visible") {
         syncFreshDaySession();

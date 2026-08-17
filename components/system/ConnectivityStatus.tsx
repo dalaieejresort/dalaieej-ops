@@ -63,7 +63,7 @@ export function ConnectivityStatus() {
     }
     window.addEventListener("online", syncStatus);
     window.addEventListener("offline", syncStatus);
-    const timer = window.setInterval(checkHealth, 30000);
+    const timer = window.setInterval(checkHealth, 5 * 60 * 1000);
 
     return () => {
       window.clearTimeout(initialCheck);
