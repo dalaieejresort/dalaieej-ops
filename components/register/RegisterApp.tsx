@@ -1695,6 +1695,7 @@ export function RegisterApp({
   const [voidRefundMethod, setVoidRefundMethod] =
     useState<RefundMethodSelection>("");
   const [registerMode, setRegisterMode] = useState<RegisterMode>("sale");
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [historySales, setHistorySales] = useState<RecentSale[]>([]);
   const [historyStatus, setHistoryStatus] = useState<CatalogStatus>("loading");
   const [historyMessage, setHistoryMessage] = useState("");
@@ -3105,6 +3106,7 @@ export function RegisterApp({
   }
 
   function selectRegisterMode(mode: RegisterMode) {
+    setMobileCartOpen(false);
     if (mode !== "sale" && editingCharge) {
       setEditingCharge(null);
       setCart([]);
@@ -4106,7 +4108,7 @@ export function RegisterApp({
           <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
         </div>
 
-        <div className="order-3 flex w-full max-w-full overflow-x-auto rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-1 md:order-none md:w-auto">
+        <div className="hidden rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-1 md:flex">
           <button
             type="button"
             onClick={() => selectRegisterMode("sale")}
@@ -4205,9 +4207,11 @@ export function RegisterApp({
               void loadSharedSalesData({ fresh: true });
               void loadDayStatus({ fresh: true });
             }}
+            aria-label="Мэдээлэл шинэчлэх"
             className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
           >
-            Шинэчлэх
+            <span className="md:hidden" aria-hidden="true">↻</span>
+            <span className="hidden md:inline">Шинэчлэх</span>
           </button>
           <button
             type="button"
@@ -4220,7 +4224,7 @@ export function RegisterApp({
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
-        <section className="flex min-h-[360px] max-h-[70dvh] flex-col border-r border-[#d1d5db] lg:min-h-0 lg:max-h-none">
+        <section className="flex h-[calc(100dvh-11rem)] min-h-[420px] flex-col border-r border-[#d1d5db] pb-16 md:h-auto md:min-h-[360px] md:max-h-[70dvh] md:pb-0 lg:min-h-0 lg:max-h-none">
           {registerMode === "day-close" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
@@ -4849,7 +4853,13 @@ export function RegisterApp({
 
         <aside
           id="register-cart"
-          className="flex min-h-[420px] scroll-mt-40 flex-col bg-white pb-20 lg:scroll-mt-0 lg:pb-0"
+          className={`min-h-[420px] flex-col bg-white pb-20 md:static md:inset-auto md:z-auto md:flex md:h-auto md:pb-0 ${
+            registerMode === "sale"
+              ? mobileCartOpen
+                ? "fixed inset-0 z-50 flex h-dvh"
+                : "hidden"
+              : "flex"
+          }`}
         >
           {registerMode === "day-close" ? (
             <>
@@ -4939,7 +4949,7 @@ export function RegisterApp({
             </>
           ) : registerMode === "sale" ? (
             <>
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
+          <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-[#d1d5db] px-4 py-2">
             <div className="min-w-0">
               <h2 className="truncate text-base font-bold">
                 {isEditingCharge ? "Өрийн захиалга засах" : "Одоогийн борлуулалт"}
@@ -4950,14 +4960,24 @@ export function RegisterApp({
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              onClick={clearCurrentSale}
-              disabled={cart.length === 0 && !editingCharge}
-              className="rounded-md border border-[#cbd5e1] px-3 py-1.5 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc] disabled:opacity-40"
-            >
-              {isEditingCharge ? "Болих" : "Цэвэрлэх"}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={clearCurrentSale}
+                disabled={cart.length === 0 && !editingCharge}
+                className="rounded-md border border-[#cbd5e1] px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc] disabled:opacity-40"
+              >
+                {isEditingCharge ? "Болих" : "Цэвэрлэх"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileCartOpen(false)}
+                className="rounded-md bg-[#111827] px-3 py-2 text-sm font-black text-white md:hidden"
+                aria-label="Сагс хаах"
+              >
+                Хаах
+              </button>
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -6001,30 +6021,58 @@ export function RegisterApp({
         </aside>
       </main>
 
-      {registerMode === "sale" &&
-        cart.length > 0 &&
-        !voidModalOpen &&
-        !dayModalMode && (
-          <div className="fixed inset-x-3 bottom-3 z-40 lg:hidden">
+      {!voidModalOpen && !dayModalMode ? (
+        <nav
+          aria-label="Гар утасны үндсэн цэс"
+          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-[#d1d5db] bg-white/95 px-1 pb-1 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur md:hidden"
+        >
+          {([
+            ["sale", "+", "Зарах"],
+            ["charges", "₮", "Өр"],
+            ["history", "≡", "Түүх"],
+            ["day-close", "✓", "Хаалт"],
+          ] as const).map(([mode, symbol, label]) => (
             <button
+              key={mode}
               type="button"
-              aria-controls="register-cart"
-              onClick={() =>
-                document
-                  .getElementById("register-cart")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
-              }
-              className="flex min-h-14 w-full items-center justify-between gap-3 rounded-xl border border-[#111827] bg-[#111827] px-4 text-left text-white shadow-xl"
+              aria-pressed={registerMode === mode && !mobileCartOpen}
+              onClick={() => selectRegisterMode(mode)}
+              className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
+                registerMode === mode && !mobileCartOpen
+                  ? "bg-[#eef2ff] text-[#111827]"
+                  : "text-[#64748b]"
+              }`}
             >
-              <span className="text-sm font-black">
-                Сагс харах · {formatNumber(cartItemCount)} бараа
+              <span className="text-lg leading-none" aria-hidden="true">
+                {symbol}
               </span>
-              <span className="shrink-0 text-base font-black">
-                {formatMNT(cartTotal)}
-              </span>
+              <span>{label}</span>
             </button>
-          </div>
-        )}
+          ))}
+          <button
+            type="button"
+            aria-controls="register-cart"
+            aria-expanded={mobileCartOpen}
+            onClick={() => {
+              if (registerMode !== "sale") selectRegisterMode("sale");
+              setMobileCartOpen(true);
+            }}
+            className={`relative flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
+              mobileCartOpen
+                ? "bg-[#111827] text-white"
+                : "text-[#64748b]"
+            }`}
+          >
+            <span className="text-lg leading-none" aria-hidden="true">▣</span>
+            <span>Сагс</span>
+            {cartItemCount > 0 ? (
+              <span className="absolute right-1.5 top-1.5 min-w-5 rounded-full bg-[#dc2626] px-1 text-[10px] leading-5 text-white">
+                {formatNumber(cartItemCount)}
+              </span>
+            ) : null}
+          </button>
+        </nav>
+      ) : null}
 
       {voidModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
