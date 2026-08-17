@@ -1,6 +1,17 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
+import {
+  GoogleSpreadsheet,
+  type GoogleSpreadsheetWorksheet,
+} from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
+import {
+  makeUniformControlNumber,
+  PAYMENT_LOG_HEADERS,
+} from '@/lib/pos/payment-controls';
+import {
+  DAY_SESSION_HEADERS,
+  getActiveBusinessSession,
+} from '@/lib/server/business-session';
 
 type VoidSaleBody = {
   transactionId?: string;
@@ -62,6 +73,10 @@ const INVENTORY_LOG_HEADERS = [
   'Quantity (Тоо)',
   'Location (Байршил)',
   'Handled By',
+  'Payment Method',
+  'Room Number',
+  'Session ID',
+  'Business Date',
 ];
 
 const SALES_LOG_HEADERS = [
@@ -80,19 +95,12 @@ const SALES_LOG_HEADERS = [
   'item_summary',
   'qpay_invoice_id',
   'notes',
-];
-
-const PAYMENTS_LOG_HEADERS = [
-  'payment_id',
-  'transaction_id',
-  'timestamp',
-  'staff',
-  'payment_method',
-  'amount',
-  'cash_received',
-  'change_due',
-  'qpay_invoice_id',
-  'notes',
+  'item_details',
+  'session_id',
+  'business_date',
+  'client_request_id',
+  'operation_status',
+  'receipt_id',
 ];
 
 const VOIDS_LOG_HEADERS = [
@@ -107,27 +115,8 @@ const VOIDS_LOG_HEADERS = [
   'refund_amount',
   'item_summary',
   'notes',
-];
-
-const DAY_SESSION_HEADERS = [
+  'session_id',
   'business_date',
-  'opened_at',
-  'opened_by',
-  'starting_cash',
-  'status',
-  'closed_at',
-  'closed_by',
-  'counted_cash',
-  'expected_cash',
-  'cash_difference',
-  'payment_total',
-  'cash_payment_total',
-  'card_payment_total',
-  'qpay_payment_total',
-  'other_payment_total',
-  'room_charge_total',
-  'sales_total',
-  'notes',
 ];
 
 const INVENTORY_COLUMNS = {
@@ -182,17 +171,38 @@ async function loadSpreadsheet() {
 async function getOrCreateSheet(
   doc: SheetDoc,
   titles: string[],
-  headers: string[],
+  headers: readonly string[],
 ) {
   for (const title of titles) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) return ensureSheetHeaders(sheet, headers);
   }
 
   return doc.addSheet({
     title: titles[0] ?? 'Sheet',
-    headerValues: headers,
+    headerValues: [...headers],
   });
+}
+
+async function ensureSheetHeaders(
+  sheet: GoogleSpreadsheetWorksheet,
+  headers: readonly string[],
+) {
+  await sheet.loadHeaderRow();
+  const missingHeaders = headers.filter(
+    header => !sheet.headerValues.includes(header),
+  );
+  if (missingHeaders.length === 0) return sheet;
+
+  const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+  if (nextHeaders.length > sheet.columnCount) {
+    await sheet.resize({
+      rowCount: sheet.rowCount,
+      columnCount: nextHeaders.length,
+    });
+  }
+  await sheet.setHeaderRow(nextHeaders);
+  return sheet;
 }
 
 function nowTimestamp() {
@@ -285,10 +295,6 @@ function getFirstValue(
   }
 
   return '';
-}
-
-function createPaymentId() {
-  return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
 function createVoidId() {
@@ -456,7 +462,7 @@ export async function GET(request: Request) {
     const paymentsLogSheet = await getOrCreateSheet(
       doc,
       PAYMENTS_LOG_SHEET_TITLES,
-      PAYMENTS_LOG_HEADERS,
+      PAYMENT_LOG_HEADERS,
     );
     const [dayRows, salesRows, paymentRows] = await Promise.all([
       daySessionSheet.getRows() as Promise<SheetRow[]>,
@@ -467,6 +473,7 @@ export async function GET(request: Request) {
     const paymentTotals = getPaymentTotals(paymentRows);
     const sales = salesRows
       .filter(row => isInsideBusinessDay(row.get('timestamp'), businessDate, sessionWindow))
+      .filter(row => getCell(row, 'operation_status') !== 'pending')
       .filter(row => getCell(row, 'paid_status').toLowerCase() !== 'voided')
       .map(row => getRecentSale(row, paymentTotals))
       .filter(sale => sale.transactionId)
@@ -487,7 +494,6 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as VoidSaleBody;
     const transactionId = body.transactionId?.trim();
-    const businessDate = normalizeBusinessDate(body.businessDate);
     const reason = body.reason?.trim();
     const refundMethod = body.refundMethod?.trim() || 'No refund';
 
@@ -514,7 +520,7 @@ export async function POST(request: Request) {
     const paymentsLogSheet = await getOrCreateSheet(
       doc,
       PAYMENTS_LOG_SHEET_TITLES,
-      PAYMENTS_LOG_HEADERS,
+      PAYMENT_LOG_HEADERS,
     );
     const voidsLogSheet = await getOrCreateSheet(doc, VOIDS_LOG_SHEET_TITLES, VOIDS_LOG_HEADERS);
     const [dayRows, inventoryRows, salesRows, paymentRows] = await Promise.all([
@@ -523,8 +529,8 @@ export async function POST(request: Request) {
       salesLogSheet.getRows() as Promise<SheetRow[]>,
       paymentsLogSheet.getRows(),
     ]);
-    const activeDaySession = getLatestSession(dayRows, businessDate);
-    if (!activeDaySession || getCell(activeDaySession, 'status').toLowerCase() !== 'open') {
+    const activeBusinessSession = getActiveBusinessSession(dayRows);
+    if (!activeBusinessSession) {
       return NextResponse.json(
         { error: 'Open the day before voiding or refunding a sale' },
         { status: 400 },
@@ -535,6 +541,12 @@ export async function POST(request: Request) {
 
     if (!saleRow) {
       return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
+    }
+    if (getCell(saleRow, 'operation_status') === 'pending') {
+      return NextResponse.json(
+        { error: 'Sale is still pending and cannot be voided yet' },
+        { status: 409 },
+      );
     }
 
     const originalStatus = getCell(saleRow, 'paid_status').toLowerCase();
@@ -558,6 +570,10 @@ export async function POST(request: Request) {
       item.quantity,
       item.location,
       body.staffName || 'Staff',
+      `Буцаалт - ${refundMethod}`,
+      getCell(saleRow, 'room_or_guest'),
+      activeBusinessSession.sessionId,
+      activeBusinessSession.businessDate,
     ]);
 
     await Promise.all([
@@ -574,6 +590,8 @@ export async function POST(request: Request) {
           refundAmount,
           itemSummary,
           '',
+          activeBusinessSession.sessionId,
+          activeBusinessSession.businessDate,
         ],
       ]),
       reversalRows.length > 0
@@ -581,18 +599,21 @@ export async function POST(request: Request) {
         : Promise.resolve(),
       refundAmount > 0
         ? paymentsLogSheet.addRows([
-            [
-              createPaymentId(),
-              transactionId,
+            {
+              payment_id: makeUniformControlNumber('RFN'),
+              transaction_id: transactionId,
               timestamp,
-              body.staffName || 'Staff',
-              `Буцаалт - ${refundMethod}`,
-              -refundAmount,
-              '',
-              '',
-              getCell(saleRow, 'qpay_invoice_id'),
-              `Void ${voidId}: ${reason}`,
-            ],
+              staff: body.staffName || 'Staff',
+              payment_method: `Буцаалт - ${refundMethod}`,
+              amount: -refundAmount,
+              cash_received: '',
+              change_due: '',
+              qpay_invoice_id: getCell(saleRow, 'qpay_invoice_id'),
+              notes: `Void ${voidId}: ${reason}`,
+              receipt_id: '',
+              session_id: activeBusinessSession.sessionId,
+              business_date: activeBusinessSession.businessDate,
+            },
           ])
         : Promise.resolve(),
     ]);

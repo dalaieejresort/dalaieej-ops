@@ -3,12 +3,17 @@ import "server-only";
 import { JWT } from "google-auth-library";
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { getUlaanbaatarBusinessDate } from "@/lib/pos/business-date";
+import {
+  DAY_SESSION_HEADERS,
+  getActiveBusinessSession,
+} from "@/lib/server/business-session";
 import { getCachedRead } from "@/lib/server/read-cache";
 
 type SheetDoc = GoogleSpreadsheet;
 
 type SheetRow = {
   get: (columnName: string) => unknown;
+  rowNumber?: number;
 };
 
 const ACTIVE_BUSINESS_DATE_CACHE_TTL_MS = 5000;
@@ -18,27 +23,6 @@ const DAY_SESSION_SHEET_TITLES = [
   "Day_Sessions",
   "day_sessions",
 ].filter(Boolean) as string[];
-
-const DAY_SESSION_HEADERS = [
-  "business_date",
-  "opened_at",
-  "opened_by",
-  "starting_cash",
-  "status",
-  "closed_at",
-  "closed_by",
-  "counted_cash",
-  "expected_cash",
-  "cash_difference",
-  "payment_total",
-  "cash_payment_total",
-  "card_payment_total",
-  "qpay_payment_total",
-  "other_payment_total",
-  "room_charge_total",
-  "sales_total",
-  "notes",
-];
 
 function requiredEnv(name: string) {
   const value = process.env[name];
@@ -83,30 +67,35 @@ async function loadSpreadsheet() {
 async function getOrCreateDaySessionSheet(doc: SheetDoc) {
   for (const title of DAY_SESSION_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) {
+      await sheet.loadHeaderRow();
+      const missingHeaders = DAY_SESSION_HEADERS.filter(
+        header => !sheet.headerValues.includes(header),
+      );
+
+      if (missingHeaders.length > 0) {
+        const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+        if (nextHeaders.length > sheet.columnCount) {
+          await sheet.resize({
+            rowCount: sheet.rowCount,
+            columnCount: nextHeaders.length,
+          });
+        }
+        await sheet.setHeaderRow(nextHeaders);
+      }
+
+      return sheet;
+    }
   }
 
   return doc.addSheet({
     title: DAY_SESSION_SHEET_TITLES[0] ?? "Day_Sessions",
-    headerValues: DAY_SESSION_HEADERS,
+    headerValues: [...DAY_SESSION_HEADERS],
   });
 }
 
-function getCell(row: SheetRow, column: string) {
-  return String(row.get(column) ?? "").trim();
-}
-
 function getLatestOpenBusinessDate(rows: SheetRow[]) {
-  const openSession = rows
-    .slice()
-    .reverse()
-    .find(
-      (row) =>
-        getCell(row, "status").toLowerCase() === "open" &&
-        getCell(row, "business_date"),
-    );
-
-  return openSession ? getCell(openSession, "business_date") : "";
+  return getActiveBusinessSession(rows)?.businessDate ?? "";
 }
 
 async function loadActiveBusinessDate() {

@@ -48,6 +48,9 @@ type DayTotals = {
   otherPaymentTotal: number;
   roomChargeTotal: number;
   expectedCash: number;
+  receiptCount: number;
+  firstReceiptId: string;
+  lastReceiptId: string;
 };
 
 type DayItemTotal = {
@@ -56,6 +59,7 @@ type DayItemTotal = {
 };
 
 type DaySession = {
+  sessionId?: string;
   businessDate: string;
   openedAt: string;
   openedBy: string;
@@ -74,10 +78,17 @@ type DaySession = {
   roomChargeTotal: number;
   salesTotal: number;
   notes: string;
+  receiptCount?: number;
+  firstReceiptId?: string;
+  lastReceiptId?: string;
 };
 
 type RecentSale = {
   transactionId: string;
+  orderIds?: string[];
+  receiptId?: string;
+  sessionId?: string;
+  businessDate?: string;
   timestamp: string;
   staff: string;
   paymentMethod: string;
@@ -96,12 +107,19 @@ type RecentSale = {
   cashReceived?: number;
   changeDue?: number;
   notes: string;
+  items?: ChargeEditItem[];
 };
 
-type RegisterMode = "sale" | "charges" | "history";
+type RegisterMode = "sale" | "charges" | "history" | "day-close";
 type SettlementMethod = "cash" | "card" | "bank";
 type PartialPaymentOption = SettlementMethod | "balance";
 type SettlementStatus = "idle" | "saving" | "success" | "error";
+type SettlementResult = {
+  error?: string;
+  receiptId?: string;
+  settledAt?: string;
+  requestStatus?: "missing" | "pending" | "complete";
+};
 
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
@@ -111,6 +129,11 @@ const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 30000;
 const DAY_SESSION_SYNC_INTERVAL_MS = 10000;
 const CATALOG_RETRY_DELAY_MS = 15000;
 const CATALOG_RETRY_INTERVAL_MS = 120000;
+const REGISTER_MUTATION_TIMEOUT_MS = 30000;
+const SETTLEMENT_REQUEST_TIMEOUT_MS = 15000;
+const SETTLEMENT_STATUS_TIMEOUT_MS = 2500;
+const SETTLEMENT_SLOW_NOTICE_MS = 8000;
+const SETTLEMENT_RECONCILIATION_DELAYS_MS = [0, 1000, 2500] as const;
 const PRINT_BILL_BUTTON_LABEL = "Гал тогоо / Бар билл хэвлэх";
 const KITCHEN_BILL_BUTTON_LABEL = "Гал тогоо билл хэвлэх";
 
@@ -121,7 +144,11 @@ function registerCacheKey(section: string, businessDate?: string) {
   return `register:${section}${businessDate ? `:${businessDate}` : ""}`;
 }
 
-async function registerFetch(input: RequestInfo | URL, init?: RequestInit) {
+async function registerFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  mutationTimeoutMs = REGISTER_MUTATION_TIMEOUT_MS,
+) {
   const method = (init?.method ?? "GET").toUpperCase();
   if (method !== "GET" && !window.navigator.onLine) {
     throw new Error(OFFLINE_MUTATION_MESSAGE);
@@ -130,7 +157,7 @@ async function registerFetch(input: RequestInfo | URL, init?: RequestInit) {
   try {
     return await (method === "GET"
       ? fetchWithTimeout(input, init)
-      : fetch(input, init));
+      : fetchWithTimeout(input, init, mutationTimeoutMs));
   } catch (error) {
     if (method !== "GET") {
       throw new Error(
@@ -144,7 +171,12 @@ async function registerFetch(input: RequestInfo | URL, init?: RequestInit) {
 }
 
 function isRegisterMode(value: string | null): value is RegisterMode {
-  return value === "sale" || value === "charges" || value === "history";
+  return (
+    value === "sale" ||
+    value === "charges" ||
+    value === "history" ||
+    value === "day-close"
+  );
 }
 
 function isPaymentMethod(value: unknown): value is PaymentMethodId {
@@ -163,6 +195,7 @@ function getDaySessionSignature(session: DaySession | null) {
   if (!session) return "";
 
   return [
+    session.sessionId,
     session.businessDate,
     session.status,
     session.openedAt,
@@ -210,6 +243,7 @@ type UnpaidCharge = {
   itemSummary: string;
   qpayInvoiceId: string;
   notes: string;
+  items?: ChargeEditItem[];
 };
 
 type ChargeEditItem = {
@@ -238,10 +272,15 @@ type ChargeGroup = {
 
 type PrintableSale = {
   id: string;
+  orderId?: string;
+  receiptId?: string;
+  orderIds?: string[];
   createdAt: Date;
   settledAt?: Date;
   items: RegisterCartLine[];
+  receiptItems?: RegisterCartLine[];
   total: number;
+  receiptTotal?: number;
   isPaid: boolean;
   includeBarOtherBill?: boolean;
   receiptTitle?: string;
@@ -251,6 +290,7 @@ type PrintableSale = {
   cashReceived: number;
   changeDue: number;
   qpayInvoiceId: string;
+  balance?: number;
 };
 
 type DayClosePrintReport = {
@@ -357,6 +397,9 @@ const EMPTY_DAY_TOTALS: DayTotals = {
   otherPaymentTotal: 0,
   roomChargeTotal: 0,
   expectedCash: 0,
+  receiptCount: 0,
+  firstReceiptId: "",
+  lastReceiptId: "",
 };
 
 function inferCategory(name: string): ItemCategory {
@@ -601,6 +644,14 @@ function printablePage(title: string, body: string) {
         break-before: page;
         page-break-before: always;
       }
+      .prep-ticket + .receipt,
+      .receipt + .prep-ticket {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px dashed #000;
+        break-before: page;
+        page-break-before: always;
+      }
       .prep-ticket .item-main {
         grid-template-columns: 46px minmax(0, 1fr);
       }
@@ -621,6 +672,31 @@ function printablePage(title: string, body: string) {
         margin-top: 9px;
         text-align: center;
         font-size: 10px;
+      }
+      .control-number {
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: .2px;
+      }
+      .paper-check {
+        display: grid;
+        gap: 7px;
+        margin-top: 12px;
+        border: 1px solid #000;
+        padding: 8px;
+        break-inside: avoid;
+        font-size: 10px;
+      }
+      .paper-check-title {
+        text-align: center;
+        font-size: 11px;
+        font-weight: 900;
+      }
+      .paper-check-options {
+        display: flex;
+        justify-content: space-between;
+        gap: 5px;
+        font-weight: 800;
       }
       .cut {
         margin-top: 12px;
@@ -656,11 +732,21 @@ function printHtml(title: string, body: string, reservedWindow?: Window | false)
   const printWindow = reservedWindow ?? openPrintWindow();
   if (!printWindow) return false;
 
+  let printStarted = false;
+  const startPrint = () => {
+    if (printStarted || printWindow.closed) return;
+    printStarted = true;
+    printWindow.focus();
+    printWindow.print();
+  };
+  printWindow.onload = startPrint;
+  printWindow.onafterprint = () => {
+    if (!printWindow.closed) printWindow.close();
+  };
   printWindow.document.open();
   printWindow.document.write(printablePage(title, body));
   printWindow.document.close();
-  printWindow.focus();
-  window.setTimeout(() => printWindow.print(), 150);
+  window.setTimeout(startPrint, 500);
   return true;
 }
 
@@ -754,6 +840,137 @@ function normalizeTicketText(value: unknown) {
     .toLocaleLowerCase("mn-MN");
 }
 
+function getHistorySearchText(sale: RecentSale) {
+  const itemDetails = sale.items?.flatMap((item) => [
+    item.sku,
+    item.name,
+    item.category,
+    item.qty,
+    item.unitPrice,
+  ]);
+
+  return normalizeTicketText(
+    [
+      sale.transactionId,
+      sale.timestamp,
+      sale.staff,
+      sale.paymentMethod,
+      sale.paidStatus,
+      sale.roomOrGuest,
+      sale.itemSummary,
+      sale.qpayInvoiceId,
+      sale.notes,
+      sale.historyKind,
+      sale.total,
+      sale.saleTotal,
+      sale.paidAmount,
+      sale.paidToDate,
+      sale.balance,
+      ...(itemDetails ?? []),
+    ].join(" "),
+  );
+}
+
+const ROOM_SEARCH_FILTER_KEYS = new Set([
+  "байшин",
+  "өрөө",
+  "cabin",
+  "room",
+]);
+
+function parseRegisterSearchQuery(value: string) {
+  const generalTerms: string[] = [];
+  const roomTerms: string[] = [];
+
+  for (const term of normalizeTicketText(value).split(" ").filter(Boolean)) {
+    const separatorIndex = term.indexOf(":");
+    const filterKey = term.slice(0, separatorIndex);
+    const filterValue = term.slice(separatorIndex + 1);
+
+    if (
+      separatorIndex > 0 &&
+      filterValue &&
+      ROOM_SEARCH_FILTER_KEYS.has(filterKey)
+    ) {
+      roomTerms.push(filterValue);
+    } else {
+      generalTerms.push(term);
+    }
+  }
+
+  return { generalTerms, roomTerms };
+}
+
+function matchesRoomSearchFilter(roomOrGuest: string, roomTerm: string) {
+  const normalizedRoom = normalizeTicketText(roomOrGuest);
+  const normalizedTerm = normalizeTicketText(roomTerm);
+
+  if (!normalizedTerm) return false;
+  if (!/^\d+$/.test(normalizedTerm)) {
+    return normalizedRoom.includes(normalizedTerm);
+  }
+
+  const roomTokens: string[] =
+    normalizedRoom.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return roomTokens.includes(normalizedTerm);
+}
+
+function getChargeGroupSearchText(group: ChargeGroup) {
+  const chargeDetails = group.charges.flatMap((charge) => [
+    charge.transactionId,
+    charge.timestamp,
+    charge.staff,
+    charge.paymentMethod,
+    charge.roomOrGuest,
+    charge.itemSummary,
+    charge.qpayInvoiceId,
+    charge.notes,
+    charge.subtotal,
+    charge.discount,
+    charge.total,
+    charge.originalTotal,
+    charge.paidAmount,
+    charge.balance,
+    ...(charge.items?.flatMap((item) => [
+      item.sku,
+      item.name,
+      item.category,
+      item.qty,
+      item.unitPrice,
+    ]) ?? []),
+  ]);
+
+  return normalizeTicketText(
+    [
+      group.key,
+      group.label,
+      group.total,
+      group.paidAmount,
+      group.originalTotal,
+      group.latestTimestamp,
+      ...chargeDetails,
+    ].join(" "),
+  );
+}
+
+function filterChargeGroupsByQuery(groups: ChargeGroup[], query: string) {
+  const { generalTerms, roomTerms } = parseRegisterSearchQuery(query);
+
+  if (generalTerms.length === 0 && roomTerms.length === 0) return groups;
+
+  return groups.filter((group) => {
+    const searchableText = getChargeGroupSearchText(group);
+    return (
+      generalTerms.every((term) => searchableText.includes(term)) &&
+      roomTerms.every((term) =>
+        group.charges.some((charge) =>
+          matchesRoomSearchFilter(charge.roomOrGuest, term),
+        ),
+      )
+    );
+  });
+}
+
 function isKitchenTicketItem(item: RegisterCartLine) {
   const searchableText = `${normalizeTicketText(item.category)} ${normalizeTicketText(item.name)}`;
   if (BAR_TICKET_KEYWORDS.some((keyword) => searchableText.includes(keyword))) {
@@ -800,7 +1017,7 @@ function prepTicketSection(
     <h1>DALAI EEJ</h1>
     <h2>${escapeHtml(title)}</h2>
     <div class="meta">
-      <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
+      <div class="row"><strong>Захиалга №</strong><span class="control-number">${escapeHtml(sale.orderId ?? sale.id)}</span></div>
       <div class="row"><strong>Цаг</strong><span>${escapeHtml(formatReceiptDate(sale.createdAt))}</span></div>
       <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
       <div class="row"><strong>Төлөв</strong><span>${sale.isPaid ? "Төлөгдсөн" : "Төлбөр хүлээгдэж байна"}</span></div>
@@ -838,16 +1055,14 @@ function prepTicketSection(
 }
 
 function billBody(sale: PrintableSale) {
-  const { kitchen } = splitPrepTicketItems(sale.items);
+  const { kitchen, other } = splitPrepTicketItems(sale.items);
   const includeBarOtherBill = sale.includeBarOtherBill !== false;
   const sections = [
     kitchen.length > 0
       ? prepTicketSection(sale, "Гал тогоо", "Гал тогоонд", kitchen)
       : "",
-    includeBarOtherBill && sale.items.length > 0
-      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", sale.items, {
-          showPrices: true,
-        })
+    includeBarOtherBill && other.length > 0
+      ? prepTicketSection(sale, "Бар / Бусад", "Бар / Бусад", other)
       : "",
   ].filter(Boolean);
 
@@ -864,14 +1079,29 @@ function getPrintBillButtonLabel(sale: Pick<PrintableSale, "includeBarOtherBill"
     : PRINT_BILL_BUTTON_LABEL;
 }
 
-function receiptBody(sale: PrintableSale) {
+function receiptBody(
+  sale: PrintableSale,
+  options: { isCopy?: boolean } = {},
+) {
   const receiptDate = sale.settledAt ?? sale.createdAt;
   const receiptDateLabel = sale.settledAt ? "Төлсөн цаг" : "Цаг";
+  const receiptItems = sale.receiptItems ?? sale.items;
+  const receiptTotal = sale.receiptTotal ?? sale.total;
 
-  return `<h1>DALAI EEJ</h1>
+  return `<section class="receipt"><h1>DALAI EEJ</h1>
     <h2>${escapeHtml(sale.receiptTitle ?? "Төлбөрийн баримт")}</h2>
+    ${
+      options.isCopy
+        ? '<h2>ХУУЛБАР / ДАХИН ХЭВЛЭВ</h2>'
+        : ''
+    }
     <div class="meta">
-      <div class="row"><strong>Дугаар</strong><span>${escapeHtml(sale.id)}</span></div>
+      <div class="row"><strong>Баримт №</strong><span class="control-number">${escapeHtml(sale.receiptId ?? sale.id)}</span></div>
+      ${
+        (sale.orderIds?.length || sale.orderId)
+          ? `<div class="row"><strong>Захиалга</strong><span>${escapeHtml((sale.orderIds ?? [sale.orderId ?? ""]).filter(Boolean).join(", "))}</span></div>`
+          : ""
+      }
       <div class="row"><strong>${receiptDateLabel}</strong><span>${escapeHtml(formatReceiptDate(receiptDate))}</span></div>
       <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
       <div class="row"><strong>Төлбөр</strong><span>${escapeHtml(sale.paymentLabel)}</span></div>
@@ -882,7 +1112,7 @@ function receiptBody(sale: PrintableSale) {
       }
     </div>
     <div class="items">
-      ${sale.items
+      ${receiptItems
         .map(
           (item) => `<div class="item">
             <div class="item-main">
@@ -894,24 +1124,63 @@ function receiptBody(sale: PrintableSale) {
         )
         .join("")}
     </div>
-    <div class="row total"><span>Нийт</span><span>${formatMNT(sale.total)}</span></div>
+    <div class="row total"><span>Төлсөн</span><span>${formatMNT(receiptTotal)}</span></div>
     ${
       sale.cashReceived
         ? `<div class="row"><span>Авсан</span><strong>${formatMNT(sale.cashReceived)}</strong></div>
            <div class="row"><span>Хариулт</span><strong>${formatMNT(sale.changeDue)}</strong></div>`
         : ""
     }
-    <div class="note">Баярлалаа</div>`;
+    ${
+      typeof sale.balance === "number" && sale.balance > 0
+        ? `<div class="row"><span>Үлдэгдэл</span><strong>${formatMNT(sale.balance)}</strong></div>`
+        : ""
+    }
+    <div class="paper-check">
+      <div class="paper-check-title">ТӨЛБӨР ТУЛГАСАН</div>
+      <div class="paper-check-options"><span>□ Бэлэн</span><span>□ Карт</span><span>□ Данс</span></div>
+      <div>Банк / терминал лавлах № __________________</div>
+      <div>Шалгасан __________________　Гарын үсэг __________</div>
+    </div>
+    <div class="note">Баярлалаа</div></section>`;
 }
 
-function printReceipt(sale: PrintableSale, reservedWindow?: Window | false) {
-  return printHtml("Баримт", receiptBody(sale), reservedWindow);
+function printReceipt(
+  sale: PrintableSale,
+  reservedWindow?: Window | false,
+  isCopy = false,
+) {
+  return printHtml(
+    "Баримт",
+    receiptBody(sale, { isCopy }),
+    reservedWindow,
+  );
 }
 
 function printBill(sale: PrintableSale, reservedWindow?: Window | false) {
   if (!hasPrintableBill(sale)) return false;
 
   return printHtml("Билл", billBody(sale), reservedWindow);
+}
+
+function printOrderDocuments(
+  sale: PrintableSale,
+  includeReceipt: boolean,
+  reservedWindow?: Window | false,
+) {
+  const body = [
+    billBody(sale),
+    includeReceipt && sale.receiptId ? receiptBody(sale) : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  if (!body) return false;
+
+  return printHtml(
+    includeReceipt && sale.receiptId ? "Захиалга / Баримт" : "Захиалга",
+    body,
+    reservedWindow,
+  );
 }
 
 function formatDayCloseTime(value: string) {
@@ -948,6 +1217,9 @@ function dayCloseBody(report: DayClosePrintReport) {
       }
       <div class="row"><strong>Нээсэн ажилтан</strong><span>${escapeHtml(report.openedBy || report.staffName)}</span></div>
       <div class="row"><strong>Хаасан ажилтан</strong><span>${escapeHtml(report.closedBy || report.staffName)}</span></div>
+      <div class="row"><strong>Төлбөрийн баримтын тоо</strong><span>${report.totals.receiptCount}</span></div>
+      <div class="row"><strong>Эхний баримт №</strong><span>${escapeHtml(report.totals.firstReceiptId || "—")}</span></div>
+      <div class="row"><strong>Сүүлийн баримт №</strong><span>${escapeHtml(report.totals.lastReceiptId || "—")}</span></div>
     </div>
     <div class="items">
       ${summaryRows
@@ -962,6 +1234,16 @@ function dayCloseBody(report: DayClosePrintReport) {
         .join("")}
     </div>
     <div class="row total"><span>Зөрүү</span><span>${formatMNT(report.cashDifference)}</span></div>
+    <div class="paper-check">
+      <div class="paper-check-title">ӨДРИЙН ТУЛГАЛТ</div>
+      <div>□ Дугаартай бүх баримт байгаа</div>
+      <div>□ Бэлэн мөнгө баримттай таарсан</div>
+      <div>□ Картын баримт терминалтай таарсан</div>
+      <div>□ Дансны орлого банкны хуулгатай таарсан</div>
+      <div>Эхний баримт № ${escapeHtml(report.totals.firstReceiptId || "__________________")}</div>
+      <div>Сүүлийн баримт № ${escapeHtml(report.totals.lastReceiptId || "________________")}</div>
+      <div>Шалгасан __________________　Гарын үсэг __________</div>
+    </div>
     ${
       report.itemTotals.length > 0
         ? `<h2>Бараагаар зарагдсан тоо</h2>
@@ -1066,6 +1348,36 @@ function buildReceiptItemsFromSummary(
   });
 }
 
+function buildReceiptItemsFromDetails(
+  items: ChargeEditItem[] | undefined,
+  total: number,
+  staffName: string,
+  idPrefix: string,
+) {
+  const validItems = (items ?? []).filter(
+    (item) => item.name && item.qty > 0 && item.unitPrice >= 0,
+  );
+  const storedTotal = validItems.reduce(
+    (sum, item) => sum + item.qty * item.unitPrice,
+    0,
+  );
+
+  if (validItems.length === 0 || Math.round(storedTotal) !== Math.round(total)) {
+    return null;
+  }
+
+  return validItems.map((item, index): RegisterCartLine => ({
+    id: `${idPrefix}-detail-${index + 1}`,
+    sku: item.sku?.trim() || undefined,
+    name: item.name,
+    price: item.unitPrice,
+    priceMode: item.priceMode,
+    category: item.category || "Үйлчилгээ",
+    quantity: item.qty,
+    staff: staffName,
+  }));
+}
+
 function buildSettlementReceiptSale(
   charges: UnpaidCharge[],
   paymentsByTransaction: Map<string, Array<{ amount: number }>>,
@@ -1073,6 +1385,8 @@ function buildSettlementReceiptSale(
   staffName: string,
   roomLabel: string,
   settledAt: Date,
+  receiptId: string,
+  balance: number,
 ): PrintableSale {
   const total = lines.reduce((sum, line) => sum + line.amount, 0);
   const singleCashLine =
@@ -1085,7 +1399,12 @@ function buildSettlementReceiptSale(
 
     if (paidAmount <= 0) return [];
 
-    return buildReceiptItemsFromSummary(
+    return buildReceiptItemsFromDetails(
+      charge.items,
+      paidAmount,
+      charge.staff || staffName,
+      charge.transactionId,
+    ) ?? buildReceiptItemsFromSummary(
       charge.itemSummary,
       paidAmount,
       charge.staff || staffName,
@@ -1095,7 +1414,9 @@ function buildSettlementReceiptSale(
   });
 
   return {
-    id: lines[0]?.id ?? "PAY",
+    id: receiptId,
+    receiptId,
+    orderIds: charges.map((charge) => charge.transactionId),
     createdAt: settledAt,
     settledAt,
     items:
@@ -1120,6 +1441,7 @@ function buildSettlementReceiptSale(
       .map((line) => line.qpayInvoiceId)
       .filter(Boolean)
       .join(", "),
+    balance,
   };
 }
 
@@ -1131,7 +1453,12 @@ function parseSaleTimestamp(timestamp: string) {
 function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
   const isDebtPayment = sale.historyKind === "payment";
   const createdAt = parseSaleTimestamp(sale.timestamp);
-  const items = buildReceiptItemsFromSummary(
+  const items = buildReceiptItemsFromDetails(
+    sale.items,
+    sale.total,
+    sale.staff,
+    sale.transactionId,
+  ) ?? buildReceiptItemsFromSummary(
     sale.itemSummary,
     sale.total,
     sale.staff,
@@ -1140,7 +1467,10 @@ function buildHistoryReceiptSale(sale: RecentSale): PrintableSale {
   );
 
   return {
-    id: sale.transactionId,
+    id: sale.receiptId || sale.transactionId,
+    receiptId: sale.receiptId || undefined,
+    orderId: sale.orderIds?.[0] ?? sale.transactionId,
+    orderIds: sale.orderIds ?? [sale.transactionId],
     createdAt,
     settledAt: isDebtPayment ? createdAt : undefined,
     items,
@@ -1206,6 +1536,7 @@ function buildChargeBillSale(
 
   return {
     id: charges.map((charge) => charge.transactionId).join(", ") || "BILL",
+    orderIds: charges.map((charge) => charge.transactionId),
     createdAt: parseSaleTimestamp(charges[0]?.timestamp ?? ""),
     items,
     total: items.reduce((sum, item) => sum + item.price * item.quantity, 0),
@@ -1266,7 +1597,10 @@ interface RegisterAppProps {
   businessDate: string;
 }
 
-export function RegisterApp({ businessDate }: RegisterAppProps) {
+export function RegisterApp({
+  businessDate: initialBusinessDate,
+}: RegisterAppProps) {
+  const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
   const [query, setQuery] = useState("");
@@ -1303,6 +1637,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [daySession, setDaySession] = useState<DaySession | null>(null);
   const [dayTotals, setDayTotals] = useState<DayTotals>(EMPTY_DAY_TOTALS);
   const [dayItemTotals, setDayItemTotals] = useState<DayItemTotal[]>([]);
+  const [dayCloseHistory, setDayCloseHistory] = useState<DaySession[]>([]);
   const [dayModalMode, setDayModalMode] = useState<DayModalMode>(null);
   const [dayCashAmount, setDayCashAmount] = useState(0);
   const [dayNotes, setDayNotes] = useState("");
@@ -1317,11 +1652,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const [historySales, setHistorySales] = useState<RecentSale[]>([]);
   const [historyStatus, setHistoryStatus] = useState<CatalogStatus>("loading");
   const [historyMessage, setHistoryMessage] = useState("");
+  const [historyQueryInput, setHistoryQueryInput] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
   const [selectedHistoryTransactionId, setSelectedHistoryTransactionId] =
     useState("");
   const [unpaidCharges, setUnpaidCharges] = useState<UnpaidCharge[]>([]);
   const [chargesStatus, setChargesStatus] = useState<CatalogStatus>("loading");
   const [chargesMessage, setChargesMessage] = useState("");
+  const [chargesQueryInput, setChargesQueryInput] = useState("");
+  const [chargesQuery, setChargesQuery] = useState("");
   const [selectedChargeGroupKey, setSelectedChargeGroupKey] = useState("");
   const [selectedChargeIds, setSelectedChargeIds] = useState<string[]>([]);
   const [editingCharge, setEditingCharge] = useState<UnpaidCharge | null>(null);
@@ -1339,6 +1678,15 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const lastSharedRefreshAtRef = useRef(0);
   const daySessionSignatureRef = useRef("");
   const localIdSequenceRef = useRef(0);
+  const pendingSaleRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
+  const pendingSettlementRequestRef = useRef<{
+    fingerprint: string;
+    requestId: string;
+  } | null>(null);
+  const settlementRequestInFlightRef = useRef(false);
 
   function getNextLocalId(prefix: string) {
     localIdSequenceRef.current += 1;
@@ -1582,6 +1930,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             session?: DaySession | null;
             totals?: DayTotals;
             itemTotals?: DayItemTotal[];
+            closeHistory?: DaySession[];
             error?: string;
           }
         | null;
@@ -1595,11 +1944,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setDaySession(nextSession);
       setDayTotals(data?.totals ?? EMPTY_DAY_TOTALS);
       setDayItemTotals(data?.itemTotals ?? []);
+      setDayCloseHistory(data?.closeHistory ?? []);
       setDayStatus("ready");
       writeOfflineCache(cacheKey, {
         session: nextSession,
         totals: data?.totals ?? EMPTY_DAY_TOTALS,
         itemTotals: data?.itemTotals ?? [],
+        closeHistory: data?.closeHistory ?? [],
       });
     } catch (error) {
       if (silent) return;
@@ -1608,6 +1959,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         session: DaySession | null;
         totals: DayTotals;
         itemTotals: DayItemTotal[];
+        closeHistory?: DaySession[];
       }>(cacheKey);
       if (cached) {
         daySessionSignatureRef.current = getDaySessionSignature(
@@ -1616,6 +1968,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         setDaySession(cached.value.session);
         setDayTotals(cached.value.totals);
         setDayItemTotals(cached.value.itemTotals);
+        setDayCloseHistory(cached.value.closeHistory ?? []);
         setDayStatus("ready");
         setDayMessage("");
         return;
@@ -1624,6 +1977,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setDaySession(null);
       setDayTotals(EMPTY_DAY_TOTALS);
       setDayItemTotals([]);
+      setDayCloseHistory([]);
       setDayStatus("error");
       setDayMessage(
         error instanceof Error ? error.message : "Өдрийн төлөв авч чадсангүй",
@@ -1687,7 +2041,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   useEffect(() => {
     const refreshSharedState = (force = false) => {
-      if (!canRefreshInBackground()) return;
+      if (
+        settlementRequestInFlightRef.current ||
+        !canRefreshInBackground()
+      ) return;
 
       const now = Date.now();
       if (
@@ -1728,7 +2085,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   useEffect(() => {
     const syncDaySession = (options?: { fresh?: boolean }) => {
-      if (canRefreshInBackground()) {
+      if (
+        !settlementRequestInFlightRef.current &&
+        canRefreshInBackground()
+      ) {
         void loadDaySession(options);
       }
     };
@@ -1981,9 +2341,30 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
   const selectedVoidSale =
     recentSales.find((sale) => sale.transactionId === selectedVoidTransactionId) ??
     null;
+  const filteredHistorySales = useMemo(() => {
+    const { generalTerms, roomTerms } = parseRegisterSearchQuery(historyQuery);
+
+    if (generalTerms.length === 0 && roomTerms.length === 0) return historySales;
+
+    return historySales.filter((sale) => {
+      const searchableText = getHistorySearchText(sale);
+      return (
+        generalTerms.every((term) => searchableText.includes(term)) &&
+        roomTerms.every((term) =>
+          matchesRoomSearchFilter(sale.roomOrGuest, term),
+        )
+      );
+    });
+  }, [historyQuery, historySales]);
+  const activeHistoryTransactionId = filteredHistorySales.some(
+    (sale) => sale.transactionId === selectedHistoryTransactionId,
+  )
+    ? selectedHistoryTransactionId
+    : filteredHistorySales[0]?.transactionId ?? "";
   const selectedHistorySale =
-    historySales.find((sale) => sale.transactionId === selectedHistoryTransactionId) ??
-    null;
+    filteredHistorySales.find(
+      (sale) => sale.transactionId === activeHistoryTransactionId,
+    ) ?? null;
   const selectedHistorySaleTotal =
     selectedHistorySale?.saleTotal ?? selectedHistorySale?.total ?? 0;
   const selectedHistoryBalance = selectedHistorySale?.balance ?? 0;
@@ -2039,8 +2420,14 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     () => buildChargeGroups(unpaidCharges),
     [unpaidCharges],
   );
+  const filteredChargeGroups = useMemo(
+    () => filterChargeGroupsByQuery(chargeGroups, chargesQuery),
+    [chargeGroups, chargesQuery],
+  );
   const selectedChargeGroup =
-    chargeGroups.find((group) => group.key === selectedChargeGroupKey) ?? null;
+    filteredChargeGroups.find(
+      (group) => group.key === selectedChargeGroupKey,
+    ) ?? null;
   const selectedCharges = unpaidCharges.filter((charge) =>
     selectedChargeIds.includes(charge.transactionId),
   );
@@ -2077,7 +2464,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     settlementLines.length > 0 &&
     settlementStatus !== "saving";
   const settlementSubmitLabel = settlementStatus === "saving"
-    ? "Бичиж байна"
+    ? "Хадгалж байна — дахин дарахгүй"
     : settlementLines.length === 0
       ? "Төлбөр нэмнэ үү"
     : settlementRemaining === 0
@@ -2384,6 +2771,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       });
       const data = (await response.json().catch(() => null)) as
         | {
+            businessDate?: string;
+            activeBusinessDate?: string;
             session?: DaySession | null;
             totals?: DayTotals;
             itemTotals?: DayItemTotal[];
@@ -2398,11 +2787,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       const nextSession = data?.session ?? null;
       const nextTotals = data?.totals ?? EMPTY_DAY_TOTALS;
       const nextItemTotals = data?.itemTotals ?? [];
+      const nextActiveBusinessDate =
+        data?.activeBusinessDate ?? data?.businessDate ?? businessDate;
       const closeReportPrinted =
         actionMode === "close" && nextSession
           ? printDayCloseReport(
               {
-                businessDate,
+                businessDate: nextSession.businessDate || businessDate,
                 openedAt: nextSession.openedAt,
                 closedAt: nextSession.closedAt,
                 openedBy: nextSession.openedBy,
@@ -2420,10 +2811,22 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             )
           : false;
 
-      daySessionSignatureRef.current = getDaySessionSignature(nextSession);
-      setDaySession(nextSession);
-      setDayTotals(nextTotals);
-      setDayItemTotals(nextItemTotals);
+      const nextActiveSession = actionMode === "close" ? null : nextSession;
+      daySessionSignatureRef.current = getDaySessionSignature(nextActiveSession);
+      setBusinessDate(nextActiveBusinessDate);
+      setDaySession(nextActiveSession);
+      setDayTotals(actionMode === "close" ? EMPTY_DAY_TOTALS : nextTotals);
+      setDayItemTotals(actionMode === "close" ? [] : nextItemTotals);
+      if (actionMode === "close" && nextSession) {
+        setDayCloseHistory((current) => [
+          nextSession,
+          ...current.filter(
+            (session) =>
+              session.businessDate !== nextSession.businessDate ||
+              session.closedAt !== nextSession.closedAt,
+          ),
+        ]);
+      }
       setDayModalMode(null);
       setDayCashAmount(0);
       setDayNotes("");
@@ -2575,12 +2978,35 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     if (mode === "charges" || mode === "history") {
       void loadSharedSalesData();
     }
+    if (mode === "day-close") {
+      void loadDayStatus({ fresh: true });
+    }
   }
 
   function selectChargeGroup(group: ChargeGroup) {
     selectedChargeGroupKeyRef.current = group.key;
     setSelectedChargeGroupKey(group.key);
     setSelectedChargeIds(group.charges.map((charge) => charge.transactionId));
+    resetSettlementPaymentState();
+  }
+
+  function applyChargesSearch(value: string) {
+    const nextQuery = value.trim();
+    const nextGroups = filterChargeGroupsByQuery(chargeGroups, nextQuery);
+    const nextSelectedGroup =
+      nextGroups.find((group) => group.key === selectedChargeGroupKey) ??
+      nextGroups[0] ??
+      null;
+
+    setChargesQuery(nextQuery);
+    if (nextSelectedGroup) {
+      selectChargeGroup(nextSelectedGroup);
+      return;
+    }
+
+    selectedChargeGroupKeyRef.current = "";
+    setSelectedChargeGroupKey("");
+    setSelectedChargeIds([]);
     resetSettlementPaymentState();
   }
 
@@ -2859,16 +3285,64 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSettlementMessage("");
   }
 
+  async function reconcileSettlementRequest(requestId: string) {
+    for (const delayMs of SETTLEMENT_RECONCILIATION_DELAYS_MS) {
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, delayMs);
+        });
+      }
+
+      try {
+        const params = new URLSearchParams({
+          settlementRequestId: requestId,
+        });
+        const response = await fetchWithTimeout(
+          `/api/sales?${params.toString()}`,
+          { cache: "no-store" },
+          SETTLEMENT_STATUS_TIMEOUT_MS,
+        );
+        const data = (await response.json().catch(() => null)) as
+          | SettlementResult
+          | null;
+
+        if (!response.ok) continue;
+        if (data?.requestStatus === "complete" && data.receiptId) {
+          return data;
+        }
+        if (data?.requestStatus === "pending") {
+          setSettlementMessage(
+            "Төлбөр хүснэгтэд бичигдэж байна. Дахин даралгүй түр хүлээнэ үү.",
+          );
+        }
+      } catch {
+        // The original request may still finish even if this status check fails.
+      }
+    }
+
+    return null;
+  }
+
   async function settleSelectedCharge() {
-    if (selectedCharges.length === 0 || settlementStatus === "saving") return;
+    if (
+      selectedCharges.length === 0 ||
+      settlementStatus === "saving" ||
+      settlementRequestInFlightRef.current
+    ) return;
     if (settlementLines.length === 0) return;
 
-    const shouldAutoPrintSettlementReceipt = settlementRemaining === 0;
+    settlementRequestInFlightRef.current = true;
+    const shouldAutoPrintSettlementReceipt = settlementLines.length > 0;
     const receiptWindow = shouldAutoPrintSettlementReceipt
       ? openPrintWindow()
       : false;
     setSettlementStatus("saving");
     setSettlementMessage("");
+    const slowNoticeTimer = window.setTimeout(() => {
+      setSettlementMessage(
+        "Google Sheets-д хадгалж байна. Дахин дарах шаардлагагүй.",
+      );
+    }, SETTLEMENT_SLOW_NOTICE_MS);
 
     try {
       const paymentsByTransaction = new Map<
@@ -2914,30 +3388,81 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         throw new Error("Төлбөр бичих сонгосон мөр алга байна");
       }
 
-      let settledAt = new Date();
+      const settlementsPayload = Array.from(
+        paymentsByTransaction,
+        ([transactionId, payments]) => ({
+          transactionId,
+          payments,
+        }),
+      );
+      const settlementFingerprint = JSON.stringify({
+        staffName,
+        settlements: settlementsPayload,
+      });
+      const pendingSettlementRequest =
+        pendingSettlementRequestRef.current?.fingerprint ===
+        settlementFingerprint
+          ? pendingSettlementRequestRef.current
+          : {
+              fingerprint: settlementFingerprint,
+              requestId: window.crypto.randomUUID(),
+      };
+      pendingSettlementRequestRef.current = pendingSettlementRequest;
+      let response: Response | null = null;
+      let data: SettlementResult | null = null;
 
-      for (const [transactionId, payments] of paymentsByTransaction) {
-        const response = await registerFetch("/api/sales", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            transactionId,
-            staffName,
-            payments,
-          }),
-        });
-        const data = (await response.json().catch(() => null)) as
-          | { error?: string; settledAt?: string }
+      try {
+        response = await registerFetch(
+          "/api/sales",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              staffName,
+              settlements: settlementsPayload,
+              clientRequestId: pendingSettlementRequest.requestId,
+            }),
+          },
+          SETTLEMENT_REQUEST_TIMEOUT_MS,
+        );
+        data = (await response.json().catch(() => null)) as
+          | SettlementResult
           | null;
-
         if (!response.ok) {
           throw new Error(data?.error ?? "Өр төлбөр хааж чадсангүй");
         }
-
-        if (data?.settledAt) {
-          settledAt = parseSaleTimestamp(data.settledAt);
+        if (!data?.receiptId) {
+          throw new Error(
+            "Төлбөр хадгалагдсан боловч баримтын дугаар үүссэнгүй",
+          );
         }
+      } catch (requestError) {
+        const shouldReconcile =
+          !response ||
+          response.ok ||
+          response.status === 409 ||
+          response.status >= 500;
+        if (!shouldReconcile) throw requestError;
+
+        setSettlementMessage(
+          "Серверийн хариу саатлаа. Баримтын бүртгэлийг автоматаар шалгаж байна.",
+        );
+        const reconciled = await reconcileSettlementRequest(
+          pendingSettlementRequest.requestId,
+        );
+        if (!reconciled) throw requestError;
+        data = reconciled;
       }
+
+      if (!data?.receiptId) {
+        throw new Error("Төлбөрийн баримтыг баталгаажуулж чадсангүй");
+      }
+
+      window.clearTimeout(slowNoticeTimer);
+      pendingSettlementRequestRef.current = null;
+      const settledAt = data.settledAt
+        ? parseSaleTimestamp(data.settledAt)
+        : new Date();
 
       const settlementReceipt = buildSettlementReceiptSale(
         selectedCharges,
@@ -2946,6 +3471,8 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         staffName,
         selectedChargeGroup?.label ?? selectedCharges[0]?.roomOrGuest ?? "",
         settledAt,
+        data.receiptId,
+        settlementRemaining,
       );
       const receiptPrinted = shouldAutoPrintSettlementReceipt
         ? printReceipt(settlementReceipt, receiptWindow)
@@ -2972,6 +3499,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       setSettlementMessage(
         error instanceof Error ? error.message : "Өр төлбөр хааж чадсангүй",
       );
+    } finally {
+      window.clearTimeout(slowNoticeTimer);
+      settlementRequestInFlightRef.current = false;
     }
   }
 
@@ -3012,12 +3542,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
   function buildCurrentBillSale(): PrintableSale {
     return {
-      id: `BILL-${(saleSequence + 1).toString().padStart(4, "0")}`,
+      id: "ORD-DRAFT",
+      orderId: "ORD-DRAFT",
       createdAt: new Date(),
       items: cart,
       total: cartTotal,
       isPaid: false,
-      includeBarOtherBill: !roomRequired,
+      includeBarOtherBill: true,
       paymentLabel: "Төлбөр хүлээгдэж байна",
       staffName,
       roomNumber: roomNumber.trim(),
@@ -3048,7 +3579,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     setSaleMessage("Билл хэвлэж байна");
   }
 
-  async function printSelectedChargeBill() {
+  function printSelectedChargeBill() {
     if (selectedCharges.length === 0 || settlementStatus === "saving") return;
 
     const chargeBillWindow = openPrintWindow();
@@ -3059,35 +3590,9 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
 
     const chargesToPrint = selectedCharges;
-    setSettlementStatus("saving");
-    setSettlementMessage("Билл бэлдэж байна");
-
-    const detailResults = await Promise.allSettled(
-      chargesToPrint.map(async (charge) => {
-        const response = await registerFetch(
-          `/api/sales?transactionId=${encodeURIComponent(charge.transactionId)}`,
-          { cache: "no-store" },
-        );
-        const data = (await response.json().catch(() => null)) as
-          | { charge?: UnpaidChargeDetail; error?: string }
-          | null;
-
-        if (!response.ok || !data?.charge) {
-          throw new Error(data?.error ?? "Өрийн захиалга уншиж чадсангүй");
-        }
-
-        return data.charge;
-      }),
-    );
-    const detailedCharges = detailResults.map((result, index) =>
-      result.status === "fulfilled" ? result.value : chargesToPrint[index],
-    );
-    const hasFallbackCharge = detailResults.some(
-      (result) => result.status === "rejected",
-    );
     const printed = printBill(
       buildChargeBillSale(
-        detailedCharges,
+        chargesToPrint,
         staffName,
         selectedChargeGroup?.label ?? chargesToPrint[0]?.roomOrGuest ?? "",
       ),
@@ -3101,11 +3606,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
     }
 
     setSettlementStatus("success");
-    setSettlementMessage(
-      hasFallbackCharge
-        ? "Билл хэвлэж байна · Зарим мөрийг товчоор хэвлэв"
-        : "Билл хэвлэж байна",
-    );
+    setSettlementMessage("Билл хэвлэж байна");
   }
 
   async function saveEditedCharge() {
@@ -3137,6 +3638,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             category: line.category,
             qty: line.quantity,
             unitPrice: line.price,
+            priceMode: line.priceMode,
           })),
         }),
       });
@@ -3164,7 +3666,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       resetSettlementDraft();
       setSettlementStatus("success");
       setSettlementMessage(`${editedTransactionId} захиалгын засвар хадгалагдлаа`);
-      await Promise.allSettled([
+      void Promise.allSettled([
         loadSharedSalesData({ fresh: true }),
         loadDayStatus({ fresh: true }),
       ]);
@@ -3230,36 +3732,38 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       roomRequired || (partialRequired && partialRemaining > 0)
         ? roomNumber.trim()
         : "";
-    const shouldAutoPrintReceipt = !roomRequired && !partialRequired;
-    const shouldAutoPrintRoomBill =
-      roomRequired &&
-      hasPrintableBill({
-        id: "",
-        createdAt: new Date(),
-        items: cart,
-        total: cartTotal,
-        isPaid: false,
-        includeBarOtherBill: false,
-        paymentLabel: "",
-        staffName,
-        roomNumber: chargeReference,
-        cashReceived: 0,
-        changeDue: 0,
-        qpayInvoiceId: "",
-      });
-    const receiptWindow = shouldAutoPrintReceipt ? openPrintWindow() : false;
-    const roomBillWindow = shouldAutoPrintRoomBill ? openPrintWindow() : false;
+    const willRecordPayment =
+      (!roomRequired && !partialRequired) ||
+      (partialRequired && partialPaymentLineTotal > 0);
+    const shouldAutoPrintOrder = hasPrintableBill({
+      id: "ORD-PENDING",
+      orderId: "ORD-PENDING",
+      createdAt: new Date(),
+      items: cart,
+      total: cartTotal,
+      isPaid: false,
+      includeBarOtherBill: true,
+      paymentLabel: "",
+      staffName,
+      roomNumber: chargeReference,
+      cashReceived: 0,
+      changeDue: 0,
+      qpayInvoiceId: "",
+    });
+    const salePrintWindow =
+      shouldAutoPrintOrder || willRecordPayment ? openPrintWindow() : false;
 
     setSaleStatus("saving");
     setSaleMessage("");
     const nextSaleSequence = saleSequence + 1;
     const completedSale: PrintableSale = {
-      id: `SALE-${nextSaleSequence.toString().padStart(4, "0")}`,
+      id: "ORD-PENDING",
+      orderId: "ORD-PENDING",
       createdAt: new Date(),
       items: cart,
       total: cartTotal,
       isPaid: !roomRequired && (!partialRequired || partialSaleFullyPaid),
-      includeBarOtherBill: !roomRequired && !partialSaleHasBalance,
+      includeBarOtherBill: true,
       paymentLabel: getPaymentLogLabel(),
       staffName,
       roomNumber: chargeReference,
@@ -3277,37 +3781,88 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           notes: `Initial partial sale payment; balance ${partialRemaining}`,
         }))
       : undefined;
+    const saleRequestPayload = {
+      items: cart.map((line) => ({
+        sku: line.sku ?? line.id,
+        name: line.name,
+        category: line.category,
+        qty: line.quantity,
+        unitPrice: line.price,
+        priceMode: line.priceMode,
+      })),
+      method: completedSale.paymentLabel,
+      room: chargeReference,
+      staffName,
+      paidStatus: roomRequired || partialSaleHasBalance ? "unpaid" : "paid",
+      total: completedSale.total,
+      cashReceived: completedSale.cashReceived,
+      changeDue: completedSale.changeDue,
+      qpayInvoiceId: completedSale.qpayInvoiceId,
+      payments: partialPayments,
+    };
+    const requestFingerprint = JSON.stringify(saleRequestPayload);
+    const pendingRequest =
+      pendingSaleRequestRef.current?.fingerprint === requestFingerprint
+        ? pendingSaleRequestRef.current
+        : {
+            fingerprint: requestFingerprint,
+            requestId: window.crypto.randomUUID(),
+          };
+    pendingSaleRequestRef.current = pendingRequest;
 
     try {
       const response = await registerFetch("/api/inventory", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cart.map((line) => ({
-            sku: line.sku ?? line.id,
-            name: line.name,
-            category: line.category,
-            qty: line.quantity,
-            unitPrice: line.price,
-          })),
-          method: completedSale.paymentLabel,
-          room: chargeReference,
-          staffName,
-          paidStatus: roomRequired || partialSaleHasBalance ? "unpaid" : "paid",
-          total: completedSale.total,
-          cashReceived: completedSale.cashReceived,
-          changeDue: completedSale.changeDue,
-          qpayInvoiceId: completedSale.qpayInvoiceId,
-          payments: partialPayments,
+          ...saleRequestPayload,
+          clientRequestId: pendingRequest.requestId,
         }),
       });
 
+      const responseData = (await response.json().catch(() => null)) as
+        | {
+            error?: string;
+            transactionId?: string;
+            orderId?: string;
+            receiptId?: string;
+            paidAt?: string;
+          }
+        | null;
       if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as
-          | { error?: string }
-          | null;
-        throw new Error(data?.error ?? "Sale could not be logged");
+        throw new Error(responseData?.error ?? "Sale could not be logged");
       }
+      const orderId =
+        responseData?.orderId ?? responseData?.transactionId ?? "";
+      if (!orderId) {
+        throw new Error("Захиалга хадгалагдсан боловч дугаар үүссэнгүй");
+      }
+      completedSale.id = orderId;
+      completedSale.orderId = orderId;
+      completedSale.receiptId = responseData?.receiptId;
+      completedSale.orderIds = [orderId];
+      if (responseData?.paidAt) {
+        completedSale.settledAt = parseSaleTimestamp(responseData.paidAt);
+      }
+      if (partialRequired && responseData?.receiptId) {
+        completedSale.receiptTitle = "Хэсэгчилсэн төлбөр";
+        completedSale.receiptTotal = partialPaymentLineTotal;
+        completedSale.receiptItems = [
+          {
+            id: `${responseData.receiptId}-payment`,
+            name: "Хэсэгчилсэн төлбөр",
+            price: partialPaymentLineTotal,
+            category: "Үйлчилгээ",
+            quantity: 1,
+            staff: staffName,
+          },
+        ];
+        completedSale.balance = partialRemaining;
+      }
+      if (willRecordPayment && !responseData?.receiptId) {
+        throw new Error("Төлбөр хадгалагдсан боловч баримтын дугаар үүссэнгүй");
+      }
+      pendingSaleRequestRef.current = null;
 
       setCart([]);
       setCashReceived(0);
@@ -3320,12 +3875,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
       }
       setLastSale(completedSale);
       setSaleSequence(nextSaleSequence);
-      const receiptPrinted = shouldAutoPrintReceipt
-        ? printReceipt(completedSale, receiptWindow)
-        : false;
-      const roomBillPrinted = shouldAutoPrintRoomBill
-        ? printBill(completedSale, roomBillWindow)
-        : false;
+      const documentsPrinted = printOrderDocuments(
+        completedSale,
+        Boolean(responseData?.receiptId),
+        salePrintWindow,
+      );
       setSaleStatus("success");
       if (roomRequired || partialSaleHasBalance) {
         selectedChargeGroupKeyRef.current = getChargeReferenceKey(chargeReference);
@@ -3339,7 +3893,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
             : `${chargeReference} өр хэсэгт нэмэгдлээ. Төлбөр хаахад бэлэн.`,
         );
       }
-      await Promise.allSettled([
+      void Promise.allSettled([
         loadSharedSalesData({ fresh: true }),
         loadDayStatus({ fresh: true }),
       ]);
@@ -3350,25 +3904,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           partialSaleHasBalance
             ? `${chargeReference} дээр ${formatMNT(partialRemaining)} үлдэгдэл бичигдлээ`
             : "",
-          shouldAutoPrintReceipt
-            ? receiptPrinted
-              ? "Баримт автоматаар хэвлэгдэж байна"
-              : "Баримтын цонх нээгдсэнгүй"
-            : "",
-          shouldAutoPrintRoomBill
-            ? roomBillPrinted
-              ? "Гал тогооны билл автоматаар хэвлэгдэж байна"
-              : "Биллийн цонх нээгдсэнгүй"
-            : roomRequired || partialSaleHasBalance
-              ? "Өр хэсэгт бичсэн тул бар / бусад билл хэвлэхгүй"
-              : "Билл хэвлэх товчоор гаргана уу",
+          documentsPrinted
+            ? responseData?.receiptId
+              ? "Захиалга болон төлбөрийн баримт хэвлэгдэж байна"
+              : "Гал тогоо / бар захиалга хэвлэгдэж байна"
+            : "Хэвлэх цонх нээгдсэнгүй",
         ]
           .filter(Boolean)
           .join(" · "),
       );
     } catch (error) {
-      closePrintWindow(receiptWindow);
-      closePrintWindow(roomBillWindow);
+      closePrintWindow(salePrintWindow);
       setSaleStatus("error");
       setSaleMessage(
         error instanceof Error
@@ -3421,6 +3967,17 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
           >
             Түүх
             {historySales.length > 0 ? ` (${historySales.length})` : ""}
+          </button>
+          <button
+            type="button"
+            onClick={() => selectRegisterMode("day-close")}
+            className={`h-9 rounded px-3 text-sm font-extrabold ${
+              registerMode === "day-close"
+                ? "bg-[#111827] text-white"
+                : "text-[#374151] hover:bg-white"
+            }`}
+          >
+            Өдрийн хаалт
           </button>
         </div>
 
@@ -3495,7 +4052,207 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
         <section className="flex min-h-[360px] flex-col border-r border-[#d1d5db] lg:min-h-0">
-          {registerMode === "sale" ? (
+          {registerMode === "day-close" ? (
+            <>
+              <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-black">Өдрийн хаалт</h2>
+                    <p className="text-xs font-semibold text-[#6b7280]">
+                      {businessDate} өдрийн борлуулалт, төлбөр, бэлэн мөнгөний тулгалт
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void loadDayStatus({ fresh: true })}
+                    className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold hover:bg-[#f8fafc]"
+                  >
+                    Шинэчлэх
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {!dayOpen ? (
+                  <div className="flex min-h-64 items-center justify-center rounded-md border border-dashed border-[#cbd5e1] bg-white px-6 text-center">
+                    <div>
+                      <p className="text-lg font-black">
+                        {dayStatus === "loading"
+                          ? "Өдрийн мэдээлэл ачаалж байна"
+                          : "Өдөр нээгээгүй байна"}
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-[#6b7280]">
+                        Хаалт хийхийн өмнө тухайн өдрийг нээсэн байх шаардлагатай.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {[
+                        ["Нийт борлуулалт", dayTotals.salesTotal],
+                        ["Нийт төлбөр", dayTotals.paymentTotal],
+                        ["Бэлэн төлбөр", dayTotals.cashPaymentTotal],
+                        ["Карт / Данс", dayNonCashPaymentTotal],
+                        ["Байшин/зочинд бичсэн", dayTotals.roomChargeTotal],
+                        ["Бэлнээр байх ёстой", dayTotals.expectedCash],
+                      ].map(([label, amount]) => (
+                        <div
+                          key={String(label)}
+                          className="rounded-md border border-[#d1d5db] bg-white p-4 shadow-sm"
+                        >
+                          <p className="text-xs font-bold text-[#6b7280]">
+                            {label}
+                          </p>
+                          <p className="mt-2 text-2xl font-black">
+                            {formatMNT(Number(amount))}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="overflow-hidden rounded-md border border-[#cbd5e1] bg-white">
+                      <div className="flex items-center justify-between border-b border-[#cbd5e1] bg-[#f8fafc] px-3 py-3">
+                        <h3 className="text-sm font-black">
+                          Бараагаар зарагдсан тоо
+                        </h3>
+                        <span className="text-xs font-bold text-[#6b7280]">
+                          {dayItemTotals.length} бараа
+                        </span>
+                      </div>
+                      <table className="w-full border-collapse text-sm">
+                        <thead>
+                          <tr>
+                            <th className="w-12 border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
+                              #
+                            </th>
+                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
+                              Бараа
+                            </th>
+                            <th className="w-24 border-b border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
+                              Тоо
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dayItemTotals.length > 0 ? (
+                            dayItemTotals.map((item, index) => (
+                              <tr key={item.name}>
+                                <td className="border-b border-r border-[#e5e7eb] px-3 py-2 font-bold text-[#6b7280]">
+                                  {index + 1}
+                                </td>
+                                <td className="border-b border-r border-[#e5e7eb] px-3 py-2 font-bold">
+                                  {item.name}
+                                </td>
+                                <td className="border-b border-[#e5e7eb] px-3 py-2 text-right font-black">
+                                  {formatNumber(item.quantity)}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={3}
+                                className="px-3 py-8 text-center text-sm font-semibold text-[#6b7280]"
+                              >
+                                Одоогоор зарагдсан бараа алга.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4 overflow-hidden rounded-md border border-[#cbd5e1] bg-white">
+                  <div className="flex items-center justify-between border-b border-[#cbd5e1] bg-[#f8fafc] px-3 py-3">
+                    <div>
+                      <h3 className="text-sm font-black">Хаалтын түүх</h3>
+                      <p className="mt-0.5 text-xs font-semibold text-[#6b7280]">
+                        Хамгийн сүүлд хаасан өдрөөс эхэлж харуулав
+                      </p>
+                    </div>
+                    <span className="text-xs font-bold text-[#6b7280]">
+                      {dayCloseHistory.length} хаалт
+                    </span>
+                  </div>
+
+                  {dayCloseHistory.length === 0 ? (
+                    <div className="px-4 py-10 text-center text-sm font-semibold text-[#6b7280]">
+                      Хадгалагдсан өдрийн хаалт алга.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[760px] border-collapse text-sm">
+                        <thead>
+                          <tr className="bg-white">
+                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
+                              Огноо
+                            </th>
+                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
+                              Хаасан
+                            </th>
+                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
+                              Борлуулалт
+                            </th>
+                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
+                              Тоолсон бэлэн
+                            </th>
+                            <th className="border-b border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
+                              Зөрүү
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dayCloseHistory.map((session) => (
+                            <tr
+                              key={`${session.businessDate}-${session.closedAt}`}
+                              className="align-top"
+                            >
+                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3 font-black">
+                                {session.businessDate}
+                                {session.notes && (
+                                  <p className="mt-1 max-w-48 break-words text-xs font-semibold text-[#6b7280]">
+                                    {session.notes}
+                                  </p>
+                                )}
+                              </td>
+                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3">
+                                <p className="font-bold">
+                                  {session.closedBy || "—"}
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-[#6b7280]">
+                                  {formatDayCloseTime(session.closedAt) || "—"}
+                                </p>
+                              </td>
+                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3 text-right font-black">
+                                {formatMNT(session.salesTotal)}
+                              </td>
+                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3 text-right font-black">
+                                {formatMNT(session.countedCash)}
+                              </td>
+                              <td
+                                className={`border-b border-[#e5e7eb] px-3 py-3 text-right font-black ${
+                                  session.cashDifference === 0
+                                    ? "text-[#047857]"
+                                    : session.cashDifference < 0
+                                      ? "text-[#b91c1c]"
+                                      : "text-[#c2410c]"
+                                }`}
+                              >
+                                {formatMNT(session.cashDifference)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : registerMode === "sale" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -3657,6 +4414,51 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     Шинэчлэх
                   </button>
                 </div>
+                <form
+                  className="mt-3 flex flex-wrap items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    applyChargesSearch(chargesQueryInput);
+                  }}
+                >
+                  <label className="min-w-[220px] flex-1">
+                    <span className="sr-only">Өрөөс хайх</span>
+                    <input
+                      type="search"
+                      value={chargesQueryInput}
+                      onChange={(event) =>
+                        setChargesQueryInput(event.target.value)
+                      }
+                      placeholder="Байшин, зочин, баримт, бараагаар хайх"
+                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="h-10 rounded-md bg-[#111827] px-4 text-sm font-black text-white hover:bg-[#1f2937]"
+                  >
+                    Хайх
+                  </button>
+                  {(chargesQueryInput || chargesQuery) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChargesQueryInput("");
+                        applyChargesSearch("");
+                      }}
+                      className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold hover:bg-[#f8fafc]"
+                    >
+                      Цэвэрлэх
+                    </button>
+                  )}
+                  <p className="ml-auto text-xs font-bold text-[#6b7280]">
+                    {filteredChargeGroups.length} / {chargeGroups.length}
+                  </p>
+                </form>
+                <p className="mt-1.5 text-xs font-semibold text-[#6b7280]">
+                  Яг байшингаар хайх жишээ:{" "}
+                  <span className="font-black text-[#374151]">байшин:8</span>
+                </p>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -3677,9 +4479,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
                     Одоогоор хаагдаагүй өр алга.
                   </div>
+                ) : filteredChargeGroups.length === 0 ? (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Хайлтад тохирох өр олдсонгүй.
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                    {chargeGroups.map((group) => (
+                    {filteredChargeGroups.map((group) => (
                       <button
                         key={group.key}
                         type="button"
@@ -3746,6 +4552,51 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     Шинэчлэх
                   </button>
                 </div>
+                <form
+                  className="mt-3 flex flex-wrap items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    setHistoryQuery(historyQueryInput.trim());
+                  }}
+                >
+                  <label className="min-w-[220px] flex-1">
+                    <span className="sr-only">Түүхээс хайх</span>
+                    <input
+                      type="search"
+                      value={historyQueryInput}
+                      onChange={(event) =>
+                        setHistoryQueryInput(event.target.value)
+                      }
+                      placeholder="Баримт, бараа, өрөө, ажилтнаар хайх"
+                      className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="h-10 rounded-md bg-[#111827] px-4 text-sm font-black text-white hover:bg-[#1f2937]"
+                  >
+                    Хайх
+                  </button>
+                  {(historyQueryInput || historyQuery) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryQueryInput("");
+                        setHistoryQuery("");
+                      }}
+                      className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold hover:bg-[#f8fafc]"
+                    >
+                      Цэвэрлэх
+                    </button>
+                  )}
+                  <p className="ml-auto text-xs font-bold text-[#6b7280]">
+                    {filteredHistorySales.length} / {historySales.length}
+                  </p>
+                </form>
+                <p className="mt-1.5 text-xs font-semibold text-[#6b7280]">
+                  Яг байшингаар хайх жишээ:{" "}
+                  <span className="font-black text-[#374151]">байшин:8</span>
+                </p>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -3766,9 +4617,13 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
                     Борлуулалт / өр төлөлтийн түүх алга.
                   </div>
+                ) : filteredHistorySales.length === 0 ? (
+                  <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#6b7280]">
+                    Хайлтад тохирох түүх олдсонгүй.
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                    {historySales.map((sale) => {
+                    {filteredHistorySales.map((sale) => {
                       const balance = sale.balance ?? 0;
                       const isPartial = sale.paidStatus === "partial" || balance > 0;
 
@@ -3780,7 +4635,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                             setSelectedHistoryTransactionId(sale.transactionId)
                           }
                           className={`rounded-md border bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow ${
-                            selectedHistoryTransactionId === sale.transactionId
+                            activeHistoryTransactionId === sale.transactionId
                               ? "border-[#111827] ring-2 ring-[#111827]"
                               : "border-[#d1d5db]"
                           }`}
@@ -3819,7 +4674,88 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
         </section>
 
         <aside className="flex min-h-[420px] flex-col bg-white">
-          {registerMode === "sale" ? (
+          {registerMode === "day-close" ? (
+            <>
+              <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
+                <h2 className="text-base font-bold">Хаалтын бэлэн байдал</h2>
+                <span
+                  className={`rounded-md border px-2 py-1 text-xs font-black ${
+                    dayOpen
+                      ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
+                      : "border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]"
+                  }`}
+                >
+                  {dayOpen ? "Нээлттэй" : "Нээгээгүй"}
+                </span>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="grid gap-3">
+                  <div className="rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
+                    <p className="text-xs font-bold text-[#6b7280]">Огноо</p>
+                    <p className="mt-1 text-lg font-black">{businessDate}</p>
+                  </div>
+                  <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                    <p className="text-xs font-bold text-[#6b7280]">
+                      Хариуцсан ажилтан
+                    </p>
+                    <p className="mt-1 text-base font-black">
+                      {daySession?.openedBy || staffName}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                    <p className="text-xs font-bold text-[#6b7280]">
+                      Эхлэх бэлэн мөнгө
+                    </p>
+                    <p className="mt-1 text-xl font-black">
+                      {formatMNT(daySession?.startingCash ?? 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-[#d1d5db] bg-white p-3">
+                    <p className="text-xs font-bold text-[#6b7280]">
+                      Хүлээгдэж буй бэлэн мөнгө
+                    </p>
+                    <p className="mt-1 text-xl font-black">
+                      {formatMNT(dayTotals.expectedCash)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-md border border-[#bfdbfe] bg-[#eff6ff] px-3 py-3 text-sm font-semibold text-[#1e40af]">
+                  {dayOpen
+                    ? "Тоолсон бэлэн мөнгөө оруулж, зөрүү гарвал тайлбар бичээд хаалтыг хадгална."
+                    : "Өдрийг нээсний дараа борлуулалт болон хаалтын дүн энд харагдана."}
+                </div>
+
+                {dayMessage && (
+                  <div
+                    className={`mt-4 rounded-md px-3 py-2 text-sm font-bold ${
+                      dayStatus === "error"
+                        ? "bg-[#fef2f2] text-[#b91c1c]"
+                        : "bg-[#ecfdf5] text-[#047857]"
+                    }`}
+                  >
+                    {dayMessage}
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 border-t border-[#d1d5db] p-4">
+                <button
+                  type="button"
+                  onClick={() => openDayModal(dayOpen ? "close" : "open")}
+                  disabled={dayStatus === "loading" || dayStatus === "saving"}
+                  className={`h-14 w-full rounded-md text-base font-black text-white disabled:bg-[#9ca3af] ${
+                    dayOpen
+                      ? "bg-[#b91c1c] hover:bg-[#991b1b]"
+                      : "bg-[#047857] hover:bg-[#065f46]"
+                  }`}
+                >
+                  {dayOpen ? "Өдрийн хаалт хийх" : "Өдөр нээх"}
+                </button>
+              </div>
+            </>
+          ) : registerMode === "sale" ? (
             <>
           <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
             <div className="min-w-0">
@@ -3922,9 +4858,7 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                 disabled={cart.length === 0}
                 className="h-11 rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-extrabold leading-tight text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
               >
-                {roomRequired
-                  ? KITCHEN_BILL_BUTTON_LABEL
-                  : PRINT_BILL_BUTTON_LABEL}
+                {PRINT_BILL_BUTTON_LABEL}
               </button>
             </div>
 
@@ -4347,10 +5281,10 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                     {getPrintBillButtonLabel(lastSale)}
                   </button>
                 )}
-                {lastSale.isPaid && (
+                {lastSale.receiptId && (
                   <button
                     type="button"
-                    onClick={() => printReceipt(lastSale)}
+                    onClick={() => printReceipt(lastSale, undefined, true)}
                     className="h-9 w-full rounded-md border border-[#cbd5e1] bg-white text-xs font-extrabold hover:bg-[#f8fafc]"
                   >
                     Баримт дахин хэвлэх
@@ -4867,7 +5801,11 @@ export function RegisterApp({ businessDate }: RegisterAppProps) {
                   type="button"
                   onClick={() => {
                     if (selectedHistorySale) {
-                      printReceipt(buildHistoryReceiptSale(selectedHistorySale));
+                      printReceipt(
+                        buildHistoryReceiptSale(selectedHistorySale),
+                        undefined,
+                        true,
+                      );
                     }
                   }}
                   disabled={!selectedHistorySale}

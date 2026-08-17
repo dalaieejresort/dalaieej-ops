@@ -1,9 +1,25 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
+import {
+  GoogleSpreadsheet,
+  type GoogleSpreadsheetWorksheet,
+} from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
 import {
   isUnlimitedInventoryItem,
 } from '@/lib/pos/inventory';
+import { serializeSaleItemDetails } from '@/lib/pos/sale-item-details';
+import {
+  makePaymentLineNumber,
+  makeUniformControlNumber,
+  makeUniformOrderNumber,
+  makeUniformReceiptNumber,
+  PAYMENT_LOG_HEADERS,
+  RECEIPT_LOG_HEADERS,
+} from '@/lib/pos/payment-controls';
+import {
+  DAY_SESSION_HEADERS,
+  requireActiveBusinessSession,
+} from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 
 type InventoryPostBody = {
@@ -13,6 +29,7 @@ type InventoryPostBody = {
     category?: string;
     qty?: number;
     unitPrice?: number;
+    priceMode?: 'guest' | 'staff';
   }>;
   method?: string;
   room?: string;
@@ -23,6 +40,7 @@ type InventoryPostBody = {
   changeDue?: number;
   qpayInvoiceId?: string;
   payments?: InventoryPaymentInput[];
+  clientRequestId?: string;
 };
 
 type InventoryPaymentInput = {
@@ -64,6 +82,18 @@ const PAYMENTS_LOG_SHEET_TITLES = [
   'payments_log',
 ].filter(Boolean) as string[];
 
+const RECEIPTS_LOG_SHEET_TITLES = [
+  process.env.GOOGLE_RECEIPTS_SHEET_TITLE,
+  'Receipts_Log',
+  'receipts_log',
+].filter(Boolean) as string[];
+
+const DAY_SESSION_SHEET_TITLES = [
+  process.env.GOOGLE_DAY_SESSION_SHEET_TITLE,
+  'Day_Sessions',
+  'day_sessions',
+].filter(Boolean) as string[];
+
 const SALES_LOG_HEADERS = [
   'transaction_id',
   'timestamp',
@@ -80,19 +110,27 @@ const SALES_LOG_HEADERS = [
   'item_summary',
   'qpay_invoice_id',
   'notes',
+  'item_details',
+  'session_id',
+  'business_date',
+  'client_request_id',
+  'operation_status',
+  'receipt_id',
 ];
 
-const PAYMENTS_LOG_HEADERS = [
-  'payment_id',
-  'transaction_id',
-  'timestamp',
-  'staff',
-  'payment_method',
-  'amount',
-  'cash_received',
-  'change_due',
-  'qpay_invoice_id',
-  'notes',
+const INVENTORY_LOG_HEADERS = [
+  'Transaction ID',
+  'Timestamp',
+  'SKU (Барааны код)',
+  'Item Description',
+  'Type (Хөдөлгөөн)',
+  'Quantity (Тоо)',
+  'Location (Байршил)',
+  'Handled By',
+  'Payment Method',
+  'Room Number',
+  'Session ID',
+  'Business Date',
 ];
 
 const CATALOG_COLUMNS = {
@@ -189,10 +227,65 @@ function findSheet(doc: SheetDoc, titles: string[], purpose: string) {
   );
 }
 
+async function ensureSheetHeaders(
+  sheet: GoogleSpreadsheetWorksheet,
+  headers: readonly string[],
+) {
+  await sheet.loadHeaderRow();
+  const missingHeaders = headers.filter(
+    header => !sheet.headerValues.includes(header),
+  );
+  if (missingHeaders.length === 0) return sheet;
+
+  const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+  if (nextHeaders.length > sheet.columnCount) {
+    await sheet.resize({
+      rowCount: sheet.rowCount,
+      columnCount: nextHeaders.length,
+    });
+  }
+  await sheet.setHeaderRow(nextHeaders);
+  return sheet;
+}
+
+async function getOrCreateSheet(
+  doc: SheetDoc,
+  titles: string[],
+  headers: readonly string[],
+) {
+  for (const title of titles) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return ensureSheetHeaders(sheet, headers);
+  }
+
+  return doc.addSheet({
+    title: titles[0] ?? 'Sheet',
+    headerValues: [...headers],
+  });
+}
+
 async function getOrCreateSalesLogSheet(doc: SheetDoc) {
   for (const title of SALES_LOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) {
+      await sheet.loadHeaderRow();
+      const missingHeaders = SALES_LOG_HEADERS.filter(
+        header => !sheet.headerValues.includes(header),
+      );
+
+      if (missingHeaders.length > 0) {
+        const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+        if (nextHeaders.length > sheet.columnCount) {
+          await sheet.resize({
+            rowCount: sheet.rowCount,
+            columnCount: nextHeaders.length,
+          });
+        }
+        await sheet.setHeaderRow(nextHeaders);
+      }
+
+      return sheet;
+    }
   }
 
   return doc.addSheet({
@@ -204,12 +297,30 @@ async function getOrCreateSalesLogSheet(doc: SheetDoc) {
 async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
   for (const title of PAYMENTS_LOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) {
+      await sheet.loadHeaderRow();
+      const missingHeaders = PAYMENT_LOG_HEADERS.filter(
+        header => !sheet.headerValues.includes(header),
+      );
+
+      if (missingHeaders.length > 0) {
+        const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+        if (nextHeaders.length > sheet.columnCount) {
+          await sheet.resize({
+            rowCount: sheet.rowCount,
+            columnCount: nextHeaders.length,
+          });
+        }
+        await sheet.setHeaderRow(nextHeaders);
+      }
+
+      return sheet;
+    }
   }
 
   return doc.addSheet({
     title: PAYMENTS_LOG_SHEET_TITLES[0] ?? 'Payments_Log',
-    headerValues: PAYMENTS_LOG_HEADERS,
+    headerValues: PAYMENT_LOG_HEADERS,
   });
 }
 
@@ -231,10 +342,6 @@ function toNumber(value: unknown) {
   const cleaned = String(value ?? '').replace(/[₮,\s]/g, '');
   const numberValue = Number(cleaned);
   return Number.isFinite(numberValue) ? numberValue : 0;
-}
-
-function createPaymentId() {
-  return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
 function getInventoryPayments(
@@ -288,6 +395,10 @@ function inventoryErrorMessage(error: unknown, fallback: string) {
     return message;
   }
 
+  if (message.includes('Open the business day')) {
+    return message;
+  }
+
   return fallback;
 }
 
@@ -324,11 +435,11 @@ export async function GET(request: Request) {
         };
       });
 
-      // Stock-tracked items need stock; made-to-order food/menu items stay sellable.
+      // Keep every priced catalogue item visible, even when its stock is zero.
       return products.filter(
         p =>
           p.sku &&
-          (p.stock > 0 || isUnlimitedInventoryItem(p)),
+          p.price > 0,
       );
     };
     const validProducts = bypassCache
@@ -366,32 +477,94 @@ export async function POST(request: Request) {
       changeDue,
       qpayInvoiceId,
       payments,
+      clientRequestId,
     } = body;
     if (!items?.length) {
       return NextResponse.json({ error: 'No items to log' }, { status: 400 });
     }
 
     const doc = await loadSpreadsheet();
-    const logSheet = findSheet(doc, LOG_SHEET_TITLES, 'inventory log');
-    const catalogSheet = findSheet(doc, CATALOG_SHEET_TITLES, 'inventory catalogue');
-    const salesLogSheet = await getOrCreateSalesLogSheet(doc);
-    const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
-    const catalogRows = await catalogSheet.getRows();
-    const unlimitedInventorySkus = new Set(
-      catalogRows
-        .filter(row => {
-          const sku = getFirstValue(row, CATALOG_COLUMNS.sku);
-          const category = getFirstValue(row, CATALOG_COLUMNS.category);
-          const name = getFirstValue(row, CATALOG_COLUMNS.name);
-          return isUnlimitedInventoryItem({ category, name, sku });
-        })
-        .map(row => String(getFirstValue(row, CATALOG_COLUMNS.sku)).trim())
-        .filter(Boolean),
-    );
+    const [
+      logSheet,
+      salesLogSheet,
+      paymentsLogSheet,
+      receiptsLogSheet,
+      daySessionSheet,
+    ] =
+      await Promise.all([
+        ensureSheetHeaders(
+          findSheet(doc, LOG_SHEET_TITLES, 'inventory log'),
+          INVENTORY_LOG_HEADERS,
+        ),
+        getOrCreateSalesLogSheet(doc),
+        getOrCreatePaymentsLogSheet(doc),
+        getOrCreateSheet(
+          doc,
+          RECEIPTS_LOG_SHEET_TITLES,
+          RECEIPT_LOG_HEADERS,
+        ),
+        getOrCreateSheet(
+          doc,
+          DAY_SESSION_SHEET_TITLES,
+          DAY_SESSION_HEADERS,
+        ),
+      ]);
+    const [daySessionRows, existingSalesRows] = await Promise.all([
+      daySessionSheet.getRows(),
+      clientRequestId ? salesLogSheet.getRows() : Promise.resolve([]),
+    ]);
+    const activeSession = requireActiveBusinessSession(daySessionRows);
+    const normalizedClientRequestId = String(clientRequestId ?? '').trim();
+    const existingSale = normalizedClientRequestId
+      ? existingSalesRows.find(
+          row =>
+            String(row.get('client_request_id') ?? '').trim() ===
+            normalizedClientRequestId,
+        )
+      : undefined;
+
+    if (existingSale) {
+      const existingOrderId = String(
+        existingSale.get('transaction_id') ?? '',
+      ).trim();
+      const existingReceiptId = String(
+        existingSale.get('receipt_id') ?? '',
+      ).trim();
+      const operationStatus = String(
+        existingSale.get('operation_status') ?? '',
+      ).trim();
+
+      if (operationStatus !== 'complete') {
+        return NextResponse.json(
+          {
+            error:
+              'This order request already reached the ledger but did not finish. Check History before retrying.',
+            orderId: existingOrderId,
+          },
+          { status: 409 },
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        duplicateRequest: true,
+        transactionId: existingOrderId,
+        orderId: existingOrderId,
+        receiptId: existingReceiptId || undefined,
+        sessionId: String(existingSale.get('session_id') ?? '').trim(),
+        businessDate: String(
+          existingSale.get('business_date') ?? '',
+        ).trim(),
+        paidAt: existingReceiptId
+          ? String(existingSale.get('timestamp') ?? '').trim()
+          : undefined,
+      });
+    }
 
     // Lock the timestamp to Ulaanbaatar time regardless of where Vercel's servers are
-    const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
-    const transactionId = `TXN-${Math.floor(100000 + Math.random() * 900000)}`;
+    const saleCreatedAt = new Date();
+    const timestamp = saleCreatedAt.toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
+    let transactionId = makeUniformControlNumber('ORD', saleCreatedAt);
     const saleSubtotal = items.reduce(
       (sum, item) => sum + (item.unitPrice ?? 0) * (item.qty ?? 1),
       0,
@@ -451,11 +624,7 @@ export async function POST(request: Request) {
       .join(', ');
 
     const inventoryItems = items.filter(item => {
-      const sku = String(item.sku ?? '').trim();
-      return (
-        !isUnlimitedInventoryItem(item) &&
-        !unlimitedInventorySkus.has(sku)
-      );
+      return !isUnlimitedInventoryItem(item);
     });
 
     // Map stock-tracked cart items to inventory ledger rows. Food stays in Sales_Log only.
@@ -472,49 +641,119 @@ export async function POST(request: Request) {
         'Front Desk',              // G: Location (Can be dynamic later)
         staffName || 'Staff',      // H: Handled By
         paymentMethod || '',       // I: Payment Method (Bank/Card/Cash/Room)
-        room || ''                 // J: Room Number (If applicable)
+        room || '',                // J: Room Number (If applicable)
+        activeSession.sessionId,   // K: Immutable day session
+        activeSession.businessDate // L: Operational business date
       ];
     });
 
-    const salesRow = [
-      transactionId,
-      timestamp,
-      staffName || 'Staff',
-      paymentMethod || '',
-      normalizedPaidStatus,
-      room || '',
-      saleSubtotal,
-      0,
-      saleTotal,
-      paymentCashReceived,
-      paymentChangeDue,
-      items.reduce((sum, item) => sum + (item.qty ?? 1), 0),
-      itemSummary,
-      paymentBankReferenceId,
-      '',
-    ];
     const shouldAppendPayment = normalizedPaidStatus !== 'unpaid' || hasExplicitPayments;
-    const paymentRows = inventoryPayments.map(payment => [
-      createPaymentId(),
-      transactionId,
+    const salesRow = {
+      transaction_id: transactionId,
       timestamp,
-      staffName || 'Staff',
-      payment.paymentMethod,
-      payment.amount,
-      payment.cashReceived || '',
-      payment.changeDue || '',
-      payment.qpayInvoiceId || '',
-      payment.notes || 'Initial sale payment',
-    ]);
+      staff: staffName || 'Staff',
+      payment_method: paymentMethod || '',
+      paid_status: normalizedPaidStatus,
+      room_or_guest: room || '',
+      subtotal: saleSubtotal,
+      discount: 0,
+      total: saleTotal,
+      cash_received: paymentCashReceived,
+      change_due: paymentChangeDue,
+      item_count: items.reduce((sum, item) => sum + (item.qty ?? 1), 0),
+      item_summary: itemSummary,
+      qpay_invoice_id: paymentBankReferenceId,
+      notes: '',
+      item_details: serializeSaleItemDetails(items),
+      session_id: activeSession.sessionId,
+      business_date: activeSession.businessDate,
+      client_request_id: normalizedClientRequestId,
+      operation_status: 'pending',
+      receipt_id: '',
+    };
 
-    // Fire the data into Google Sheets
+    // The permanent order number uses the append-only Sales_Log row number.
+    const [createdSaleRow] = await salesLogSheet.addRows([salesRow]);
+    transactionId = makeUniformOrderNumber(
+      createdSaleRow.rowNumber,
+      activeSession.businessDate,
+    );
+    createdSaleRow.set('transaction_id', transactionId);
+    await createdSaleRow.save();
+    newRows.forEach(row => {
+      row[0] = transactionId;
+    });
+    let receiptId: string | undefined;
+    let receiptRowToFinalize:
+      | {
+          set: (columnName: string, value: unknown) => void;
+          save: () => Promise<void>;
+        }
+      | undefined;
+    if (shouldAppendPayment && inventoryPayments.length > 0) {
+      const [createdReceiptRow] = await receiptsLogSheet.addRows([
+        {
+          receipt_id: makeUniformControlNumber('RCP'),
+          timestamp,
+          session_id: activeSession.sessionId,
+          business_date: activeSession.businessDate,
+          staff: staffName || 'Staff',
+          order_ids: transactionId,
+          total: paymentTotal,
+          payment_summary: inventoryPayments
+            .map(payment => `${payment.paymentMethod} ${payment.amount}`)
+            .join(' + '),
+          cash_received: paymentCashReceived || '',
+          change_due: paymentChangeDue || '',
+          qpay_invoice_id: paymentBankReferenceId || '',
+          notes:
+            normalizedPaidStatus === 'unpaid'
+              ? `Partial payment for ${transactionId}`
+              : `Payment for ${transactionId}`,
+          client_request_id: normalizedClientRequestId,
+          operation_status: 'pending',
+        },
+      ]);
+      receiptId = makeUniformReceiptNumber(
+        createdReceiptRow.rowNumber,
+        activeSession.businessDate,
+      );
+      createdReceiptRow.set('receipt_id', receiptId);
+      await createdReceiptRow.save();
+      receiptRowToFinalize = createdReceiptRow;
+    }
+    const paymentRows = inventoryPayments.map((payment, index) => ({
+      payment_id: receiptId
+        ? makePaymentLineNumber(receiptId, index + 1)
+        : makeUniformControlNumber('PAY'),
+      transaction_id: transactionId,
+      timestamp,
+      staff: staffName || 'Staff',
+      payment_method: payment.paymentMethod,
+      amount: payment.amount,
+      cash_received: payment.cashReceived || '',
+      change_due: payment.changeDue || '',
+      qpay_invoice_id: payment.qpayInvoiceId || '',
+      notes: payment.notes || 'Initial sale payment',
+      receipt_id: receiptId ?? '',
+      session_id: activeSession.sessionId,
+      business_date: activeSession.businessDate,
+    }));
+
+    // Fire the linked inventory and payment records into Google Sheets.
     await Promise.all([
       newRows.length > 0 ? logSheet.addRows(newRows) : Promise.resolve(),
-      salesLogSheet.addRows([salesRow]),
       shouldAppendPayment && paymentRows.length > 0
         ? paymentsLogSheet.addRows(paymentRows)
-        : Promise.resolve(),
+        : Promise.resolve([]),
     ]);
+    if (receiptRowToFinalize) {
+      receiptRowToFinalize.set('operation_status', 'complete');
+      await receiptRowToFinalize.save();
+    }
+    createdSaleRow.set('receipt_id', receiptId ?? '');
+    createdSaleRow.set('operation_status', 'complete');
+    await createdSaleRow.save();
     clearCachedReads('day:');
     clearCachedReads('sales:');
     clearCachedReads('inventory:');
@@ -523,6 +762,11 @@ export async function POST(request: Request) {
       success: true,
       message: `Logged ${newRows.length} inventory items and 1 sale.`,
       transactionId,
+      orderId: transactionId,
+      receiptId,
+      sessionId: activeSession.sessionId,
+      businessDate: activeSession.businessDate,
+      paidAt: receiptId ? timestamp : undefined,
     });
   } catch (error) {
     logInventoryError('Inventory POST Error', error);

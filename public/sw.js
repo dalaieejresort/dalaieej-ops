@@ -1,4 +1,4 @@
-const NAVIGATION_CACHE = "dalaieej-navigation-v2";
+const NAVIGATION_CACHE = "dalaieej-navigation-v3";
 const ASSET_CACHE = "dalaieej-assets-v1";
 const OFFLINE_ROUTES = ["/", "/register", "/ops"];
 const STATIC_ASSETS = new Set([

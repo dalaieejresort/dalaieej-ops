@@ -1,6 +1,17 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
+import {
+  makeUniformControlNumber,
+  makeUniformSessionNumber,
+  PAYMENT_LOG_HEADERS,
+} from '@/lib/pos/payment-controls';
+import {
+  DAY_SESSION_HEADERS,
+  getSessionBusinessDate,
+  getSessionId,
+  rowBelongsToBusinessDate,
+} from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 
 type DayAction = 'open' | 'close';
@@ -20,6 +31,7 @@ type SheetRow = {
   get: (columnName: string) => unknown;
   set: (columnName: string, value: unknown) => void;
   save: () => Promise<void>;
+  rowNumber?: number;
 };
 
 type DayTotals = {
@@ -31,16 +43,14 @@ type DayTotals = {
   otherPaymentTotal: number;
   roomChargeTotal: number;
   expectedCash: number;
+  receiptCount: number;
+  firstReceiptId: string;
+  lastReceiptId: string;
 };
 
 type DayItemTotal = {
   name: string;
   quantity: number;
-};
-
-type SessionWindow = {
-  openedAt?: string;
-  closedAt?: string;
 };
 
 const DAY_READ_CACHE_TTL_MS = 10000;
@@ -64,27 +74,6 @@ const PAYMENTS_LOG_SHEET_TITLES = [
   'payments_log',
 ].filter(Boolean) as string[];
 
-const DAY_SESSION_HEADERS = [
-  'business_date',
-  'opened_at',
-  'opened_by',
-  'starting_cash',
-  'status',
-  'closed_at',
-  'closed_by',
-  'counted_cash',
-  'expected_cash',
-  'cash_difference',
-  'payment_total',
-  'cash_payment_total',
-  'card_payment_total',
-  'qpay_payment_total',
-  'other_payment_total',
-  'room_charge_total',
-  'sales_total',
-  'notes',
-];
-
 const SALES_LOG_HEADERS = [
   'transaction_id',
   'timestamp',
@@ -101,19 +90,12 @@ const SALES_LOG_HEADERS = [
   'item_summary',
   'qpay_invoice_id',
   'notes',
-];
-
-const PAYMENTS_LOG_HEADERS = [
-  'payment_id',
-  'transaction_id',
-  'timestamp',
-  'staff',
-  'payment_method',
-  'amount',
-  'cash_received',
-  'change_due',
-  'qpay_invoice_id',
-  'notes',
+  'item_details',
+  'session_id',
+  'business_date',
+  'client_request_id',
+  'operation_status',
+  'receipt_id',
 ];
 
 function requiredEnv(name: string) {
@@ -159,16 +141,34 @@ async function loadSpreadsheet() {
 async function getOrCreateSheet(
   doc: SheetDoc,
   titles: string[],
-  headers: string[],
+  headers: readonly string[],
 ) {
   for (const title of titles) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) {
+      await sheet.loadHeaderRow();
+      const missingHeaders = headers.filter(
+        header => !sheet.headerValues.includes(header),
+      );
+
+      if (missingHeaders.length > 0) {
+        const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+        if (nextHeaders.length > sheet.columnCount) {
+          await sheet.resize({
+            rowCount: sheet.rowCount,
+            columnCount: nextHeaders.length,
+          });
+        }
+        await sheet.setHeaderRow(nextHeaders);
+      }
+
+      return sheet;
+    }
   }
 
   return doc.addSheet({
     title: titles[0] ?? 'Sheet',
-    headerValues: headers,
+    headerValues: [...headers],
   });
 }
 
@@ -210,88 +210,11 @@ function toNumber(value: unknown) {
   return Number.isFinite(numberValue) ? numberValue : 0;
 }
 
-function businessDateFromTimestamp(value: unknown) {
-  const timestamp = String(value ?? '').trim();
-  const match = timestamp.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-
-  if (match) {
-    const [, month, day, year] = match;
-    return `${year}.${month.padStart(2, '0')}.${day.padStart(2, '0')}`;
-  }
-
-  const parsed = new Date(timestamp);
-  if (!Number.isNaN(parsed.getTime())) {
-    return new Intl.DateTimeFormat('mn-MN', {
-      timeZone: 'Asia/Ulaanbaatar',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    })
-      .format(parsed)
-      .replace(/\//g, '.');
-  }
-
-  return '';
-}
-
-function timestampMs(value: unknown) {
-  const timestamp = String(value ?? '').trim();
-  const match = timestamp.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i,
-  );
-
-  if (match) {
-    const [, month, day, year, hour, minute, second, meridiem] = match;
-    let hour24 = Number(hour);
-    if (meridiem.toUpperCase() === 'PM' && hour24 !== 12) hour24 += 12;
-    if (meridiem.toUpperCase() === 'AM' && hour24 === 12) hour24 = 0;
-
-    return Date.UTC(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      hour24,
-      Number(minute),
-      Number(second),
-    );
-  }
-
-  const parsed = new Date(timestamp);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
-}
-
-function isInsideSessionWindow(
-  timestamp: unknown,
-  openedAt?: string,
-  closedAt?: string,
-) {
-  if (!openedAt && !closedAt) return true;
-
-  const rowMs = timestampMs(timestamp);
-  const openedMs = openedAt ? timestampMs(openedAt) : null;
-  const closedMs = closedAt ? timestampMs(closedAt) : null;
-
-  if (rowMs === null) return false;
-  if (openedMs !== null && rowMs < openedMs) return false;
-  if (closedMs !== null && rowMs > closedMs) return false;
-
-  return true;
-}
-
 function isInsideBusinessDay(
-  timestamp: unknown,
+  row: { get: (columnName: string) => unknown },
   businessDate: string,
-  sessionWindow?: SessionWindow,
 ) {
-  if (sessionWindow?.openedAt || sessionWindow?.closedAt) {
-    return isInsideSessionWindow(
-      timestamp,
-      sessionWindow.openedAt,
-      sessionWindow.closedAt,
-    );
-  }
-
-  return businessDateFromTimestamp(timestamp) === businessDate;
+  return rowBelongsToBusinessDate(row, businessDate);
 }
 
 function classifyPaymentMethod(method: string) {
@@ -323,15 +246,29 @@ function getPaymentTotals(paymentRows: Array<{ get: (columnName: string) => unkn
 
 function getLatestSession(rows: SheetRow[], businessDate: string) {
   return rows
-    .filter(row => getCell(row, 'business_date') === businessDate)
+    .filter(row => getSessionBusinessDate(row) === businessDate)
     .at(-1) ?? null;
+}
+
+function getActiveSession(rows: SheetRow[]) {
+  // Sheet order is append-only, so the newest valid row is authoritative.
+  // Ignoring older open rows prevents a stale date from resurfacing.
+  const latestSession = rows
+    .slice()
+    .reverse()
+    .find(row => getCell(row, 'business_date')) ?? null;
+
+  return latestSession && getCell(latestSession, 'status').toLowerCase() === 'open'
+    ? latestSession
+    : null;
 }
 
 function serializeSession(row: SheetRow | null) {
   if (!row) return null;
 
   return {
-    businessDate: getCell(row, 'business_date'),
+    businessDate: getSessionBusinessDate(row),
+    sessionId: getSessionId(row),
     openedAt: getCell(row, 'opened_at'),
     openedBy: getCell(row, 'opened_by'),
     startingCash: toNumber(row.get('starting_cash')),
@@ -349,36 +286,37 @@ function serializeSession(row: SheetRow | null) {
     roomChargeTotal: toNumber(row.get('room_charge_total')),
     salesTotal: toNumber(row.get('sales_total')),
     notes: getCell(row, 'notes'),
+    receiptCount: toNumber(row.get('receipt_count')),
+    firstReceiptId: getCell(row, 'first_receipt_id'),
+    lastReceiptId: getCell(row, 'last_receipt_id'),
   };
+}
+
+function getClosedSessionHistory(rows: SheetRow[]) {
+  return rows
+    .slice()
+    .reverse()
+    .map(row => serializeSession(row))
+    .filter(session => session?.status.toLowerCase() === 'closed');
 }
 
 function getDaySalesRows(
   salesRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  sessionWindow?: SessionWindow,
 ) {
   return salesRows.filter(
     row =>
-      isInsideBusinessDay(
-        row.get('timestamp'),
-        businessDate,
-        sessionWindow,
-      ),
+      getCell(row, 'operation_status') !== 'pending' &&
+      isInsideBusinessDay(row, businessDate),
   );
 }
 
 function getDayPaymentRows(
   paymentRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  sessionWindow?: SessionWindow,
 ) {
   const dayPaymentRows = paymentRows.filter(
-    row =>
-      isInsideBusinessDay(
-        row.get('timestamp'),
-        businessDate,
-        sessionWindow,
-      ),
+    row => isInsideBusinessDay(row, businessDate),
   );
 
   return dayPaymentRows;
@@ -389,10 +327,9 @@ function getDayTotals(
   paymentRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
   startingCash: number,
-  sessionWindow?: SessionWindow,
 ): DayTotals {
-  const daySalesRows = getDaySalesRows(salesRows, businessDate, sessionWindow);
-  const dayPaymentRows = getDayPaymentRows(paymentRows, businessDate, sessionWindow);
+  const daySalesRows = getDaySalesRows(salesRows, businessDate);
+  const dayPaymentRows = getDayPaymentRows(paymentRows, businessDate);
   const totals: DayTotals = {
     salesTotal: 0,
     paymentTotal: 0,
@@ -402,6 +339,9 @@ function getDayTotals(
     otherPaymentTotal: 0,
     roomChargeTotal: 0,
     expectedCash: startingCash,
+    receiptCount: 0,
+    firstReceiptId: '',
+    lastReceiptId: '',
   };
 
   const paymentTotals = getPaymentTotals(paymentRows);
@@ -429,6 +369,17 @@ function getDayTotals(
     else totals.otherPaymentTotal += amount;
   }
 
+  const receiptIds = Array.from(
+    new Set(
+      dayPaymentRows
+        .map(row => getCell(row, 'receipt_id'))
+        .filter(Boolean),
+    ),
+  );
+  totals.receiptCount = receiptIds.length;
+  totals.firstReceiptId = receiptIds[0] ?? '';
+  totals.lastReceiptId = receiptIds.at(-1) ?? '';
+
   totals.expectedCash = startingCash + totals.cashPaymentTotal;
   return totals;
 }
@@ -453,10 +404,9 @@ function parseItemSummary(summary: string) {
 function getDayItemTotals(
   salesRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
-  sessionWindow?: SessionWindow,
 ) {
   const totals = new Map<string, number>();
-  const daySalesRows = getDaySalesRows(salesRows, businessDate, sessionWindow);
+  const daySalesRows = getDaySalesRows(salesRows, businessDate);
 
   for (const row of daySalesRows) {
     if (getCell(row, 'paid_status').toLowerCase() === 'voided') continue;
@@ -469,6 +419,28 @@ function getDayItemTotals(
   return Array.from(totals.entries())
     .map(([name, quantity]) => ({ name, quantity }))
     .sort((first, second) => second.quantity - first.quantity || first.name.localeCompare(second.name));
+}
+
+function getDayMetrics(
+  salesRows: Array<{ get: (columnName: string) => unknown }>,
+  paymentRows: Array<{ get: (columnName: string) => unknown }>,
+  businessDate: string,
+  sessionRow: SheetRow | null,
+) {
+  const startingCash = sessionRow ? toNumber(sessionRow.get('starting_cash')) : 0;
+
+  return {
+    totals: getDayTotals(
+      salesRows,
+      paymentRows,
+      businessDate,
+      startingCash,
+    ),
+    itemTotals: getDayItemTotals(
+      salesRows,
+      businessDate,
+    ),
+  };
 }
 
 function dayErrorMessage(error: unknown, fallback: string) {
@@ -508,7 +480,7 @@ async function getDayContext(businessDate: string) {
   const paymentsLogSheet = await getOrCreateSheet(
     doc,
     PAYMENTS_LOG_SHEET_TITLES,
-    PAYMENTS_LOG_HEADERS,
+    PAYMENT_LOG_HEADERS,
   );
   const [dayRows, salesRows, paymentRows] = await Promise.all([
     daySheet.getRows() as Promise<SheetRow[]>,
@@ -516,21 +488,22 @@ async function getDayContext(businessDate: string) {
     paymentsLogSheet.getRows(),
   ]);
   const sessionRow = getLatestSession(dayRows, businessDate);
-  const startingCash = sessionRow ? toNumber(sessionRow.get('starting_cash')) : 0;
-  const sessionWindow = {
-    openedAt: sessionRow ? getCell(sessionRow, 'opened_at') : undefined,
-    closedAt: sessionRow ? getCell(sessionRow, 'closed_at') : undefined,
-  };
-  const totals = getDayTotals(
+  const { totals, itemTotals } = getDayMetrics(
     salesRows,
     paymentRows,
     businessDate,
-    startingCash,
-    sessionWindow,
+    sessionRow,
   );
-  const itemTotals = getDayItemTotals(salesRows, businessDate, sessionWindow);
 
-  return { daySheet, dayRows, sessionRow, totals, itemTotals };
+  return {
+    daySheet,
+    dayRows,
+    salesRows,
+    paymentRows,
+    sessionRow,
+    totals,
+    itemTotals,
+  };
 }
 
 async function getDaySessionContext(businessDate: string) {
@@ -574,13 +547,19 @@ export async function GET(request: Request) {
     }
 
     const loadDayPayload = async () => {
-      const { sessionRow, totals, itemTotals } = await getDayContext(businessDate);
+      const {
+        dayRows,
+        sessionRow,
+        totals,
+        itemTotals,
+      } = await getDayContext(businessDate);
 
       return {
         businessDate,
         session: serializeSession(sessionRow),
         totals,
         itemTotals,
+        closeHistory: getClosedSessionHistory(dayRows),
       };
     };
     const payload = bypassCache
@@ -605,25 +584,68 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as DayPostBody;
     const action = body.action;
-    const businessDate = normalizeBusinessDate(body.businessDate);
+    const requestedBusinessDate = normalizeBusinessDate(body.businessDate);
 
     if (action !== 'open' && action !== 'close') {
       return NextResponse.json({ error: 'action must be open or close' }, { status: 400 });
     }
 
-    const { daySheet, sessionRow, totals, itemTotals } = await getDayContext(businessDate);
+    const {
+      daySheet,
+      dayRows,
+      salesRows,
+      paymentRows,
+    } = await getDayContext(requestedBusinessDate);
+    const activeSession = getActiveSession(dayRows);
+    const businessDate = activeSession
+      ? getSessionBusinessDate(activeSession)
+      : todayBusinessDate();
+    const sessionRow = activeSession ?? getLatestSession(dayRows, businessDate);
+    const { totals, itemTotals } = getDayMetrics(
+      salesRows,
+      paymentRows,
+      businessDate,
+      sessionRow,
+    );
     const timestamp = nowTimestamp();
 
     if (action === 'open') {
-      if (sessionRow && getCell(sessionRow, 'status').toLowerCase() === 'open') {
+      if (activeSession) {
+        const storedSessionId = getCell(activeSession, 'session_id');
+        if (
+          storedSessionId &&
+          !/^SES-\d{8}-\d{6}$/.test(storedSessionId)
+        ) {
+          activeSession.set(
+            'session_id',
+            makeUniformSessionNumber(
+              activeSession.rowNumber ?? 0,
+              businessDate,
+            ),
+          );
+          await activeSession.save();
+        }
         return NextResponse.json({
           success: true,
           message: 'Day is already open',
           businessDate,
-          session: serializeSession(sessionRow),
+          activeBusinessDate: businessDate,
+          session: serializeSession(activeSession),
           totals,
           itemTotals,
         });
+      }
+
+      if (sessionRow && getCell(sessionRow, 'status').toLowerCase() === 'closed') {
+        return NextResponse.json(
+          {
+            error: `${businessDate} is already closed and cannot be opened again`,
+            businessDate,
+            activeBusinessDate: todayBusinessDate(),
+            session: serializeSession(sessionRow),
+          },
+          { status: 409 },
+        );
       }
 
       const startingCash = Number(body.startingCash ?? 0);
@@ -643,28 +665,39 @@ export async function POST(request: Request) {
         ? startOfBusinessDateTimestamp(businessDate)
         : timestamp;
 
+      const provisionalSessionId = makeUniformControlNumber('SES');
       const [newRow] = await daySheet.addRows([
-        [
-          businessDate,
-          openedAt,
-          body.staffName || 'Staff',
-          startingCash,
-          'open',
-          '',
-          '',
-          '',
-          startingCash,
-          '',
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          body.notes || '',
-        ],
+        {
+          business_date: businessDate,
+          opened_at: openedAt,
+          opened_by: body.staffName || 'Staff',
+          starting_cash: startingCash,
+          status: 'open',
+          closed_at: '',
+          closed_by: '',
+          counted_cash: '',
+          expected_cash: startingCash,
+          cash_difference: '',
+          payment_total: 0,
+          cash_payment_total: 0,
+          card_payment_total: 0,
+          qpay_payment_total: 0,
+          other_payment_total: 0,
+          room_charge_total: 0,
+          sales_total: 0,
+          notes: body.notes || '',
+          session_id: provisionalSessionId,
+          receipt_count: 0,
+          first_receipt_id: '',
+          last_receipt_id: '',
+        },
       ]);
+      const sessionId = makeUniformSessionNumber(
+        newRow.rowNumber,
+        businessDate,
+      );
+      newRow.set('session_id', sessionId);
+      await newRow.save();
       clearCachedReads('day:');
       clearCachedReads('sales:');
       clearCachedReads('business-date:');
@@ -673,13 +706,14 @@ export async function POST(request: Request) {
         success: true,
         message: 'Day opened',
         businessDate,
+        activeBusinessDate: businessDate,
         session: serializeSession(newRow as SheetRow),
         totals: getDayTotals([], [], businessDate, startingCash),
         itemTotals: [],
       });
     }
 
-    if (!sessionRow || getCell(sessionRow, 'status').toLowerCase() !== 'open') {
+    if (!activeSession) {
       return NextResponse.json(
         { error: 'Open the day before closing it' },
         { status: 400 },
@@ -695,21 +729,24 @@ export async function POST(request: Request) {
     }
 
     const cashDifference = countedCash - totals.expectedCash;
-    sessionRow.set('status', 'closed');
-    sessionRow.set('closed_at', timestamp);
-    sessionRow.set('closed_by', body.staffName || 'Staff');
-    sessionRow.set('counted_cash', countedCash);
-    sessionRow.set('expected_cash', totals.expectedCash);
-    sessionRow.set('cash_difference', cashDifference);
-    sessionRow.set('payment_total', totals.paymentTotal);
-    sessionRow.set('cash_payment_total', totals.cashPaymentTotal);
-    sessionRow.set('card_payment_total', totals.cardPaymentTotal);
-    sessionRow.set('qpay_payment_total', totals.qpayPaymentTotal);
-    sessionRow.set('other_payment_total', totals.otherPaymentTotal);
-    sessionRow.set('room_charge_total', totals.roomChargeTotal);
-    sessionRow.set('sales_total', totals.salesTotal);
-    sessionRow.set('notes', body.notes || '');
-    await sessionRow.save();
+    activeSession.set('status', 'closed');
+    activeSession.set('closed_at', timestamp);
+    activeSession.set('closed_by', body.staffName || 'Staff');
+    activeSession.set('counted_cash', countedCash);
+    activeSession.set('expected_cash', totals.expectedCash);
+    activeSession.set('cash_difference', cashDifference);
+    activeSession.set('payment_total', totals.paymentTotal);
+    activeSession.set('cash_payment_total', totals.cashPaymentTotal);
+    activeSession.set('card_payment_total', totals.cardPaymentTotal);
+    activeSession.set('qpay_payment_total', totals.qpayPaymentTotal);
+    activeSession.set('other_payment_total', totals.otherPaymentTotal);
+    activeSession.set('room_charge_total', totals.roomChargeTotal);
+    activeSession.set('sales_total', totals.salesTotal);
+    activeSession.set('receipt_count', totals.receiptCount);
+    activeSession.set('first_receipt_id', totals.firstReceiptId);
+    activeSession.set('last_receipt_id', totals.lastReceiptId);
+    activeSession.set('notes', body.notes || '');
+    await activeSession.save();
     clearCachedReads('day:');
     clearCachedReads('sales:');
     clearCachedReads('business-date:');
@@ -718,7 +755,8 @@ export async function POST(request: Request) {
       success: true,
       message: 'Day closed',
       businessDate,
-      session: serializeSession(sessionRow),
+      activeBusinessDate: todayBusinessDate(),
+      session: serializeSession(activeSession),
       totals: {
         ...totals,
         expectedCash: totals.expectedCash,

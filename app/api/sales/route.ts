@@ -1,7 +1,25 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
+import {
+  GoogleSpreadsheet,
+  type GoogleSpreadsheetWorksheet,
+} from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
 import { isUnlimitedInventoryItem } from '@/lib/pos/inventory';
+import {
+  parseSaleItemDetails,
+  serializeSaleItemDetails,
+} from '@/lib/pos/sale-item-details';
+import {
+  makePaymentLineNumber,
+  makeUniformControlNumber,
+  makeUniformReceiptNumber,
+  PAYMENT_LOG_HEADERS,
+  RECEIPT_LOG_HEADERS,
+} from '@/lib/pos/payment-controls';
+import {
+  DAY_SESSION_HEADERS,
+  requireActiveBusinessSession,
+} from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 
 type SettlementPaymentInput = {
@@ -19,6 +37,7 @@ type SaleEditItemInput = {
   category?: string;
   qty?: number;
   unitPrice?: number;
+  priceMode?: 'guest' | 'staff';
 };
 
 type SettleSaleBody = {
@@ -34,6 +53,11 @@ type SettleSaleBody = {
   room?: string;
   items?: SaleEditItemInput[];
   total?: number;
+  settlements?: Array<{
+    transactionId?: string;
+    payments?: SettlementPaymentInput[];
+  }>;
+  clientRequestId?: string;
 };
 
 type SheetDoc = GoogleSpreadsheet;
@@ -42,6 +66,15 @@ type SheetRow = {
   get: (columnName: string) => unknown;
   set: (columnName: string, value: unknown) => void;
   save: () => Promise<void>;
+  rowNumber: number;
+};
+
+type ReadonlySheetRow = Pick<SheetRow, 'get' | 'rowNumber'>;
+
+type RawSheetTable = {
+  headers: string[];
+  rows: ReadonlySheetRow[];
+  valuesFor: (record: Record<string, unknown>) => unknown[];
 };
 
 type CatalogRowItem = {
@@ -54,6 +87,11 @@ type CatalogRowItem = {
 };
 
 const SALES_READ_CACHE_TTL_MS = 10000;
+const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cachedSpreadsheet:
+  | { expiresAt: number; promise: Promise<SheetDoc> }
+  | undefined;
 
 const SALES_LOG_SHEET_TITLES = [
   process.env.GOOGLE_SALES_SHEET_TITLE,
@@ -81,6 +119,18 @@ const PAYMENTS_LOG_SHEET_TITLES = [
   'payments_log',
 ].filter(Boolean) as string[];
 
+const RECEIPTS_LOG_SHEET_TITLES = [
+  process.env.GOOGLE_RECEIPTS_SHEET_TITLE,
+  'Receipts_Log',
+  'receipts_log',
+].filter(Boolean) as string[];
+
+const DAY_SESSION_SHEET_TITLES = [
+  process.env.GOOGLE_DAY_SESSION_SHEET_TITLE,
+  'Day_Sessions',
+  'day_sessions',
+].filter(Boolean) as string[];
+
 const SALES_LOG_HEADERS = [
   'transaction_id',
   'timestamp',
@@ -97,6 +147,12 @@ const SALES_LOG_HEADERS = [
   'item_summary',
   'qpay_invoice_id',
   'notes',
+  'item_details',
+  'session_id',
+  'business_date',
+  'client_request_id',
+  'operation_status',
+  'receipt_id',
 ];
 
 const INVENTORY_LOG_HEADERS = [
@@ -110,19 +166,8 @@ const INVENTORY_LOG_HEADERS = [
   'Handled By',
   'Payment Method',
   'Room Number',
-];
-
-const PAYMENTS_LOG_HEADERS = [
-  'payment_id',
-  'transaction_id',
-  'timestamp',
-  'staff',
-  'payment_method',
-  'amount',
-  'cash_received',
-  'change_due',
-  'qpay_invoice_id',
-  'notes',
+  'Session ID',
+  'Business Date',
 ];
 
 const INVENTORY_COLUMNS = {
@@ -203,15 +248,70 @@ function createDoc(): SheetDoc {
 }
 
 async function loadSpreadsheet() {
-  const doc = createDoc();
-  await doc.loadInfo();
-  return doc;
+  const now = Date.now();
+  if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
+    return cachedSpreadsheet.promise;
+  }
+
+  const promise = (async () => {
+    const doc = createDoc();
+    await doc.loadInfo();
+    return doc;
+  })();
+  cachedSpreadsheet = {
+    expiresAt: now + SHEET_METADATA_CACHE_TTL_MS,
+    promise,
+  };
+
+  try {
+    return await promise;
+  } catch (error) {
+    if (cachedSpreadsheet?.promise === promise) cachedSpreadsheet = undefined;
+    throw error;
+  }
+}
+
+async function ensureSheetHeaders(
+  sheet: GoogleSpreadsheetWorksheet,
+  headers: readonly string[],
+) {
+  await sheet.loadHeaderRow();
+  const missingHeaders = headers.filter(
+    header => !sheet.headerValues.includes(header),
+  );
+  if (missingHeaders.length === 0) return sheet;
+
+  const nextHeaders = [...sheet.headerValues, ...missingHeaders];
+  if (nextHeaders.length > sheet.columnCount) {
+    await sheet.resize({
+      rowCount: sheet.rowCount,
+      columnCount: nextHeaders.length,
+    });
+  }
+  await sheet.setHeaderRow(nextHeaders);
+  return sheet;
+}
+
+async function getOrCreateSheet(
+  doc: SheetDoc,
+  titles: string[],
+  headers: readonly string[],
+) {
+  for (const title of titles) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return ensureSheetHeaders(sheet, headers);
+  }
+
+  return doc.addSheet({
+    title: titles[0] ?? 'Sheet',
+    headerValues: [...headers],
+  });
 }
 
 async function getOrCreateSalesLogSheet(doc: SheetDoc) {
   for (const title of SALES_LOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) return ensureSheetHeaders(sheet, SALES_LOG_HEADERS);
   }
 
   return doc.addSheet({
@@ -223,7 +323,7 @@ async function getOrCreateSalesLogSheet(doc: SheetDoc) {
 async function getOrCreateInventoryLogSheet(doc: SheetDoc) {
   for (const title of INVENTORY_LOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) return ensureSheetHeaders(sheet, INVENTORY_LOG_HEADERS);
   }
 
   return doc.addSheet({
@@ -235,12 +335,12 @@ async function getOrCreateInventoryLogSheet(doc: SheetDoc) {
 async function getOrCreatePaymentsLogSheet(doc: SheetDoc) {
   for (const title of PAYMENTS_LOG_SHEET_TITLES) {
     const sheet = doc.sheetsByTitle[title];
-    if (sheet) return sheet;
+    if (sheet) return ensureSheetHeaders(sheet, PAYMENT_LOG_HEADERS);
   }
 
   return doc.addSheet({
     title: PAYMENTS_LOG_SHEET_TITLES[0] ?? 'Payments_Log',
-    headerValues: PAYMENTS_LOG_HEADERS,
+    headerValues: PAYMENT_LOG_HEADERS,
   });
 }
 
@@ -251,6 +351,157 @@ function findCatalogSheet(doc: SheetDoc) {
   }
 
   return null;
+}
+
+function findExistingSheet(doc: SheetDoc, titles: string[]) {
+  for (const title of titles) {
+    const sheet = doc.sheetsByTitle[title];
+    if (sheet) return sheet;
+  }
+
+  return null;
+}
+
+function makeRawSheetTable(
+  title: string,
+  values: unknown[][],
+  requiredHeaders: readonly string[],
+): RawSheetTable {
+  const headers = (values[0] ?? []).map(value => String(value ?? '').trim());
+  const missingHeaders = requiredHeaders.filter(
+    header => !headers.includes(header),
+  );
+  if (missingHeaders.length > 0) {
+    throw new Error(
+      `${title} is missing required columns: ${missingHeaders.join(', ')}`,
+    );
+  }
+
+  return {
+    headers,
+    rows: values.slice(1).map((rowValues, index) => ({
+      rowNumber: index + 2,
+      get: (columnName: string) => {
+        const columnIndex = headers.indexOf(columnName);
+        return columnIndex >= 0 ? rowValues[columnIndex] : undefined;
+      },
+    })),
+    valuesFor: record => headers.map(header => record[header] ?? ''),
+  };
+}
+
+async function batchReadSheetTables(
+  doc: SheetDoc,
+  sheets: Array<{
+    sheet: GoogleSpreadsheetWorksheet;
+    requiredHeaders: readonly string[];
+  }>,
+) {
+  const rangeQuery = sheets
+    .map(({ sheet }) =>
+      `ranges=${encodeURIComponent(`${sheet.a1SheetName}!A:ZZ`)}`,
+    )
+    .join('&');
+  const response = await doc.sheetsApi.get(
+    `values:batchGet?${rangeQuery}`,
+    {
+      searchParams: {
+        majorDimension: 'ROWS',
+        valueRenderOption: 'FORMATTED_VALUE',
+      },
+    },
+  );
+  const payload = (await response.json()) as {
+    valueRanges?: Array<{ values?: unknown[][] }>;
+  };
+
+  return sheets.map(({ sheet, requiredHeaders }, index) =>
+    makeRawSheetTable(
+      sheet.title,
+      payload.valueRanges?.[index]?.values ?? [],
+      requiredHeaders,
+    ),
+  );
+}
+
+function userEnteredCell(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return { userEnteredValue: { numberValue: value } };
+  }
+  if (typeof value === 'boolean') {
+    return { userEnteredValue: { boolValue: value } };
+  }
+  return { userEnteredValue: { stringValue: String(value ?? '') } };
+}
+
+function rowData(values: unknown[]) {
+  return { values: values.map(userEnteredCell) };
+}
+
+async function appendReceiptClaim(
+  doc: SheetDoc,
+  sheet: GoogleSpreadsheetWorksheet,
+  values: unknown[],
+) {
+  const response = await doc.sheetsApi.post(
+    `values/${sheet.encodedA1SheetName}!A1:append`,
+    {
+      searchParams: {
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+        includeValuesInResponse: 'false',
+      },
+      json: { values: [values] },
+    },
+  );
+  const payload = (await response.json()) as {
+    updates?: { updatedRange?: string };
+  };
+  const rowNumber = payload.updates?.updatedRange?.match(
+    /![A-Z]+([0-9]+):?/,
+  )?.[1];
+  const parsedRowNumber = Number(rowNumber);
+  if (!Number.isInteger(parsedRowNumber) || parsedRowNumber < 2) {
+    throw new Error('Google Sheets did not return the appended receipt row');
+  }
+  return parsedRowNumber;
+}
+
+async function completeReceiptAndAppendPayments(
+  doc: SheetDoc,
+  receiptsLogSheet: GoogleSpreadsheetWorksheet,
+  receiptRowNumber: number,
+  receiptValues: unknown[],
+  paymentsLogSheet: GoogleSpreadsheetWorksheet,
+  paymentValues: unknown[][],
+) {
+  await doc.sheetsApi.post(':batchUpdate', {
+    json: {
+      requests: [
+        {
+          updateCells: {
+            range: {
+              sheetId: receiptsLogSheet.sheetId,
+              startRowIndex: receiptRowNumber - 1,
+              endRowIndex: receiptRowNumber,
+              startColumnIndex: 0,
+              endColumnIndex: receiptValues.length,
+            },
+            rows: [rowData(receiptValues)],
+            fields: 'userEnteredValue',
+          },
+        },
+        {
+          appendCells: {
+            sheetId: paymentsLogSheet.sheetId,
+            rows: paymentValues.map(rowData),
+            fields: 'userEnteredValue',
+          },
+        },
+      ],
+      includeSpreadsheetInResponse: false,
+    },
+  });
 }
 
 function toNumber(value: unknown) {
@@ -353,6 +604,9 @@ function getPaymentActivity(
       cashReceived: number;
       changeDue: number;
       qpayInvoiceIds: string[];
+      receiptIds: string[];
+      sessionId: string;
+      businessDate: string;
     }
   >();
 
@@ -373,6 +627,9 @@ function getPaymentActivity(
       cashReceived: 0,
       changeDue: 0,
       qpayInvoiceIds: [],
+      receiptIds: [],
+      sessionId: getCell(row, 'session_id'),
+      businessDate: getCell(row, 'business_date'),
     };
 
     current.amount += amount;
@@ -380,19 +637,22 @@ function getPaymentActivity(
     current.cashReceived += toNumber(row.get('cash_received'));
     current.changeDue += toNumber(row.get('change_due'));
     if (qpayInvoiceId) current.qpayInvoiceIds.push(qpayInvoiceId);
+    const receiptId = getCell(row, 'receipt_id');
+    if (receiptId && !current.receiptIds.includes(receiptId)) {
+      current.receiptIds.push(receiptId);
+    }
     if (sortTime >= current.sortTime) {
       current.latestTimestamp = timestamp;
       current.sortTime = sortTime;
+      current.sessionId = getCell(row, 'session_id') || current.sessionId;
+      current.businessDate =
+        getCell(row, 'business_date') || current.businessDate;
     }
 
     activity.set(transactionId, current);
   }
 
   return activity;
-}
-
-function createPaymentId() {
-  return `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
 function normalizeLookup(value: unknown) {
@@ -458,6 +718,14 @@ function buildEditableItems(
   inventoryRows: Array<{ get: (columnName: string) => unknown }>,
   catalogItems: CatalogRowItem[],
 ) {
+  const storedItems = parseSaleItemDetails(getCell(saleRow, 'item_details'));
+  if (storedItems.length > 0) {
+    return storedItems.map(item => ({
+      ...item,
+      source: 'details' as const,
+    }));
+  }
+
   const transactionId = getCell(saleRow, 'transaction_id');
   const bySku = new Map(
     catalogItems
@@ -478,7 +746,7 @@ function buildEditableItems(
       qty: number;
       unitPrice: number;
       priceMode: 'guest' | 'staff';
-      source: 'inventory' | 'summary';
+      source: 'inventory' | 'summary' | 'details';
     }
   >();
   const saleTotal = toNumber(saleRow.get('total'));
@@ -674,6 +942,10 @@ function salesErrorMessage(error: unknown, fallback: string) {
     return 'Google Sheets authentication failed. Check the service-account email/private key.';
   }
 
+  if (message.includes('Open the business day')) {
+    return message;
+  }
+
   return fallback;
 }
 
@@ -681,7 +953,62 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const requestedTransactionId = url.searchParams.get('transactionId')?.trim();
+    const settlementRequestId = url.searchParams
+      .get('settlementRequestId')
+      ?.trim();
     const bypassCache = url.searchParams.get('fresh') === '1';
+
+    if (settlementRequestId) {
+      if (settlementRequestId.length > 128) {
+        return NextResponse.json(
+          { error: 'settlementRequestId is invalid' },
+          { status: 400 },
+        );
+      }
+
+      const doc = await loadSpreadsheet();
+      const receiptsLogSheet = findExistingSheet(
+        doc,
+        RECEIPTS_LOG_SHEET_TITLES,
+      );
+      if (!receiptsLogSheet) {
+        return NextResponse.json(
+          { requestStatus: 'missing' },
+          { headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      const [receiptsTable] = await batchReadSheetTables(doc, [
+        {
+          sheet: receiptsLogSheet,
+          requiredHeaders: RECEIPT_LOG_HEADERS,
+        },
+      ]);
+      const receiptRows = receiptsTable.rows;
+      const receiptRow = receiptRows.find(
+        row => getCell(row, 'client_request_id') === settlementRequestId,
+      );
+      if (!receiptRow) {
+        return NextResponse.json(
+          { requestStatus: 'missing' },
+          { headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      const operationStatus = getCell(receiptRow, 'operation_status');
+      return NextResponse.json(
+        {
+          success: operationStatus === 'complete',
+          requestStatus:
+            operationStatus === 'complete' ? 'complete' : 'pending',
+          receiptId: getCell(receiptRow, 'receipt_id'),
+          settledAt: getCell(receiptRow, 'timestamp'),
+          sessionId: getCell(receiptRow, 'session_id'),
+          businessDate: getCell(receiptRow, 'business_date'),
+        },
+        { headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
 
     if (requestedTransactionId) {
       const doc = await loadSpreadsheet();
@@ -698,6 +1025,12 @@ export async function GET(request: Request) {
 
       if (!saleRow) {
         return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
+      }
+      if (getCell(saleRow, 'operation_status') === 'pending') {
+        return NextResponse.json(
+          { error: 'Sale is still pending and cannot be opened yet' },
+          { status: 409 },
+        );
       }
 
       if (getCell(saleRow, 'paid_status').toLowerCase() !== 'unpaid') {
@@ -737,16 +1070,28 @@ export async function GET(request: Request) {
 
     const loadSalesList = async () => {
       const doc = await loadSpreadsheet();
-      const salesLogSheet = await getOrCreateSalesLogSheet(doc);
-      const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
-      const [salesRows, paymentRows] = await Promise.all([
+      const [salesLogSheet, paymentsLogSheet, receiptsLogSheet] =
+        await Promise.all([
+          getOrCreateSalesLogSheet(doc),
+          getOrCreatePaymentsLogSheet(doc),
+          getOrCreateSheet(
+            doc,
+            RECEIPTS_LOG_SHEET_TITLES,
+            RECEIPT_LOG_HEADERS,
+          ),
+        ]);
+      const [salesRows, paymentRows, receiptRows] = await Promise.all([
         salesLogSheet.getRows() as Promise<SheetRow[]>,
         paymentsLogSheet.getRows(),
+        receiptsLogSheet.getRows(),
       ]);
       const paymentTotals = getPaymentTotals(paymentRows);
       const paymentSummaries = getPaymentSummaries(paymentRows);
       const paymentActivityByTransaction = getPaymentActivity(paymentRows);
-      const unpaidCharges = salesRows
+      const completedSalesRows = salesRows.filter(
+        row => getCell(row, 'operation_status') !== 'pending',
+      );
+      const unpaidCharges = completedSalesRows
         .filter(row => getCell(row, 'paid_status').toLowerCase() === 'unpaid')
         .map(row => {
           const transactionId = getCell(row, 'transaction_id');
@@ -770,11 +1115,12 @@ export async function GET(request: Request) {
             itemSummary: getCell(row, 'item_summary'),
             qpayInvoiceId: getCell(row, 'qpay_invoice_id'),
             notes: getCell(row, 'notes'),
+            items: parseSaleItemDetails(getCell(row, 'item_details')),
           };
         })
         .filter(charge => charge.balance > 0)
         .filter(charge => charge.transactionId);
-      const history = salesRows
+      const legacyHistory = completedSalesRows
         .flatMap(row => {
           const transactionId = getCell(row, 'transaction_id');
           const saleTimestamp = getCell(row, 'timestamp');
@@ -817,15 +1163,22 @@ export async function GET(request: Request) {
             paidAmount: displayPaidAmount,
             paidToDate: Math.max(recordedPaidAmount, 0),
             balance,
-            historyKind: hasPayment ? 'payment' : 'sale',
+            historyKind:
+              paidStatus === 'unpaid' && hasPayment ? 'payment' : 'sale',
             refundableAmount: Math.max(displayPaidAmount, 0),
             itemCount: toNumber(row.get('item_count')),
             itemSummary: getCell(row, 'item_summary'),
             qpayInvoiceId:
               paymentActivity?.qpayInvoiceIds.join(' + ') || getCell(row, 'qpay_invoice_id'),
+            receiptId: paymentActivity?.receiptIds.at(-1) || '',
+            sessionId:
+              paymentActivity?.sessionId || getCell(row, 'session_id'),
+            businessDate:
+              paymentActivity?.businessDate || getCell(row, 'business_date'),
             cashReceived: paymentActivity?.cashReceived || toNumber(row.get('cash_received')),
             changeDue: paymentActivity?.changeDue || toNumber(row.get('change_due')),
             notes: getCell(row, 'notes'),
+            items: parseSaleItemDetails(getCell(row, 'item_details')),
             sortTime: paymentActivity?.sortTime || timestampMs(saleTimestamp),
           }];
         })
@@ -847,10 +1200,95 @@ export async function GET(request: Request) {
           itemCount: sale.itemCount,
           itemSummary: sale.itemSummary,
           qpayInvoiceId: sale.qpayInvoiceId,
+          receiptId: sale.receiptId,
+          sessionId: sale.sessionId,
+          businessDate: sale.businessDate,
           cashReceived: sale.cashReceived,
           changeDue: sale.changeDue,
           notes: sale.notes,
-        }));
+          items: sale.items,
+        }))
+        .filter(sale => !sale.receiptId);
+
+      const salesByTransactionId = new Map(
+        completedSalesRows.map(row => [getCell(row, 'transaction_id'), row]),
+      );
+      const receiptHistory = receiptRows
+        .filter(row => getCell(row, 'operation_status') === 'complete')
+        .map(row => {
+          const orderIds = getCell(row, 'order_ids')
+            .split(',')
+            .map(orderId => orderId.trim())
+            .filter(Boolean);
+          const orderRows = orderIds
+            .map(orderId => salesByTransactionId.get(orderId))
+            .filter((saleRow): saleRow is SheetRow => Boolean(saleRow));
+          const total = toNumber(row.get('total'));
+          const saleTotal = orderRows.reduce(
+            (sum, saleRow) => sum + toNumber(saleRow.get('total')),
+            0,
+          );
+          const balance = orderIds.reduce((sum, orderId) => {
+            const saleRow = salesByTransactionId.get(orderId);
+            const orderTotal = saleRow ? toNumber(saleRow.get('total')) : 0;
+            return (
+              sum +
+              Math.max(orderTotal - (paymentTotals.get(orderId) ?? 0), 0)
+            );
+          }, 0);
+          const isDebtPayment = orderRows.some(
+            saleRow =>
+              getCell(saleRow, 'paid_status').toLowerCase() === 'unpaid',
+          );
+
+          return {
+            transactionId: orderIds.join(', '),
+            orderIds,
+            receiptId: getCell(row, 'receipt_id'),
+            timestamp: getCell(row, 'timestamp'),
+            staff: getCell(row, 'staff'),
+            paymentMethod: getCell(row, 'payment_summary'),
+            paidStatus: balance > 0 ? 'partial' : 'paid',
+            roomOrGuest: Array.from(
+              new Set(
+                orderRows
+                  .map(saleRow => getCell(saleRow, 'room_or_guest'))
+                  .filter(Boolean),
+              ),
+            ).join(', '),
+            total,
+            saleTotal,
+            paidAmount: total,
+            paidToDate: orderIds.reduce(
+              (sum, orderId) => sum + (paymentTotals.get(orderId) ?? 0),
+              0,
+            ),
+            balance,
+            historyKind: isDebtPayment ? ('payment' as const) : ('sale' as const),
+            refundableAmount: total,
+            itemCount: orderRows.reduce(
+              (sum, saleRow) => sum + toNumber(saleRow.get('item_count')),
+              0,
+            ),
+            itemSummary: orderRows
+              .map(saleRow => getCell(saleRow, 'item_summary'))
+              .filter(Boolean)
+              .join(', '),
+            qpayInvoiceId: getCell(row, 'qpay_invoice_id'),
+            sessionId: getCell(row, 'session_id'),
+            businessDate: getCell(row, 'business_date'),
+            cashReceived: toNumber(row.get('cash_received')),
+            changeDue: toNumber(row.get('change_due')),
+            notes: getCell(row, 'notes'),
+            items: orderRows.flatMap(saleRow =>
+              parseSaleItemDetails(getCell(saleRow, 'item_details')),
+            ),
+          };
+        });
+      const history = [...receiptHistory, ...legacyHistory].sort(
+        (first, second) =>
+          timestampMs(second.timestamp) - timestampMs(first.timestamp),
+      );
 
       return { charges: unpaidCharges, history };
     };
@@ -873,36 +1311,66 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const requestStartedAt = Date.now();
+  let settlementRequestId = '';
+
   try {
     const body = (await request.json()) as SettleSaleBody;
-    const transactionId = body.transactionId?.trim();
+    settlementRequestId = String(body.clientRequestId ?? '').trim();
+    const transactionId = body.transactionId?.trim() ?? '';
+    const requestedSettlementBodies =
+      Array.isArray(body.settlements) && body.settlements.length > 0
+        ? body.settlements
+        : [{ transactionId, payments: body.payments }];
 
-    if (!transactionId) {
+    console.info('[sales:settlement] started', {
+      requestId: settlementRequestId || 'legacy',
+      settlementCount: requestedSettlementBodies.length,
+    });
+
+    if (
+      body.action === 'edit_unpaid'
+        ? !transactionId
+        : requestedSettlementBodies.some(
+            settlement => !settlement.transactionId?.trim(),
+          )
+    ) {
       return NextResponse.json({ error: 'transactionId is required' }, { status: 400 });
     }
 
     const doc = await loadSpreadsheet();
-    const salesLogSheet = await getOrCreateSalesLogSheet(doc);
-    const paymentsLogSheet = await getOrCreatePaymentsLogSheet(doc);
-    const [salesRows, paymentRows] = await Promise.all([
-      salesLogSheet.getRows() as Promise<SheetRow[]>,
-      paymentsLogSheet.getRows(),
-    ]);
-    const row = salesRows.find(item => getCell(item, 'transaction_id') === transactionId);
-
-    if (!row) {
-      return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
-    }
-
-    if (getCell(row, 'paid_status').toLowerCase() !== 'unpaid') {
-      return NextResponse.json({ error: 'Sale is not an unpaid charge' }, { status: 400 });
-    }
-
-    const saleTotal = toNumber(row.get('total'));
-    const paidToDate = getPaymentTotals(paymentRows).get(transactionId) ?? 0;
-    const balance = Math.max(saleTotal - paidToDate, 0);
 
     if (body.action === 'edit_unpaid') {
+      const [salesLogSheet, paymentsLogSheet, daySessionSheet] =
+        await Promise.all([
+          getOrCreateSalesLogSheet(doc),
+          getOrCreatePaymentsLogSheet(doc),
+          getOrCreateSheet(
+            doc,
+            DAY_SESSION_SHEET_TITLES,
+            DAY_SESSION_HEADERS,
+          ),
+        ]);
+      const [salesRows, paymentRows, daySessionRows] = await Promise.all([
+        salesLogSheet.getRows() as Promise<SheetRow[]>,
+        paymentsLogSheet.getRows(),
+        daySessionSheet.getRows(),
+      ]);
+      const activeSession = requireActiveBusinessSession(daySessionRows);
+      const paymentTotals = getPaymentTotals(paymentRows);
+      const row = salesRows.find(
+        item => getCell(item, 'transaction_id') === transactionId,
+      );
+      if (!row) {
+        return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
+      }
+      if (getCell(row, 'paid_status').toLowerCase() !== 'unpaid') {
+        return NextResponse.json(
+          { error: 'Sale is not an unpaid charge' },
+          { status: 400 },
+        );
+      }
+      const paidToDate = paymentTotals.get(transactionId) ?? 0;
       if (paidToDate > 0) {
         return NextResponse.json(
           { error: 'Partially paid charges cannot be edited' },
@@ -917,6 +1385,10 @@ export async function PATCH(request: Request) {
           category: String(item.category ?? '').trim() || 'Үйлчилгээ',
           qty: toNumber(item.qty ?? 1),
           unitPrice: toNumber(item.unitPrice),
+          priceMode:
+            item.priceMode === 'guest' || item.priceMode === 'staff'
+              ? item.priceMode
+              : undefined,
         }))
         .filter(item => item.name && item.qty > 0 && item.unitPrice >= 0);
 
@@ -951,6 +1423,8 @@ export async function PATCH(request: Request) {
         body.staffName || 'Staff',
         'Өр засвар',
         room,
+        activeSession.sessionId,
+        activeSession.businessDate,
       ]);
       const newInventoryRows = items
         .filter(item => item.sku && !isUnlimitedInventoryItem(item))
@@ -965,6 +1439,8 @@ export async function PATCH(request: Request) {
           body.staffName || 'Staff',
           'Өр засвар',
           room,
+          activeSession.sessionId,
+          activeSession.businessDate,
         ]);
 
       if (reversalRows.length > 0 || newInventoryRows.length > 0) {
@@ -983,6 +1459,7 @@ export async function PATCH(request: Request) {
       row.set('item_count', items.reduce((sum, item) => sum + item.qty, 0));
       row.set('item_summary', buildItemSummary(items));
       row.set('qpay_invoice_id', '');
+      row.set('item_details', serializeSaleItemDetails(items));
       row.set(
         'notes',
         [getCell(row, 'notes'), `Edited ${timestamp} by ${body.staffName || 'Staff'}`]
@@ -1001,65 +1478,300 @@ export async function PATCH(request: Request) {
       });
     }
 
-    if (balance === 0) {
-      return NextResponse.json({ success: true, message: 'Sale is already settled' });
-    }
-
-    const bodyUsesPaymentArray = Array.isArray(body.payments) && body.payments.length > 0;
-    const requestedPayments = getSettlementPayments(body).map((payment, index) => ({
-      ...payment,
-      paymentMethod: payment.paymentMethod?.trim(),
-      amount: Number(payment.amount ?? (!bodyUsesPaymentArray && index === 0 ? balance : 0)),
-    }));
-    const invalidPayment = requestedPayments.find(
-      payment =>
-        !payment.paymentMethod ||
-        !Number.isFinite(payment.amount) ||
-        payment.amount <= 0,
+    const salesLogSheet = findExistingSheet(doc, SALES_LOG_SHEET_TITLES);
+    const paymentsLogSheet = findExistingSheet(
+      doc,
+      PAYMENTS_LOG_SHEET_TITLES,
     );
-
-    if (invalidPayment) {
-      return NextResponse.json(
-        { error: 'Each payment must have a method and amount greater than zero' },
-        { status: 400 },
+    const receiptsLogSheet = findExistingSheet(
+      doc,
+      RECEIPTS_LOG_SHEET_TITLES,
+    );
+    const daySessionSheet = findExistingSheet(
+      doc,
+      DAY_SESSION_SHEET_TITLES,
+    );
+    if (
+      !salesLogSheet ||
+      !paymentsLogSheet ||
+      !receiptsLogSheet ||
+      !daySessionSheet
+    ) {
+      throw new Error(
+        'Settlement sheets are not initialized. Open the register once and retry.',
       );
     }
 
-    const paymentTotal = requestedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+    const [salesTable, paymentsTable, receiptsTable, daySessionTable] =
+      await batchReadSheetTables(doc, [
+        { sheet: salesLogSheet, requiredHeaders: SALES_LOG_HEADERS },
+        { sheet: paymentsLogSheet, requiredHeaders: PAYMENT_LOG_HEADERS },
+        { sheet: receiptsLogSheet, requiredHeaders: RECEIPT_LOG_HEADERS },
+        { sheet: daySessionSheet, requiredHeaders: DAY_SESSION_HEADERS },
+      ]);
+    const salesRows = salesTable.rows;
+    const paymentRows = paymentsTable.rows;
+    const receiptRows = receiptsTable.rows;
+    const daySessionRows = daySessionTable.rows;
+    const normalizedClientRequestId = settlementRequestId;
+    const existingReceipt = normalizedClientRequestId
+      ? receiptRows.find(
+          row =>
+            getCell(row, 'client_request_id') ===
+            normalizedClientRequestId,
+        )
+      : undefined;
+    if (existingReceipt) {
+      const operationStatus = getCell(existingReceipt, 'operation_status');
+      if (operationStatus !== 'complete') {
+        console.warn('[sales:settlement] replay-pending', {
+          requestId: normalizedClientRequestId,
+          receiptId: getCell(existingReceipt, 'receipt_id'),
+          durationMs: Date.now() - requestStartedAt,
+        });
+        return NextResponse.json(
+          {
+            error:
+              'This payment request reached the ledger but did not finish. Check History before retrying.',
+            receiptId: getCell(existingReceipt, 'receipt_id'),
+          },
+          { status: 409 },
+        );
+      }
 
-    if (paymentTotal > balance) {
-      return NextResponse.json(
-        { error: 'Payment amount is greater than the remaining balance' },
-        { status: 400 },
+      console.info('[sales:settlement] replay-complete', {
+        requestId: normalizedClientRequestId,
+        receiptId: getCell(existingReceipt, 'receipt_id'),
+        durationMs: Date.now() - requestStartedAt,
+      });
+      return NextResponse.json({
+        success: true,
+        duplicateRequest: true,
+        receiptId: getCell(existingReceipt, 'receipt_id'),
+        settledAt: getCell(existingReceipt, 'timestamp'),
+        sessionId: getCell(existingReceipt, 'session_id'),
+        businessDate: getCell(existingReceipt, 'business_date'),
+      });
+    }
+    const activeSession = requireActiveBusinessSession(daySessionRows);
+    const paymentTotals = getPaymentTotals(paymentRows);
+
+    const plannedSettlements: Array<{
+      transactionId: string;
+      payments: Array<SettlementPaymentInput & {
+        paymentMethod: string;
+        amount: number;
+      }>;
+      balance: number;
+      paymentTotal: number;
+    }> = [];
+
+    for (const settlementBody of requestedSettlementBodies) {
+      const settlementTransactionId = settlementBody.transactionId?.trim() ?? '';
+      const row = salesRows.find(
+        item => getCell(item, 'transaction_id') === settlementTransactionId,
       );
+      if (!row) {
+        return NextResponse.json(
+          { error: `Sale not found: ${settlementTransactionId}` },
+          { status: 404 },
+        );
+      }
+      if (getCell(row, 'paid_status').toLowerCase() !== 'unpaid') {
+        return NextResponse.json(
+          { error: `Sale is not an unpaid charge: ${settlementTransactionId}` },
+          { status: 400 },
+        );
+      }
+
+      const saleTotal = toNumber(row.get('total'));
+      const paidToDate = paymentTotals.get(settlementTransactionId) ?? 0;
+      const balance = Math.max(saleTotal - paidToDate, 0);
+      if (balance === 0) continue;
+
+      const hasNestedPaymentArray =
+        Array.isArray(settlementBody.payments) &&
+        settlementBody.payments.length > 0;
+      const sourcePayments = hasNestedPaymentArray
+        ? settlementBody.payments ?? []
+        : getSettlementPayments(body);
+      const requestedPayments = sourcePayments.map((payment, index) => ({
+        ...payment,
+        paymentMethod: payment.paymentMethod?.trim() ?? '',
+        amount: Number(
+          payment.amount ??
+            (!hasNestedPaymentArray && index === 0 ? balance : 0),
+        ),
+      }));
+      const invalidPayment = requestedPayments.find(
+        payment =>
+          !payment.paymentMethod ||
+          !Number.isFinite(payment.amount) ||
+          payment.amount <= 0,
+      );
+      if (invalidPayment) {
+        return NextResponse.json(
+          {
+            error: `Each payment must have a method and amount greater than zero: ${settlementTransactionId}`,
+          },
+          { status: 400 },
+        );
+      }
+
+      const paymentTotal = requestedPayments.reduce(
+        (sum, payment) => sum + payment.amount,
+        0,
+      );
+      if (paymentTotal > balance) {
+        return NextResponse.json(
+          {
+            error: `Payment amount is greater than the remaining balance: ${settlementTransactionId}`,
+          },
+          { status: 400 },
+        );
+      }
+
+      plannedSettlements.push({
+        transactionId: settlementTransactionId,
+        payments: requestedPayments,
+        balance,
+        paymentTotal,
+      });
+    }
+
+    if (plannedSettlements.length === 0) {
+      console.info('[sales:settlement] already-settled', {
+        requestId: normalizedClientRequestId || 'legacy',
+        durationMs: Date.now() - requestStartedAt,
+      });
+      return NextResponse.json({
+        success: true,
+        message: 'Sale is already settled',
+      });
     }
 
     const timestamp = new Date().toLocaleString('en-US', { timeZone: 'Asia/Ulaanbaatar' });
-    await paymentsLogSheet.addRows(
-      requestedPayments.map(payment => [
-        createPaymentId(),
-        transactionId,
-        timestamp,
-        body.staffName || 'Staff',
-        payment.paymentMethod ?? '',
-        payment.amount,
-        payment.cashReceived ?? '',
-        payment.changeDue ?? '',
-        payment.qpayInvoiceId ?? '',
-        payment.notes || `Settlement payment for ${transactionId}`,
-      ]),
+    const receiptTotal = plannedSettlements.reduce(
+      (sum, settlement) => sum + settlement.paymentTotal,
+      0,
+    );
+    const allPayments = plannedSettlements.flatMap(
+      settlement => settlement.payments,
+    );
+    const receiptRecord: Record<string, unknown> = {
+      receipt_id: makeUniformControlNumber('RCP'),
+      timestamp,
+      session_id: activeSession.sessionId,
+      business_date: activeSession.businessDate,
+      staff: body.staffName || 'Staff',
+      order_ids: plannedSettlements
+        .map(settlement => settlement.transactionId)
+        .join(', '),
+      total: receiptTotal,
+      payment_summary: allPayments
+        .map(payment => `${payment.paymentMethod} ${payment.amount}`)
+        .join(' + '),
+      cash_received:
+        allPayments.reduce(
+          (sum, payment) => sum + Number(payment.cashReceived ?? 0),
+          0,
+        ) || '',
+      change_due:
+        allPayments.reduce(
+          (sum, payment) => sum + Number(payment.changeDue ?? 0),
+          0,
+        ) || '',
+      qpay_invoice_id: allPayments
+        .map(payment => payment.qpayInvoiceId)
+        .filter(Boolean)
+        .join(' + '),
+      notes: `Settlement for ${plannedSettlements
+        .map(settlement => settlement.transactionId)
+        .join(', ')}`,
+      client_request_id: normalizedClientRequestId,
+      operation_status: 'pending',
+    };
+    const receiptRowNumber = await appendReceiptClaim(
+      doc,
+      receiptsLogSheet,
+      receiptsTable.valuesFor(receiptRecord),
+    );
+    const receiptId = makeUniformReceiptNumber(
+      receiptRowNumber,
+      activeSession.businessDate,
+    );
+    receiptRecord.receipt_id = receiptId;
+    receiptRecord.operation_status = 'complete';
+    let paymentLineIndex = 0;
+    const paymentRecords = plannedSettlements.flatMap(settlement =>
+      settlement.payments.map(payment => {
+        paymentLineIndex += 1;
+        return {
+          payment_id: makePaymentLineNumber(receiptId, paymentLineIndex),
+          transaction_id: settlement.transactionId,
+          timestamp,
+          staff: body.staffName || 'Staff',
+          payment_method: payment.paymentMethod,
+          amount: payment.amount,
+          cash_received: payment.cashReceived ?? '',
+          change_due: payment.changeDue ?? '',
+          qpay_invoice_id: payment.qpayInvoiceId ?? '',
+          notes:
+            payment.notes ||
+            `Settlement payment for ${settlement.transactionId}`,
+          receipt_id: receiptId,
+          session_id: activeSession.sessionId,
+          business_date: activeSession.businessDate,
+        };
+      }),
+    );
+    await completeReceiptAndAppendPayments(
+      doc,
+      receiptsLogSheet,
+      receiptRowNumber,
+      receiptsTable.valuesFor(receiptRecord),
+      paymentsLogSheet,
+      paymentRecords.map(record => paymentsTable.valuesFor(record)),
     );
     clearCachedReads('sales:');
     clearCachedReads('day:');
 
+    console.info('[sales:settlement] completed', {
+      requestId: normalizedClientRequestId || 'legacy',
+      receiptId,
+      settlementCount: plannedSettlements.length,
+      durationMs: Date.now() - requestStartedAt,
+    });
+
     return NextResponse.json({
       success: true,
       message: 'Payment recorded',
-      balance: Math.max(balance - paymentTotal, 0),
+      receiptId,
+      sessionId: activeSession.sessionId,
+      businessDate: activeSession.businessDate,
+      settlements: plannedSettlements.map(settlement => ({
+        transactionId: settlement.transactionId,
+        balance: Math.max(
+          settlement.balance - settlement.paymentTotal,
+          0,
+        ),
+      })),
+      balance:
+        plannedSettlements.length === 1
+          ? Math.max(
+              plannedSettlements[0].balance -
+                plannedSettlements[0].paymentTotal,
+              0,
+            )
+          : undefined,
       settledAt: timestamp,
     });
   } catch (error) {
-    console.error(`Sales PATCH Error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('[sales:settlement] failed', {
+      requestId: settlementRequestId || 'legacy',
+      durationMs: Date.now() - requestStartedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { error: salesErrorMessage(error, 'Failed to settle sale') },
       { status: 500 },
