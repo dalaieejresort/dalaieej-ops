@@ -914,6 +914,9 @@ function salesErrorMessage(error: unknown, fallback: string) {
 
 async function handleGET(request: Request) {
   try {
+    const sessionOrResponse = requireApiSession(request, 'waiter');
+    if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
+    const waiterView = sessionOrResponse.role === 'waiter';
     const url = new URL(request.url);
     const requestedTransactionId = url.searchParams.get('transactionId')?.trim();
     const settlementRequestId = url.searchParams
@@ -921,6 +924,12 @@ async function handleGET(request: Request) {
       ?.trim();
 
     if (settlementRequestId) {
+      if (waiterView) {
+        return NextResponse.json(
+          { error: 'Зөөгч төлбөрийн ажиллагаа харах эрхгүй.' },
+          { status: 403 },
+        );
+      }
       if (settlementRequestId.length > 128) {
         return NextResponse.json(
           { error: 'settlementRequestId is invalid' },
@@ -1260,7 +1269,9 @@ async function handleGET(request: Request) {
       loadSalesList,
     );
 
-    return NextResponse.json(payload);
+    return NextResponse.json(
+      waiterView ? { charges: payload.charges } : payload,
+    );
   } catch (error) {
     console.error(`Sales GET Error: ${error instanceof Error ? error.message : String(error)}`);
     const rateLimited = /429|quota|rate limit/i.test(
@@ -1281,10 +1292,16 @@ async function handlePATCH(request: Request) {
   let settlementRequestId = '';
 
   try {
-    const sessionOrResponse = requireApiSession(request, 'cashier');
+    const sessionOrResponse = requireApiSession(request, 'waiter');
     if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
     const actorName = sessionOrResponse.displayName;
     const body = (await request.json()) as SettleSaleBody;
+    if (sessionOrResponse.role === 'waiter' && body.action !== 'edit_unpaid') {
+      return NextResponse.json(
+        { error: 'Зөөгч төлбөр хаах эрхгүй.' },
+        { status: 403 },
+      );
+    }
     settlementRequestId = String(body.clientRequestId ?? '').trim();
     if (!settlementRequestId || settlementRequestId.length > 128) {
       return NextResponse.json(
@@ -1354,6 +1371,15 @@ async function handlePATCH(request: Request) {
       );
       if (!row) {
         return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
+      }
+      if (
+        sessionOrResponse.role === 'waiter' &&
+        getCell(row, 'staff') !== actorName
+      ) {
+        return NextResponse.json(
+          { error: 'Зөөгч зөвхөн өөрийн захиалгыг засах эрхтэй.' },
+          { status: 403 },
+        );
       }
       if (getCell(row, 'paid_status').toLowerCase() !== 'unpaid') {
         return NextResponse.json(
@@ -1836,5 +1862,5 @@ async function handlePATCH(request: Request) {
   }
 }
 
-export const GET = withProtectedApiRoute('/api/sales', 'cashier', handleGET);
-export const PATCH = withProtectedApiRoute('/api/sales', 'cashier', handlePATCH);
+export const GET = withProtectedApiRoute('/api/sales', 'waiter', handleGET);
+export const PATCH = withProtectedApiRoute('/api/sales', 'waiter', handlePATCH);

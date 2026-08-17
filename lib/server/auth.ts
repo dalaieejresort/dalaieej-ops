@@ -32,13 +32,19 @@ type StoredAccount = {
 };
 
 const ROLE_RANK: Record<OpsRole, number> = {
+  waiter: 0,
   cashier: 1,
   manager: 2,
   owner: 3,
 };
 
 function isRole(value: unknown): value is OpsRole {
-  return value === "cashier" || value === "manager" || value === "owner";
+  return (
+    value === "waiter" ||
+    value === "cashier" ||
+    value === "manager" ||
+    value === "owner"
+  );
 }
 
 function getSessionSecret() {

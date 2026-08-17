@@ -1653,6 +1653,7 @@ export function RegisterApp({
     "all",
   );
   const staffName = authenticatedStaffName;
+  const canManageOperations = role === "manager" || role === "owner";
   const [cart, setCart] = useState<RegisterCartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>(
     PAYMENT_METHODS[0].id,
@@ -2812,7 +2813,7 @@ export function RegisterApp({
   }
 
   function openDayModal(mode: Exclude<DayModalMode, null>) {
-    if (mode === "close" && role === "cashier") {
+    if (mode === "close" && !canManageOperations) {
       setDayStatus("error");
       setDayMessage("Өдрийн хаалтыг зөвхөн менежер эсвэл эзэмшигч хийнэ.");
       return;
@@ -4178,8 +4179,8 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => openDayModal(dayOpen ? "close" : "open")}
-            disabled={dayOpen && role === "cashier"}
-            title={dayOpen && role === "cashier" ? "Өдрийг зөвхөн менежер хаана" : undefined}
+            disabled={dayOpen && !canManageOperations}
+            title={dayOpen && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
             className={`h-10 rounded-md px-3 text-sm font-black text-white ${
               dayOpen
                 ? "bg-[#b91c1c] hover:bg-[#991b1b]"
@@ -4188,7 +4189,7 @@ export function RegisterApp({
           >
             {dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
           </button>
-          {role !== "cashier" && (
+          {canManageOperations && (
             <button
               type="button"
               onClick={openVoidModal}
@@ -4934,9 +4935,9 @@ export function RegisterApp({
                   disabled={
                     dayStatus === "loading" ||
                     dayStatus === "saving" ||
-                    (dayOpen && role === "cashier")
+                    (dayOpen && !canManageOperations)
                   }
-                  title={dayOpen && role === "cashier" ? "Өдрийг зөвхөн менежер хаана" : undefined}
+                  title={dayOpen && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
                   className={`h-14 w-full rounded-md text-base font-black text-white disabled:bg-[#9ca3af] ${
                     dayOpen
                       ? "bg-[#b91c1c] hover:bg-[#991b1b]"

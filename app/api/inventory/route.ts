@@ -521,7 +521,7 @@ async function handleGET() {
 // ==========================================
 async function handlePOST(request: Request) {
   try {
-    const sessionOrResponse = requireApiSession(request, 'cashier');
+    const sessionOrResponse = requireApiSession(request, 'waiter');
     if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
     const body = (await request.json()) as InventoryPostBody;
     const {
@@ -539,6 +539,22 @@ async function handlePOST(request: Request) {
     } = body;
     const staffName = sessionOrResponse.displayName;
     void requestedStaffName;
+    if (sessionOrResponse.role === 'waiter') {
+      const isOrderOnly =
+        String(paidStatus ?? '').toLowerCase() === 'unpaid' &&
+        method === 'Байшин/Зочин' &&
+        Boolean(room?.trim()) &&
+        (!payments || payments.length === 0) &&
+        !Number(cashReceived ?? 0) &&
+        !Number(changeDue ?? 0) &&
+        !qpayInvoiceId;
+      if (!isOrderOnly) {
+        return NextResponse.json(
+          { error: 'Зөөгч зөвхөн төлбөргүй захиалга илгээх эрхтэй.' },
+          { status: 403 },
+        );
+      }
+    }
     if (!items?.length) {
       return NextResponse.json({ error: 'No items to log' }, { status: 400 });
     }
@@ -901,5 +917,5 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const GET = withProtectedApiRoute('/api/inventory', 'cashier', handleGET);
-export const POST = withProtectedApiRoute('/api/inventory', 'cashier', handlePOST);
+export const GET = withProtectedApiRoute('/api/inventory', 'waiter', handleGET);
+export const POST = withProtectedApiRoute('/api/inventory', 'waiter', handlePOST);

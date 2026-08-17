@@ -645,11 +645,13 @@ async function getDayContext(businessDate: string) {
 
 async function handleGET(request: Request) {
   try {
+    const sessionOrResponse = requireApiSession(request, 'waiter');
+    if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
     const sessionOnly = url.searchParams.get('sessionOnly') === '1';
 
-    if (sessionOnly) {
+    if (sessionOnly || sessionOrResponse.role === 'waiter') {
       const loadDaySessionPayload = async () => {
         const { sessionRow } = await getDaySessionReadContext(businessDate);
 
@@ -955,5 +957,5 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const GET = withProtectedApiRoute('/api/day', 'cashier', handleGET);
+export const GET = withProtectedApiRoute('/api/day', 'waiter', handleGET);
 export const POST = withProtectedApiRoute('/api/day', 'cashier', handlePOST);
