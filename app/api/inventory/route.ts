@@ -3,7 +3,7 @@ import {
   type GoogleSpreadsheetWorksheet,
 } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import {
   isUnlimitedInventoryItem,
 } from '@/lib/pos/inventory';
@@ -34,6 +34,7 @@ import {
   updateRowRequest,
 } from '@/lib/server/sheets-atomic';
 import { syncKitchenOrderSafely } from '@/lib/server/kitchen-queue';
+import { syncLiveOrderSafely } from '@/lib/server/live-order-board';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -678,6 +679,47 @@ async function handlePOST(request: Request) {
           staff: String(existingSale.get('staff') ?? staffName).trim(),
           items,
         });
+        if (
+          String(existingSale.get('paid_status') ?? '').toLowerCase() ===
+          'unpaid'
+        ) {
+          after(() =>
+            syncLiveOrderSafely({
+              transactionId: existingOrderId,
+              businessDate: String(
+                existingSale.get('business_date') ?? '',
+              ).trim(),
+              timestamp: String(existingSale.get('timestamp') ?? '').trim(),
+              staff: String(existingSale.get('staff') ?? staffName).trim(),
+              paymentMethod: String(
+                existingSale.get('payment_method') ?? '',
+              ).trim(),
+              roomOrGuest: String(
+                existingSale.get('room_or_guest') ?? '',
+              ).trim(),
+              subtotal: toNumber(existingSale.get('subtotal')),
+              discount: toNumber(existingSale.get('discount')),
+              originalTotal: toNumber(existingSale.get('total')),
+              paidAmount: paymentTotal,
+              itemCount: toNumber(existingSale.get('item_count')),
+              itemSummary: String(
+                existingSale.get('item_summary') ?? '',
+              ).trim(),
+              qpayInvoiceId: String(
+                existingSale.get('qpay_invoice_id') ?? '',
+              ).trim(),
+              notes: String(existingSale.get('notes') ?? '').trim(),
+              items: items.map(item => ({
+                sku: item.sku?.trim(),
+                name: String(item.name ?? item.sku ?? '').trim(),
+                category: item.category?.trim(),
+                qty: Number(item.qty ?? 1),
+                unitPrice: Number(item.unitPrice ?? 0),
+                priceMode: item.priceMode,
+              })),
+            }),
+          );
+        }
         return NextResponse.json({
           success: true,
           duplicateRequest: true,
@@ -907,6 +949,34 @@ async function handlePOST(request: Request) {
       items,
       createdAt: saleCreatedAt.toISOString(),
     });
+    if (normalizedPaidStatus === 'unpaid') {
+      after(() =>
+        syncLiveOrderSafely({
+          transactionId,
+          businessDate: activeSession.businessDate,
+          timestamp,
+          staff: staffName || 'Staff',
+          paymentMethod: paymentMethod || '',
+          roomOrGuest: room || '',
+          subtotal: saleSubtotal,
+          discount: 0,
+          originalTotal: saleTotal,
+          paidAmount: paymentTotal,
+          itemCount: items.reduce((sum, item) => sum + (item.qty ?? 1), 0),
+          itemSummary,
+          qpayInvoiceId: paymentBankReferenceId,
+          notes: '',
+          items: items.map(item => ({
+            sku: item.sku?.trim(),
+            name: String(item.name ?? item.sku ?? '').trim(),
+            category: item.category?.trim(),
+            qty: Number(item.qty ?? 1),
+            unitPrice: Number(item.unitPrice ?? 0),
+            priceMode: item.priceMode,
+          })),
+        }),
+      );
+    }
 
     return NextResponse.json({
       success: true,

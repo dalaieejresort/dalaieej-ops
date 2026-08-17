@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { canRefreshInBackground, fetchWithTimeout } from "@/lib/client/network";
+import type { LiveOrdersResponse } from "@/lib/live-order-types";
 import type { PriceMode } from "@/lib/pos/types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
 
@@ -53,6 +54,7 @@ type WaiterAppProps = {
 };
 
 const OVERVIEW_REFRESH_MS = 3 * 60 * 1000;
+const LIVE_ORDER_REFRESH_MS = 15 * 1000;
 const MUTATION_TIMEOUT_MS = 30000;
 const QUICK_REFERENCES = Array.from({ length: 18 }, (_, index) => String(index + 1));
 
@@ -82,6 +84,20 @@ function displayDate(value: string) {
 function displayTime(value: string) {
   const time = value.match(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\b/i)?.[0];
   return time ?? value;
+}
+
+function normalizeLiveOrders(payload: LiveOrdersResponse) {
+  return payload.orders.map((order) => ({
+    ...order,
+    items: order.items?.map((item) => ({
+      sku: item.sku ?? "",
+      name: item.name,
+      category: item.category ?? "Үйлчилгээ",
+      qty: item.qty,
+      unitPrice: item.unitPrice,
+      priceMode: item.priceMode,
+    })),
+  })) satisfies OpenOrder[];
 }
 
 function makeRequestKey(fingerprint: string, current: { id: string; fingerprint: string } | null) {
@@ -167,17 +183,69 @@ export function WaiterApp({
     }
   }, []);
 
-  const loadOverview = useCallback(
-    async () => {
-      const params = new URLSearchParams({ businessDate, sessionOnly: "1" });
+  const loadOpenOrders = useCallback(
+    async (fresh = false) => {
+      if (!fresh) {
+        try {
+          const liveResponse = await fetchWithTimeout("/api/live-orders", {
+            cache: "no-store",
+          });
+          const livePayload = (await liveResponse.json().catch(() => null)) as
+            | LiveOrdersResponse
+            | { error?: string }
+            | null;
+          if (
+            liveResponse.ok &&
+            livePayload &&
+            "initialized" in livePayload &&
+            livePayload.initialized
+          ) {
+            return Array.isArray(livePayload.orders)
+              ? normalizeLiveOrders(livePayload)
+              : [];
+          }
+        } catch {
+          // The authoritative Sheets response below remains the fallback.
+        }
+      }
+
       const salesParams = new URLSearchParams({ businessDate });
+      if (fresh) salesParams.set("fresh", "1");
+      const payload = await fetchWithTimeout(
+        `/api/sales?${salesParams.toString()}`,
+        { cache: "no-store" },
+      ).then(readJson);
+      const salesPayload = payload as { charges?: OpenOrder[] };
+      return Array.isArray(salesPayload.charges) ? salesPayload.charges : [];
+    },
+    [businessDate],
+  );
+
+  const syncLiveOrders = useCallback(async () => {
+    try {
+      const response = await fetchWithTimeout("/api/live-orders", {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | LiveOrdersResponse
+        | null;
+      if (response.ok && payload?.initialized && Array.isArray(payload.orders)) {
+        setOrders(normalizeLiveOrders(payload));
+      }
+    } catch {
+      // The slower scheduled overview refresh keeps Sheets as the fallback.
+    }
+  }, []);
+
+  const loadOverview = useCallback(
+    async (fresh = false) => {
+      const params = new URLSearchParams({ businessDate, sessionOnly: "1" });
+      if (fresh) params.set("fresh", "1");
       const [dayResult, salesResult] = await Promise.allSettled([
         fetchWithTimeout(`/api/day?${params.toString()}`, {
           cache: "no-store",
         }).then(readJson),
-        fetchWithTimeout(`/api/sales?${salesParams.toString()}`, {
-          cache: "no-store",
-        }).then(readJson),
+        loadOpenOrders(fresh),
       ]);
 
       const messages: string[] = [];
@@ -189,8 +257,7 @@ export function WaiterApp({
       }
 
       if (salesResult.status === "fulfilled") {
-        const payload = salesResult.value as { charges?: OpenOrder[] };
-        setOrders(Array.isArray(payload.charges) ? payload.charges : []);
+        setOrders(salesResult.value);
       } else {
         messages.push(salesResult.reason instanceof Error ? salesResult.reason.message : "Захиалга татсангүй.");
       }
@@ -199,7 +266,7 @@ export function WaiterApp({
       else setLoadMessage("");
       setLoadingOverview(false);
     },
-    [businessDate],
+    [businessDate, loadOpenOrders],
   );
 
   useEffect(() => {
@@ -215,6 +282,13 @@ export function WaiterApp({
     }, OVERVIEW_REFRESH_MS);
     return () => window.clearInterval(intervalId);
   }, [loadOverview]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (canRefreshInBackground()) void syncLiveOrders();
+    }, LIVE_ORDER_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [syncLiveOrders]);
 
   function resetSaveMessage() {
     if (saveStatus !== "saving") {
@@ -365,7 +439,7 @@ export function WaiterApp({
       setSaveStatus("success");
       setSaveMessage(`${orderId || "Захиалга"} амжилттай илгээгдлээ.`);
       setActiveTab("open");
-      await loadOverview();
+      await loadOverview(true);
     } catch (error) {
       setSaveStatus("error");
       setSaveMessage(
@@ -380,7 +454,7 @@ export function WaiterApp({
 
   async function refreshOverview() {
     setRefreshing(true);
-    await loadOverview();
+    await loadOverview(true);
     setRefreshing(false);
   }
 

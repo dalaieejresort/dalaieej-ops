@@ -3,7 +3,7 @@ import {
   type GoogleSpreadsheetWorksheet,
 } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
 import { clearCachedReads } from '@/lib/server/read-cache';
@@ -26,6 +26,7 @@ import {
   updateRowRequest,
 } from '@/lib/server/sheets-atomic';
 import { removeKitchenOrderSafely } from '@/lib/server/kitchen-queue';
+import { removeLiveOrderSafely } from '@/lib/server/live-order-board';
 
 type VoidSaleBody = {
   transactionId?: string;
@@ -618,6 +619,7 @@ async function handlePOST(request: Request) {
     );
     if (existingVoid && getCell(existingVoid, 'operation_status') === 'complete') {
       await removeKitchenOrderSafely(transactionId);
+      after(() => removeLiveOrderSafely(transactionId));
       return NextResponse.json({
         success: true,
         duplicateRequest: true,
@@ -770,6 +772,7 @@ async function handlePOST(request: Request) {
     clearCachedReads('day:');
     clearCachedReads('inventory:');
     await removeKitchenOrderSafely(transactionId);
+    after(() => removeLiveOrderSafely(transactionId));
 
     return NextResponse.json({
       success: true,

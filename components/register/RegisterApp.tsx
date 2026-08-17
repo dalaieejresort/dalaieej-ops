@@ -11,6 +11,7 @@ import {
   fetchWithTimeout,
 } from "@/lib/client/network";
 import type { OpsRole } from "@/lib/auth-types";
+import type { LiveOrdersResponse } from "@/lib/live-order-types";
 import type {
   CartLine,
   CatalogItem,
@@ -131,7 +132,8 @@ type SettlementResult = {
 const REGISTER_MODE_STORAGE_KEY = "dalaieej.register.mode";
 const REGISTER_CATEGORY_STORAGE_KEY = "dalaieej.register.category";
 const REGISTER_DRAFT_CACHE_KEY = "register:draft";
-const SHARED_SALES_SYNC_INTERVAL_MS = 3 * 60 * 1000;
+const SHARED_SALES_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const LIVE_ORDER_SYNC_INTERVAL_MS = 15 * 1000;
 const SHARED_REFRESH_FOCUS_COOLDOWN_MS = 60000;
 const DAY_SESSION_SYNC_INTERVAL_MS = 60000;
 const CATALOG_RETRY_DELAY_MS = 15000;
@@ -1815,6 +1817,26 @@ export function RegisterApp({
     );
   }, []);
 
+  const loadLiveCharges = useCallback(async () => {
+    try {
+      const response = await registerFetch("/api/live-orders", {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | LiveOrdersResponse
+        | null;
+      if (!response.ok || !payload?.initialized || !Array.isArray(payload.orders)) {
+        return;
+      }
+      applyUnpaidCharges(payload.orders);
+      setChargesStatus("ready");
+      setChargesMessage("");
+      writeOfflineCache(registerCacheKey("charges"), payload.orders);
+    } catch {
+      // Periodic Sheets synchronization remains the authoritative fallback.
+    }
+  }, [applyUnpaidCharges]);
+
   const applySalesHistory = useCallback((history: RecentSale[]) => {
     setHistorySales(history);
     setSelectedHistoryTransactionId((current) =>
@@ -2156,6 +2178,34 @@ export function RegisterApp({
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [loadDayStatus, loadSharedSalesData]);
+
+  useEffect(() => {
+    const syncLiveCharges = () => {
+      if (
+        !settlementRequestInFlightRef.current &&
+        canRefreshInBackground()
+      ) {
+        void loadLiveCharges();
+      }
+    };
+    const initialTimer = window.setTimeout(syncLiveCharges, 1000);
+    const interval = window.setInterval(
+      syncLiveCharges,
+      LIVE_ORDER_SYNC_INTERVAL_MS,
+    );
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") syncLiveCharges();
+    };
+
+    window.addEventListener("focus", syncLiveCharges);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncLiveCharges);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+    };
+  }, [loadLiveCharges]);
 
   useEffect(() => {
     const syncDaySession = (options?: { fresh?: boolean }) => {

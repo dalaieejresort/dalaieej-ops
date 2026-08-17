@@ -3,7 +3,7 @@ import {
   type GoogleSpreadsheetWorksheet,
 } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { isUnlimitedInventoryItem } from '@/lib/pos/inventory';
 import {
   parseSaleItemDetails,
@@ -35,6 +35,11 @@ import {
   updateRowRequest,
 } from '@/lib/server/sheets-atomic';
 import { syncKitchenOrderSafely } from '@/lib/server/kitchen-queue';
+import {
+  removeLiveOrderSafely,
+  replaceLiveOrdersSnapshotSafely,
+  syncLiveOrderSafely,
+} from '@/lib/server/live-order-board';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -1073,6 +1078,7 @@ async function handleGET(request: Request) {
 
           return {
             transactionId,
+            businessDate: getCell(row, 'business_date'),
             timestamp: getCell(row, 'timestamp'),
             staff: getCell(row, 'staff'),
             paymentMethod: getCell(row, 'payment_method'),
@@ -1264,11 +1270,15 @@ async function handleGET(request: Request) {
 
       return { charges: unpaidCharges, history };
     };
-    const payload = await getCachedRead(
-      'sales:list:all',
-      SALES_READ_CACHE_TTL_MS,
-      loadSalesList,
-    );
+    const payload =
+      url.searchParams.get('fresh') === '1'
+        ? await loadSalesList()
+        : await getCachedRead(
+            'sales:list:all',
+            SALES_READ_CACHE_TTL_MS,
+            loadSalesList,
+          );
+    after(() => replaceLiveOrdersSnapshotSafely(payload.charges));
 
     return NextResponse.json(
       waiterView ? { charges: payload.charges } : payload,
@@ -1448,6 +1458,25 @@ async function handlePATCH(request: Request) {
           staff: actorName,
           items,
         });
+        after(() =>
+          syncLiveOrderSafely({
+            transactionId,
+            businessDate: activeSession.businessDate,
+            timestamp: getCell(row, 'timestamp'),
+            staff: actorName,
+            paymentMethod: 'Байшин/Зочин',
+            roomOrGuest: room,
+            subtotal,
+            discount: 0,
+            originalTotal: total,
+            paidAmount: 0,
+            itemCount: items.reduce((sum, item) => sum + item.qty, 0),
+            itemSummary: buildItemSummary(items),
+            qpayInvoiceId: '',
+            notes: getCell(row, 'notes'),
+            items,
+          }),
+        );
         return NextResponse.json({
           success: true,
           duplicateRequest: true,
@@ -1531,6 +1560,25 @@ async function handlePATCH(request: Request) {
         staff: actorName,
         items,
       });
+      after(() =>
+        syncLiveOrderSafely({
+          transactionId,
+          businessDate: activeSession.businessDate,
+          timestamp,
+          staff: actorName,
+          paymentMethod: 'Байшин/Зочин',
+          roomOrGuest: room,
+          subtotal,
+          discount: 0,
+          originalTotal: total,
+          paidAmount: 0,
+          itemCount: items.reduce((sum, item) => sum + item.qty, 0),
+          itemSummary: buildItemSummary(items),
+          qpayInvoiceId: '',
+          notes: String(updates.notes ?? ''),
+          items,
+        }),
+      );
 
       return NextResponse.json({
         success: true,
@@ -1724,6 +1772,13 @@ async function handlePATCH(request: Request) {
     }
 
     if (plannedSettlements.length === 0) {
+      after(() =>
+        Promise.all(
+          requestedSettlementBodies.map((settlement) =>
+            removeLiveOrderSafely(settlement.transactionId?.trim() ?? ''),
+          ),
+        ),
+      );
       console.info('[sales:settlement] already-settled', {
         requestId: normalizedClientRequestId || 'legacy',
         durationMs: Date.now() - requestStartedAt,
@@ -1827,6 +1882,38 @@ async function handlePATCH(request: Request) {
     );
     clearCachedReads('sales:');
     clearCachedReads('day:');
+    after(() =>
+      Promise.all(
+        plannedSettlements.map((settlement) => {
+          const saleRow = salesRows.find(
+            row =>
+              getCell(row, 'transaction_id') === settlement.transactionId,
+          );
+          if (!saleRow) return Promise.resolve(null);
+          const paidAmount =
+            (paymentTotals.get(settlement.transactionId) ?? 0) +
+            settlement.paymentTotal;
+          return syncLiveOrderSafely({
+            transactionId: settlement.transactionId,
+            businessDate:
+              getCell(saleRow, 'business_date') || activeSession.businessDate,
+            timestamp: getCell(saleRow, 'timestamp'),
+            staff: getCell(saleRow, 'staff'),
+            paymentMethod: getCell(saleRow, 'payment_method'),
+            roomOrGuest: getCell(saleRow, 'room_or_guest'),
+            subtotal: toNumber(saleRow.get('subtotal')),
+            discount: toNumber(saleRow.get('discount')),
+            originalTotal: toNumber(saleRow.get('total')),
+            paidAmount,
+            itemCount: toNumber(saleRow.get('item_count')),
+            itemSummary: getCell(saleRow, 'item_summary'),
+            qpayInvoiceId: getCell(saleRow, 'qpay_invoice_id'),
+            notes: getCell(saleRow, 'notes'),
+            items: parseSaleItemDetails(getCell(saleRow, 'item_details')),
+          });
+        }),
+      ),
+    );
 
     console.info('[sales:settlement] completed', {
       requestId: normalizedClientRequestId || 'legacy',
