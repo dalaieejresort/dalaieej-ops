@@ -400,6 +400,26 @@ function getPaymentTotals(rows: Array<{ get: (columnName: string) => unknown }>)
   return totals;
 }
 
+function getPositivePaymentMethods(
+  rows: Array<{ get: (columnName: string) => unknown }>,
+) {
+  const methods = new Map<string, string[]>();
+
+  for (const row of rows) {
+    const transactionId = getCell(row, 'transaction_id');
+    const paymentMethod = getCell(row, 'payment_method');
+    if (!transactionId || !paymentMethod || toNumber(row.get('amount')) <= 0) {
+      continue;
+    }
+
+    const current = methods.get(transactionId) ?? [];
+    if (!current.includes(paymentMethod)) current.push(paymentMethod);
+    methods.set(transactionId, current);
+  }
+
+  return methods;
+}
+
 function normalizeLookup(value: unknown) {
   return String(value ?? '')
     .normalize('NFKC')
@@ -443,16 +463,24 @@ function getCurrentInventoryBalances(
   return Array.from(balances.values()).filter(item => item.quantity > 0);
 }
 
-function getRecentSale(row: SheetRow, paymentTotals: Map<string, number>) {
+function getRecentSale(
+  row: SheetRow,
+  paymentTotals: Map<string, number>,
+  positivePaymentMethods: Map<string, string[]>,
+) {
   const transactionId = getCell(row, 'transaction_id');
   const total = toNumber(row.get('total'));
   const paidAmount = paymentTotals.get(transactionId) ?? 0;
+  const refundPaymentMethod =
+    positivePaymentMethods.get(transactionId)?.join(' + ') ||
+    getCell(row, 'payment_method');
 
   return {
     transactionId,
     timestamp: getCell(row, 'timestamp'),
     staff: getCell(row, 'staff'),
     paymentMethod: getCell(row, 'payment_method'),
+    refundPaymentMethod,
     paidStatus: getCell(row, 'paid_status'),
     roomOrGuest: getCell(row, 'room_or_guest'),
     total,
@@ -508,11 +536,12 @@ async function handleGET(request: Request) {
     ]);
     const sessionWindow = getSessionWindow(getLatestSession(dayRows, businessDate));
     const paymentTotals = getPaymentTotals(paymentRows);
+    const positivePaymentMethods = getPositivePaymentMethods(paymentRows);
     const sales = salesRows
       .filter(row => isInsideBusinessDay(row.get('timestamp'), businessDate, sessionWindow))
       .filter(row => getCell(row, 'operation_status') !== 'pending')
       .filter(row => getCell(row, 'paid_status').toLowerCase() !== 'voided')
-      .map(row => getRecentSale(row, paymentTotals))
+      .map(row => getRecentSale(row, paymentTotals, positivePaymentMethods))
       .filter(sale => sale.transactionId)
       .reverse()
       .slice(0, 25);

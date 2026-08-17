@@ -96,6 +96,7 @@ type RecentSale = {
   timestamp: string;
   staff: string;
   paymentMethod: string;
+  refundPaymentMethod?: string;
   paidStatus: string;
   roomOrGuest: string;
   total: number;
@@ -116,6 +117,8 @@ type RecentSale = {
 
 type RegisterMode = "sale" | "charges" | "history" | "day-close";
 type SettlementMethod = "cash" | "card" | "bank";
+type RefundMethod = "Бэлэн" | "Карт" | "Данс";
+type RefundMethodSelection = RefundMethod | "";
 type PartialPaymentOption = SettlementMethod | "balance";
 type SettlementStatus = "idle" | "saving" | "success" | "error";
 type SettlementResult = {
@@ -381,11 +384,40 @@ const SETTLEMENT_METHODS = [
   { id: "bank", label: "Данс" },
 ] as const satisfies Array<{ id: SettlementMethod; label: string }>;
 
+const REFUND_METHODS = [
+  "Бэлэн",
+  "Карт",
+  "Данс",
+] as const satisfies readonly RefundMethod[];
+
 function getSettlementMethodLabel(methodId: SettlementMethod) {
   return (
     SETTLEMENT_METHODS.find((method) => method.id === methodId)?.label ??
     methodId
   );
+}
+
+function getDefaultRefundMethod(
+  paymentMethod: string,
+): RefundMethodSelection {
+  const normalized = paymentMethod.trim().toLowerCase();
+  const matchingMethods: RefundMethod[] = [];
+
+  if (
+    normalized.includes("qpay") ||
+    normalized.includes("данс") ||
+    normalized.includes("bank")
+  ) {
+    matchingMethods.push("Данс");
+  }
+  if (normalized.includes("карт") || normalized.includes("card")) {
+    matchingMethods.push("Карт");
+  }
+  if (normalized.includes("бэлэн") || normalized.includes("cash")) {
+    matchingMethods.push("Бэлэн");
+  }
+
+  return matchingMethods.length === 1 ? matchingMethods[0] : "";
 }
 
 const CASH_DENOMINATIONS = [500, 1000, 5000, 10000, 20000, 50000];
@@ -1660,7 +1692,8 @@ export function RegisterApp({
   const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
   const [selectedVoidTransactionId, setSelectedVoidTransactionId] = useState("");
   const [voidReason, setVoidReason] = useState("");
-  const [voidRefundMethod, setVoidRefundMethod] = useState("Бэлэн");
+  const [voidRefundMethod, setVoidRefundMethod] =
+    useState<RefundMethodSelection>("");
   const [registerMode, setRegisterMode] = useState<RegisterMode>("sale");
   const [historySales, setHistorySales] = useState<RecentSale[]>([]);
   const [historyStatus, setHistoryStatus] = useState<CatalogStatus>("loading");
@@ -2377,6 +2410,17 @@ export function RegisterApp({
   const selectedVoidSale =
     recentSales.find((sale) => sale.transactionId === selectedVoidTransactionId) ??
     null;
+  const originalVoidPaymentMethod = selectedVoidSale
+    ? getDefaultRefundMethod(
+        selectedVoidSale.refundPaymentMethod ?? selectedVoidSale.paymentMethod,
+      )
+    : null;
+  const voidRefundMethodChanged = Boolean(
+    selectedVoidSale &&
+      selectedVoidSale.refundableAmount > 0 &&
+      originalVoidPaymentMethod &&
+      voidRefundMethod !== originalVoidPaymentMethod,
+  );
   const filteredHistorySales = useMemo(() => {
     const { generalTerms, roomTerms } = parseRegisterSearchQuery(historyQuery);
 
@@ -2411,6 +2455,9 @@ export function RegisterApp({
   const canSubmitVoid =
     voidStatus !== "saving" &&
     Boolean(selectedVoidSale) &&
+    Boolean(
+      !selectedVoidSale?.refundableAmount || voidRefundMethod,
+    ) &&
     voidReason.trim().length > 0;
   const canCompleteSale =
     dayOpen &&
@@ -2924,11 +2971,25 @@ export function RegisterApp({
 
       const sales = Array.isArray(data?.sales) ? data.sales : [];
       setRecentSales(sales);
-      setSelectedVoidTransactionId((current) =>
-        sales.some((sale) => sale.transactionId === current)
-          ? current
-          : sales[0]?.transactionId ?? "",
-      );
+      const nextSelectedTransactionId = sales.some(
+        (sale) => sale.transactionId === selectedVoidTransactionId,
+      )
+        ? selectedVoidTransactionId
+        : sales[0]?.transactionId ?? "";
+      setSelectedVoidTransactionId(nextSelectedTransactionId);
+      if (nextSelectedTransactionId !== selectedVoidTransactionId) {
+        const nextSelectedSale = sales.find(
+          (sale) => sale.transactionId === nextSelectedTransactionId,
+        );
+        if (nextSelectedSale) {
+          setVoidRefundMethod(
+            getDefaultRefundMethod(
+              nextSelectedSale.refundPaymentMethod ??
+                nextSelectedSale.paymentMethod,
+            ),
+          );
+        }
+      }
       setVoidStatus("idle");
     } catch (error) {
       setRecentSales([]);
@@ -2952,9 +3013,23 @@ export function RegisterApp({
 
     setVoidModalOpen(true);
     setVoidReason("");
-    setVoidRefundMethod("Бэлэн");
+    setVoidRefundMethod(
+      getDefaultRefundMethod(
+        selectedVoidSale?.refundPaymentMethod ??
+          selectedVoidSale?.paymentMethod ??
+          "",
+      ),
+    );
     setVoidMessage("");
     void loadVoidableSales();
+  }
+
+  function selectVoidSale(sale: RecentSale) {
+    setSelectedVoidTransactionId(sale.transactionId);
+    setVoidRefundMethod(
+      getDefaultRefundMethod(sale.refundPaymentMethod ?? sale.paymentMethod),
+    );
+    setVoidMessage("");
   }
 
   async function submitVoidSale() {
@@ -5968,7 +6043,7 @@ export function RegisterApp({
                       <button
                         key={sale.transactionId}
                         type="button"
-                        onClick={() => setSelectedVoidTransactionId(sale.transactionId)}
+                        onClick={() => selectVoidSale(sale)}
                         className={`w-full rounded-md border p-3 text-left hover:border-[#2563eb] ${
                           selectedVoidTransactionId === sale.transactionId
                             ? "border-[#111827] ring-2 ring-[#111827]"
@@ -6028,7 +6103,7 @@ export function RegisterApp({
                           Буцаах хэлбэр
                         </p>
                         <div className="grid grid-cols-3 gap-2">
-                          {["Бэлэн", "Карт", "Данс"].map((method) => (
+                          {REFUND_METHODS.map((method) => (
                             <button
                               key={method}
                               type="button"
@@ -6043,6 +6118,19 @@ export function RegisterApp({
                             </button>
                           ))}
                         </div>
+                        {voidRefundMethodChanged && (
+                          <div className="mt-2 rounded-md border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-xs font-bold text-[#92400e]">
+                            Анхны төлбөр {originalVoidPaymentMethod}. Та {voidRefundMethod}{" "}
+                            буцаалт сонгосон байна. Энэ нь өдрийн хаалтын төлбөрийн
+                            дүнд нөлөөлнө.
+                          </div>
+                        )}
+                        {!originalVoidPaymentMethod && (
+                          <div className="mt-2 rounded-md border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-xs font-bold text-[#92400e]">
+                            Анхны төлбөр олон хэлбэртэй эсвэл тодорхойгүй байна.
+                            Буцаах хэлбэрийг сонгоод баталгаажуулна уу.
+                          </div>
+                        )}
                       </div>
                     )}
 
