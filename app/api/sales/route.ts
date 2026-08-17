@@ -21,6 +21,9 @@ import {
   requireActiveBusinessSession,
 } from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
+import { withProtectedApiRoute } from '@/lib/server/api-route';
+import { requireApiSession } from '@/lib/server/auth';
+import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -949,7 +952,7 @@ function salesErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const url = new URL(request.url);
     const requestedTransactionId = url.searchParams.get('transactionId')?.trim();
@@ -1310,11 +1313,14 @@ export async function GET(request: Request) {
   }
 }
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   const requestStartedAt = Date.now();
   let settlementRequestId = '';
 
   try {
+    const sessionOrResponse = requireApiSession(request, 'cashier');
+    if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
+    const actorName = sessionOrResponse.displayName;
     const body = (await request.json()) as SettleSaleBody;
     settlementRequestId = String(body.clientRequestId ?? '').trim();
     const transactionId = body.transactionId?.trim() ?? '';
@@ -1357,6 +1363,8 @@ export async function PATCH(request: Request) {
         daySessionSheet.getRows(),
       ]);
       const activeSession = requireActiveBusinessSession(daySessionRows);
+      const editStaleResponse = staleBusinessDayResponse(activeSession.businessDate);
+      if (editStaleResponse) return editStaleResponse;
       const paymentTotals = getPaymentTotals(paymentRows);
       const row = salesRows.find(
         item => getCell(item, 'transaction_id') === transactionId,
@@ -1420,7 +1428,7 @@ export async function PATCH(request: Request) {
         'Буцаалт',
         inventoryItem.quantity,
         inventoryItem.location,
-        body.staffName || 'Staff',
+        actorName,
         'Өр засвар',
         room,
         activeSession.sessionId,
@@ -1436,7 +1444,7 @@ export async function PATCH(request: Request) {
           'Зарлага',
           item.qty,
           'Front Desk',
-          body.staffName || 'Staff',
+          actorName,
           'Өр засвар',
           room,
           activeSession.sessionId,
@@ -1447,7 +1455,7 @@ export async function PATCH(request: Request) {
         await inventoryLogSheet.addRows([...reversalRows, ...newInventoryRows]);
       }
 
-      row.set('staff', body.staffName || getCell(row, 'staff') || 'Staff');
+      row.set('staff', actorName);
       row.set('payment_method', 'Байшин/Зочин');
       row.set('paid_status', 'unpaid');
       row.set('room_or_guest', room);
@@ -1462,7 +1470,7 @@ export async function PATCH(request: Request) {
       row.set('item_details', serializeSaleItemDetails(items));
       row.set(
         'notes',
-        [getCell(row, 'notes'), `Edited ${timestamp} by ${body.staffName || 'Staff'}`]
+        [getCell(row, 'notes'), `Edited ${timestamp} by ${actorName}`]
           .filter(Boolean)
           .join(' | '),
       );
@@ -1554,6 +1562,8 @@ export async function PATCH(request: Request) {
       });
     }
     const activeSession = requireActiveBusinessSession(daySessionRows);
+    const staleResponse = staleBusinessDayResponse(activeSession.businessDate);
+    if (staleResponse) return staleResponse;
     const paymentTotals = getPaymentTotals(paymentRows);
 
     const plannedSettlements: Array<{
@@ -1663,7 +1673,7 @@ export async function PATCH(request: Request) {
       timestamp,
       session_id: activeSession.sessionId,
       business_date: activeSession.businessDate,
-      staff: body.staffName || 'Staff',
+      staff: actorName,
       order_ids: plannedSettlements
         .map(settlement => settlement.transactionId)
         .join(', '),
@@ -1710,7 +1720,7 @@ export async function PATCH(request: Request) {
           payment_id: makePaymentLineNumber(receiptId, paymentLineIndex),
           transaction_id: settlement.transactionId,
           timestamp,
-          staff: body.staffName || 'Staff',
+          staff: actorName,
           payment_method: payment.paymentMethod,
           amount: payment.amount,
           cash_received: payment.cashReceived ?? '',
@@ -1778,3 +1788,6 @@ export async function PATCH(request: Request) {
     );
   }
 }
+
+export const GET = withProtectedApiRoute('/api/sales', 'cashier', handleGET);
+export const PATCH = withProtectedApiRoute('/api/sales', 'cashier', handlePATCH);

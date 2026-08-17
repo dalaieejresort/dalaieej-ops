@@ -21,6 +21,9 @@ import {
   requireActiveBusinessSession,
 } from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
+import { withProtectedApiRoute } from '@/lib/server/api-route';
+import { requireApiSession } from '@/lib/server/auth';
+import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -410,7 +413,7 @@ function logInventoryError(label: string, error: unknown) {
 // ==========================================
 // GET: Fetch the Catalog for the iPad Screen
 // ==========================================
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const url = new URL(request.url);
     const bypassCache = url.searchParams.get('fresh') === '1';
@@ -463,14 +466,16 @@ export async function GET(request: Request) {
 // ==========================================
 // POST: Push confirmed orders to the Ledger
 // ==========================================
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
+    const sessionOrResponse = requireApiSession(request, 'cashier');
+    if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
     const body = (await request.json()) as InventoryPostBody;
     const {
       items,
       method,
       room,
-      staffName,
+      staffName: requestedStaffName,
       paidStatus,
       total,
       cashReceived,
@@ -479,6 +484,8 @@ export async function POST(request: Request) {
       payments,
       clientRequestId,
     } = body;
+    const staffName = sessionOrResponse.displayName;
+    void requestedStaffName;
     if (!items?.length) {
       return NextResponse.json({ error: 'No items to log' }, { status: 400 });
     }
@@ -514,6 +521,8 @@ export async function POST(request: Request) {
       clientRequestId ? salesLogSheet.getRows() : Promise.resolve([]),
     ]);
     const activeSession = requireActiveBusinessSession(daySessionRows);
+    const staleResponse = staleBusinessDayResponse(activeSession.businessDate);
+    if (staleResponse) return staleResponse;
     const normalizedClientRequestId = String(clientRequestId ?? '').trim();
     const existingSale = normalizedClientRequestId
       ? existingSalesRows.find(
@@ -776,3 +785,6 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const GET = withProtectedApiRoute('/api/inventory', 'cashier', handleGET);
+export const POST = withProtectedApiRoute('/api/inventory', 'cashier', handlePOST);

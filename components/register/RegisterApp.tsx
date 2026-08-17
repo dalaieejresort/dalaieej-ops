@@ -10,7 +10,7 @@ import {
   canRefreshInBackground,
   fetchWithTimeout,
 } from "@/lib/client/network";
-import { FALLBACK_CATALOG, STAFF } from "@/lib/pos/data";
+import type { OpsRole } from "@/lib/auth-types";
 import type {
   CartLine,
   CatalogItem,
@@ -30,7 +30,7 @@ type CatalogResponseItem = {
   stock?: number;
 };
 
-type CatalogStatus = "loading" | "ready" | "cached" | "sample";
+type CatalogStatus = "loading" | "ready" | "cached" | "sample" | "empty" | "error";
 type SaleStatus = "idle" | "saving" | "success" | "error";
 type RegisterCartLine = CartLine & { category: ItemCategory };
 type BankTransferStatus = "idle" | "paid";
@@ -490,7 +490,7 @@ function normalizeCatalogRow(row: CatalogResponseItem): CatalogItem {
 }
 
 function getDisplayProducts(catalog: CatalogItem[]) {
-  const source = catalog.length > 0 ? catalog : FALLBACK_CATALOG;
+  const source = catalog;
   return source.filter((item) => !item.isCategory && item.price > 0);
 }
 
@@ -1595,19 +1595,24 @@ function buildChargeGroups(charges: UnpaidCharge[]) {
 
 interface RegisterAppProps {
   businessDate: string;
+  authenticatedStaffName: string;
+  role: OpsRole;
 }
 
 export function RegisterApp({
   businessDate: initialBusinessDate,
+  authenticatedStaffName,
+  role,
 }: RegisterAppProps) {
   const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
+  const [catalogMessage, setCatalogMessage] = useState("");
   const [query, setQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState<ItemCategory | "all">(
     "all",
   );
-  const [staffName, setStaffName] = useState(STAFF[0] ?? "Staff");
+  const staffName = authenticatedStaffName;
   const [cart, setCart] = useState<RegisterCartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>(
     PAYMENT_METHODS[0].id,
@@ -1700,29 +1705,43 @@ export function RegisterApp({
         options?.fresh ? "/api/inventory?fresh=1" : "/api/inventory",
         { cache: "no-store" },
       );
-      if (!response.ok) throw new Error("Catalogue request failed");
+      const data = (await response.json().catch(() => null)) as
+        | CatalogResponseItem[]
+        | { error?: string }
+        | null;
+      if (!response.ok) {
+        const apiError = data && !Array.isArray(data) ? data.error : undefined;
+        throw new Error(apiError || `Каталог татах хүсэлт ${response.status} алдаатай.`);
+      }
 
-      const data = (await response.json()) as CatalogResponseItem[];
       if (!Array.isArray(data) || data.length === 0) {
         setCatalog([]);
-        setCatalogStatus("sample");
+        setCatalogStatus("empty");
+        setCatalogMessage("Google Sheets холбогдсон боловч каталогт бараа алга.");
         return;
       }
 
       const normalizedCatalog = data.map(normalizeCatalogRow);
       setCatalog(normalizedCatalog);
       setCatalogStatus("ready");
+      setCatalogMessage("");
       writeOfflineCache(cacheKey, normalizedCatalog);
-    } catch {
+    } catch (error) {
       const cached = readOfflineCache<CatalogItem[]>(cacheKey);
       if (cached?.value.length) {
         setCatalog(cached.value);
         setCatalogStatus("cached");
+        setCatalogMessage(
+          error instanceof Error ? error.message : "Шинэ каталог татаж чадсангүй.",
+        );
         return;
       }
 
       setCatalog([]);
-      setCatalogStatus("sample");
+      setCatalogStatus("error");
+      setCatalogMessage(
+        error instanceof Error ? error.message : "Каталог татаж чадсангүй.",
+      );
     }
   }, []);
 
@@ -2117,7 +2136,7 @@ export function RegisterApp({
   }, [loadDaySession]);
 
   useEffect(() => {
-    if (catalogStatus !== "sample" && catalogStatus !== "cached") return;
+    if (catalogStatus !== "error" && catalogStatus !== "cached") return;
 
     const retryCatalog = () => {
       if (canRefreshInBackground()) {
@@ -2184,9 +2203,6 @@ export function RegisterApp({
     const restoreTimer = window.setTimeout(() => {
       if (draft && Array.isArray(draft.cart) && draft.cart.length > 0) {
         setCart(draft.cart);
-        if (typeof draft.staffName === "string" && draft.staffName) {
-          setStaffName(draft.staffName);
-        }
         if (isPaymentMethod(draft.paymentMethod)) {
           setPaymentMethod(draft.paymentMethod);
         }
@@ -2724,6 +2740,11 @@ export function RegisterApp({
   }
 
   function openDayModal(mode: Exclude<DayModalMode, null>) {
+    if (mode === "close" && role === "cashier") {
+      setDayStatus("error");
+      setDayMessage("Өдрийн хаалтыг зөвхөн менежер эсвэл эзэмшигч хийнэ.");
+      return;
+    }
     setDayModalMode(mode);
     setDayStatus("ready");
     setDayMessage("");
@@ -4002,33 +4023,28 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => openDayModal(dayOpen ? "close" : "open")}
+            disabled={dayOpen && role === "cashier"}
+            title={dayOpen && role === "cashier" ? "Өдрийг зөвхөн менежер хаана" : undefined}
             className={`h-10 rounded-md px-3 text-sm font-black text-white ${
               dayOpen
                 ? "bg-[#b91c1c] hover:bg-[#991b1b]"
                 : "bg-[#047857] hover:bg-[#065f46]"
-            }`}
+            } disabled:bg-[#94a3b8]`}
           >
             {dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
           </button>
-          <button
-            type="button"
-            onClick={openVoidModal}
-            className="h-10 rounded-md border border-[#fecaca] bg-white px-3 text-sm font-black text-[#b91c1c] hover:bg-[#fef2f2]"
-          >
-            Буцаалт
-          </button>
-          <select
-            value={staffName}
-            onChange={(event) => setStaffName(event.target.value)}
-            className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold"
-            aria-label="Ажилтан"
-          >
-            {STAFF.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
+          {role !== "cashier" && (
+            <button
+              type="button"
+              onClick={openVoidModal}
+              className="h-10 rounded-md border border-[#fecaca] bg-white px-3 text-sm font-black text-[#b91c1c] hover:bg-[#fef2f2]"
+            >
+              Буцаалт
+            </button>
+          )}
+          <span className="flex h-10 items-center rounded-md border border-[#cbd5e1] bg-[#f8fafc] px-3 text-sm font-black text-[#334155]">
+            {staffName}
+          </span>
           <button
             type="button"
             onClick={() => {
@@ -4328,14 +4344,19 @@ export function RegisterApp({
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                {catalogStatus === "sample" && (
+                {catalogStatus === "error" && (
+                  <div className="mb-3 rounded-md border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-sm font-medium text-[#b91c1c]">
+                    Каталог шинэчлэгдсэнгүй: {catalogMessage}
+                  </div>
+                )}
+                {catalogStatus === "empty" && (
                   <div className="mb-3 rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-medium text-[#92400e]">
-                    Google Sheets холбогдоогүй байна. Туршилтын жагсаалт ашиглаж байна.
+                    {catalogMessage}
                   </div>
                 )}
                 {catalogStatus === "cached" && (
                   <div className="mb-3 rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-medium text-[#92400e]">
-                    Холболтгүй тул хамгийн сүүлд хадгалсан барааны жагсаалтыг харуулж байна.
+                    Шинэ мэдээлэл татаж чадсангүй. Хадгалсан каталог ашиглаж байна: {catalogMessage}
                   </div>
                 )}
 
@@ -4744,7 +4765,12 @@ export function RegisterApp({
                 <button
                   type="button"
                   onClick={() => openDayModal(dayOpen ? "close" : "open")}
-                  disabled={dayStatus === "loading" || dayStatus === "saving"}
+                  disabled={
+                    dayStatus === "loading" ||
+                    dayStatus === "saving" ||
+                    (dayOpen && role === "cashier")
+                  }
+                  title={dayOpen && role === "cashier" ? "Өдрийг зөвхөн менежер хаана" : undefined}
                   className={`h-14 w-full rounded-md text-base font-black text-white disabled:bg-[#9ca3af] ${
                     dayOpen
                       ? "bg-[#b91c1c] hover:bg-[#991b1b]"

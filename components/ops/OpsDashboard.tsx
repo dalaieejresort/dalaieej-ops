@@ -413,6 +413,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       ? Math.round((data.totals.paymentTotal / data.totals.salesTotal) * 100)
       : 0;
   const paymentTotal = paymentBreakdownTotal(data.totals);
+  const isInitialLoading = loadState === "loading" && !lastUpdatedAt;
 
   return (
     <div className="min-h-dvh bg-[#f4f6f8] text-[#111827]">
@@ -462,31 +463,43 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
 
       <main className="mx-auto grid max-w-[1440px] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="grid min-w-0 gap-4">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard
-              label="Өдрийн борлуулалт"
-              value={formatMNT(data.totals.salesTotal)}
-              detail={`${formatNumber(data.history.length)} хаагдсан мөр · ${collectionRate}% цугласан`}
-              tone="green"
-            />
-            <MetricCard
-              label="Төлбөр авсан"
-              value={formatMNT(data.totals.paymentTotal)}
-              detail={`Бэлэн ${formatMNT(data.totals.cashPaymentTotal)} · Бусад ${formatMNT(nonCashTotal)}`}
-            />
-            <MetricCard
-              label="Хүлээгдэж буй өр"
-              value={formatMNT(unpaidBalance)}
-              detail={`${formatNumber(data.charges.length)} хаагдаагүй төлбөр`}
-              tone={unpaidBalance > 0 ? "amber" : "neutral"}
-            />
-            <MetricCard
-              label="Бэлнээр байх"
-              value={formatMNT(data.totals.expectedCash)}
-              detail={`Эхлэх ${formatMNT(data.session?.startingCash ?? 0)} · Касс ${statusText(data.session)}`}
-              tone={data.session?.status?.toLowerCase() === "open" ? "green" : "neutral"}
-            />
-          </div>
+          {isInitialLoading ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Мэдээлэл ачаалж байна" aria-busy="true">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="h-32 animate-pulse rounded-xl border border-[#e2e8f0] bg-white p-4">
+                  <div className="h-3 w-28 rounded bg-[#e2e8f0]" />
+                  <div className="mt-5 h-8 w-40 rounded bg-[#e2e8f0]" />
+                  <div className="mt-4 h-3 w-32 rounded bg-[#f1f5f9]" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard
+                label="Өдрийн борлуулалт"
+                value={formatMNT(data.totals.salesTotal)}
+                detail={`${formatNumber(data.history.length)} хаагдсан мөр · ${collectionRate}% цугласан`}
+                tone="green"
+              />
+              <MetricCard
+                label="Төлбөр авсан"
+                value={formatMNT(data.totals.paymentTotal)}
+                detail={`Бэлэн ${formatMNT(data.totals.cashPaymentTotal)} · Бусад ${formatMNT(nonCashTotal)}`}
+              />
+              <MetricCard
+                label="Хүлээгдэж буй өр"
+                value={formatMNT(unpaidBalance)}
+                detail={`${formatNumber(data.charges.length)} хаагдаагүй төлбөр`}
+                tone={unpaidBalance > 0 ? "amber" : "neutral"}
+              />
+              <MetricCard
+                label="Бэлнээр байх"
+                value={formatMNT(data.totals.expectedCash)}
+                detail={`Эхлэх ${formatMNT(data.session?.startingCash ?? 0)} · Касс ${statusText(data.session)}`}
+                tone={data.session?.status?.toLowerCase() === "open" ? "green" : "neutral"}
+              />
+            </div>
+          )}
 
           {errors.length > 0 && (
             <div className="rounded-lg border border-[#fed7aa] bg-[#fff7ed] px-4 py-3">

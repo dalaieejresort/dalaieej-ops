@@ -2,11 +2,14 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import type { OpsRole } from "@/lib/auth-types";
 
 type ResponsiveMode = "mobile" | "desktop";
 
 type ResponsiveHomeProps = {
   businessDate: string;
+  authenticatedStaffName: string;
+  role: OpsRole;
 };
 
 const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
@@ -35,7 +38,11 @@ const RegisterApp = dynamic(
   { loading: AppLoading },
 );
 
-export function ResponsiveHome({ businessDate }: ResponsiveHomeProps) {
+export function ResponsiveHome({
+  businessDate,
+  authenticatedStaffName,
+  role,
+}: ResponsiveHomeProps) {
   const [mode, setMode] = useState<ResponsiveMode | null>(null);
 
   useEffect(() => {
@@ -55,7 +62,11 @@ export function ResponsiveHome({ businessDate }: ResponsiveHomeProps) {
   }
 
   return mode === "desktop" ? (
-    <RegisterApp businessDate={businessDate} />
+    <RegisterApp
+      businessDate={businessDate}
+      authenticatedStaffName={authenticatedStaffName}
+      role={role}
+    />
   ) : (
     <MobileApp businessDate={businessDate} />
   );

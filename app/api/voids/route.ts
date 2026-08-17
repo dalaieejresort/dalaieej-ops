@@ -4,6 +4,8 @@ import {
 } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import { NextResponse } from 'next/server';
+import { withProtectedApiRoute } from '@/lib/server/api-route';
+import { requireApiSession } from '@/lib/server/auth';
 import {
   makeUniformControlNumber,
   PAYMENT_LOG_HEADERS,
@@ -448,7 +450,7 @@ function voidsErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
@@ -490,8 +492,11 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
+    const sessionOrResponse = requireApiSession(request, 'manager');
+    if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
+    const actorName = sessionOrResponse.displayName;
     const body = (await request.json()) as VoidSaleBody;
     const transactionId = body.transactionId?.trim();
     const reason = body.reason?.trim();
@@ -569,7 +574,7 @@ export async function POST(request: Request) {
       'Буцаалт',
       item.quantity,
       item.location,
-      body.staffName || 'Staff',
+      actorName,
       `Буцаалт - ${refundMethod}`,
       getCell(saleRow, 'room_or_guest'),
       activeBusinessSession.sessionId,
@@ -582,7 +587,7 @@ export async function POST(request: Request) {
           voidId,
           transactionId,
           timestamp,
-          body.staffName || 'Staff',
+          actorName,
           reason,
           originalStatus || 'paid',
           originalTotal,
@@ -603,7 +608,7 @@ export async function POST(request: Request) {
               payment_id: makeUniformControlNumber('RFN'),
               transaction_id: transactionId,
               timestamp,
-              staff: body.staffName || 'Staff',
+              staff: actorName,
               payment_method: `Буцаалт - ${refundMethod}`,
               amount: -refundAmount,
               cash_received: '',
@@ -642,3 +647,6 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const GET = withProtectedApiRoute('/api/voids', 'cashier', handleGET);
+export const POST = withProtectedApiRoute('/api/voids', 'manager', handlePOST);

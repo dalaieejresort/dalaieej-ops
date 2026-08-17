@@ -13,6 +13,9 @@ import {
   rowBelongsToBusinessDate,
 } from '@/lib/server/business-session';
 import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
+import { withProtectedApiRoute } from '@/lib/server/api-route';
+import { requireApiSession } from '@/lib/server/auth';
+import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
 
 type DayAction = 'open' | 'close';
 
@@ -519,7 +522,7 @@ async function getDaySessionContext(businessDate: string) {
   return { sessionRow };
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const url = new URL(request.url);
     const businessDate = normalizeBusinessDate(url.searchParams.get('businessDate'));
@@ -580,7 +583,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const body = (await request.json()) as DayPostBody;
     const action = body.action;
@@ -589,6 +592,13 @@ export async function POST(request: Request) {
     if (action !== 'open' && action !== 'close') {
       return NextResponse.json({ error: 'action must be open or close' }, { status: 400 });
     }
+
+    const sessionOrResponse = requireApiSession(
+      request,
+      action === 'close' ? 'manager' : 'cashier',
+    );
+    if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
+    const actorName = sessionOrResponse.displayName;
 
     const {
       daySheet,
@@ -611,6 +621,8 @@ export async function POST(request: Request) {
 
     if (action === 'open') {
       if (activeSession) {
+        const staleResponse = staleBusinessDayResponse(businessDate);
+        if (staleResponse) return staleResponse;
         const storedSessionId = getCell(activeSession, 'session_id');
         if (
           storedSessionId &&
@@ -670,7 +682,7 @@ export async function POST(request: Request) {
         {
           business_date: businessDate,
           opened_at: openedAt,
-          opened_by: body.staffName || 'Staff',
+          opened_by: actorName,
           starting_cash: startingCash,
           status: 'open',
           closed_at: '',
@@ -731,7 +743,7 @@ export async function POST(request: Request) {
     const cashDifference = countedCash - totals.expectedCash;
     activeSession.set('status', 'closed');
     activeSession.set('closed_at', timestamp);
-    activeSession.set('closed_by', body.staffName || 'Staff');
+    activeSession.set('closed_by', actorName);
     activeSession.set('counted_cash', countedCash);
     activeSession.set('expected_cash', totals.expectedCash);
     activeSession.set('cash_difference', cashDifference);
@@ -771,3 +783,6 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const GET = withProtectedApiRoute('/api/day', 'cashier', handleGET);
+export const POST = withProtectedApiRoute('/api/day', 'cashier', handlePOST);
