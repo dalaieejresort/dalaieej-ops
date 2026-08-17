@@ -35,6 +35,7 @@ import {
 } from '@/lib/server/sheets-atomic';
 import { syncKitchenOrderSafely } from '@/lib/server/kitchen-queue';
 import { syncLiveOrderSafely } from '@/lib/server/live-order-board';
+import { mergeManagementBoardSectionSafely } from '@/lib/server/management-board';
 
 type InventoryPostBody = {
   items?: Array<{
@@ -466,8 +467,9 @@ function logInventoryError(label: string, error: unknown) {
 // ==========================================
 // GET: Fetch the Catalog for the iPad Screen
 // ==========================================
-async function handleGET() {
+async function handleGET(request: Request) {
   try {
+    const url = new URL(request.url);
     const loadCatalog = async () => {
       const doc = await loadSpreadsheet();
       const catalogSheet = findSheet(doc, CATALOG_SHEET_TITLES, 'inventory catalogue');
@@ -496,11 +498,24 @@ async function handleGET() {
           p.price > 0,
       );
     };
-    const validProducts = await getCachedRead(
-      'inventory:catalog',
-      INVENTORY_READ_CACHE_TTL_MS,
-      loadCatalog,
-    );
+    const validProducts =
+      url.searchParams.get('fresh') === '1'
+        ? await loadCatalog()
+        : await getCachedRead(
+            'inventory:catalog',
+            INVENTORY_READ_CACHE_TTL_MS,
+            loadCatalog,
+          );
+    const businessDate = url.searchParams.get('businessDate')?.trim() ?? '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+      after(() =>
+        mergeManagementBoardSectionSafely(
+          businessDate,
+          'inventory',
+          validProducts,
+        ),
+      );
+    }
 
     return NextResponse.json(validProducts);
   } catch (error) {

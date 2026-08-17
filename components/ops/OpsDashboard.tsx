@@ -10,6 +10,7 @@ import {
   canRefreshInBackground,
   fetchWithTimeout,
 } from "@/lib/client/network";
+import type { ManagementBoardResponse } from "@/lib/management-board-types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
 
 type DayTotals = {
@@ -129,6 +130,9 @@ const EMPTY_DATA: DashboardData = {
   pendingOperations: [],
 };
 
+const MANAGEMENT_BOARD_REFRESH_MS = 30 * 1000;
+const SHEETS_RECONCILE_MS = 10 * 60 * 1000;
+
 function normalizeDashboardData(value: Partial<DashboardData>): DashboardData {
   return {
     ...EMPTY_DATA,
@@ -142,6 +146,37 @@ function normalizeDashboardData(value: Partial<DashboardData>): DashboardData {
       ? value.pendingOperations
       : [],
   };
+}
+
+function dashboardFromManagementBoard(
+  payload: ManagementBoardResponse,
+): DashboardData {
+  const day =
+    payload.sections.day && typeof payload.sections.day === "object"
+      ? (payload.sections.day as Partial<DashboardData>)
+      : {};
+  const sales =
+    payload.sections.sales && typeof payload.sections.sales === "object"
+      ? (payload.sections.sales as Partial<DashboardData>)
+      : {};
+  const inventory = Array.isArray(payload.sections.inventory)
+    ? (payload.sections.inventory as CatalogItem[])
+    : [];
+  const operations =
+    payload.sections.operations &&
+    typeof payload.sections.operations === "object"
+      ? (payload.sections.operations as { pending?: PendingOperation[] })
+      : {};
+
+  return normalizeDashboardData({
+    session: day.session ?? null,
+    totals: day.totals,
+    itemTotals: day.itemTotals,
+    charges: sales.charges,
+    history: sales.history,
+    catalog: inventory,
+    pendingOperations: operations.pending,
+  });
 }
 
 type OpsDashboardProps = {
@@ -210,10 +245,7 @@ async function readJson(response: Response) {
 
 function buildDashboardUrl(path: string, businessDate: string, fresh: boolean) {
   const params = new URLSearchParams();
-
-  if (path !== "/api/inventory") {
-    params.set("businessDate", businessDate);
-  }
+  params.set("businessDate", businessDate);
 
   if (fresh) params.set("fresh", "1");
 
@@ -306,19 +338,47 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
     fingerprint: string;
     requestId: string;
   } | null>(null);
+  const hasLoadedDashboardRef = useRef(false);
 
   const loadDashboard = useCallback(
     async (fresh = false) => {
       const cacheKey = `ops:${businessDate}`;
       const cached = readOfflineCache<DashboardData>(cacheKey);
 
-      if (cached) {
+      if (cached && !hasLoadedDashboardRef.current) {
         setData(normalizeDashboardData(cached.value));
         setLastUpdatedAt(new Date(cached.savedAt));
       }
       setLoadState((current) =>
         current === "ready" || cached ? "ready" : "loading",
       );
+
+      if (!fresh) {
+        try {
+          const params = new URLSearchParams({ businessDate });
+          const response = await fetchWithTimeout(
+            `/api/management-board?${params.toString()}`,
+            { cache: "no-store" },
+          );
+          const payload = (await response.json().catch(() => null)) as
+            | ManagementBoardResponse
+            | null;
+          if (response.ok && payload?.initialized) {
+            const nextData = dashboardFromManagementBoard(payload);
+            hasLoadedDashboardRef.current = true;
+            setData(nextData);
+            writeOfflineCache(cacheKey, nextData);
+            setLastUpdatedAt(
+              payload.updatedAt ? new Date(payload.updatedAt) : new Date(),
+            );
+            setErrors([]);
+            setLoadState("ready");
+            return;
+          }
+        } catch {
+          // The authoritative multi-source load below remains the fallback.
+        }
+      }
       const nextErrors: string[] = [];
 
       const [dayResult, salesResult, inventoryResult, operationsResult] =
@@ -399,6 +459,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
           : [],
       };
 
+      hasLoadedDashboardRef.current = true;
       setData(nextData);
       if (
         dayResult.status === "fulfilled" ||
@@ -438,13 +499,20 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
-    const timer = window.setInterval(refresh, 3 * 60 * 1000);
+    const boardTimer = window.setInterval(
+      refresh,
+      MANAGEMENT_BOARD_REFRESH_MS,
+    );
+    const reconcileTimer = window.setInterval(() => {
+      if (canRefreshInBackground()) void loadDashboard(true);
+    }, SHEETS_RECONCILE_MS);
 
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
-      window.clearInterval(timer);
+      window.clearInterval(boardTimer);
+      window.clearInterval(reconcileTimer);
       window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };

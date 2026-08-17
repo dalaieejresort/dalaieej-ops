@@ -1,6 +1,6 @@
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import {
   makeUniformControlNumber,
   makeUniformSessionNumber,
@@ -17,6 +17,7 @@ import { clearCachedReads, getCachedRead } from '@/lib/server/read-cache';
 import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
 import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
+import { mergeManagementBoardSectionSafely } from '@/lib/server/management-board';
 
 type DayAction = 'open' | 'close';
 
@@ -685,10 +686,16 @@ async function handleGET(request: Request) {
         closeHistory: getClosedSessionHistory(dayRows),
       };
     };
-    const payload = await getCachedRead(
-      `day:${businessDate}`,
-      DAY_READ_CACHE_TTL_MS,
-      loadDayPayload,
+    const payload =
+      url.searchParams.get('fresh') === '1'
+        ? await loadDayPayload()
+        : await getCachedRead(
+            `day:${businessDate}`,
+            DAY_READ_CACHE_TTL_MS,
+            loadDayPayload,
+          );
+    after(() =>
+      mergeManagementBoardSectionSafely(businessDate, 'day', payload),
     );
 
     return NextResponse.json(payload);

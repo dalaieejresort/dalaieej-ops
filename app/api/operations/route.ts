@@ -1,9 +1,10 @@
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { requireApiSession } from "@/lib/server/auth";
 import { withProtectedApiRoute } from "@/lib/server/api-route";
 import { getCachedRead } from "@/lib/server/read-cache";
+import { mergeManagementBoardSectionSafely } from "@/lib/server/management-board";
 
 const OPERATIONS_CACHE_TTL_MS = 60_000;
 const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -84,10 +85,8 @@ async function handleGET(request: Request) {
   if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
 
   try {
-    const pending = await getCachedRead(
-      "operations:pending",
-      OPERATIONS_CACHE_TTL_MS,
-      async () => {
+    const url = new URL(request.url);
+    const loadPending = async () => {
         const doc = await loadSpreadsheet();
         const available = OPERATION_SHEETS.flatMap(config => {
           const sheet = config.titles
@@ -143,8 +142,25 @@ async function handleGET(request: Request) {
             }];
           });
         });
-      },
-    );
+      };
+    const pending =
+      url.searchParams.get("fresh") === "1"
+        ? await loadPending()
+        : await getCachedRead(
+            "operations:pending",
+            OPERATIONS_CACHE_TTL_MS,
+            loadPending,
+          );
+    const businessDate = url.searchParams.get("businessDate")?.trim() ?? "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+      after(() =>
+        mergeManagementBoardSectionSafely(
+          businessDate,
+          "operations",
+          { pending },
+        ),
+      );
+    }
 
     return NextResponse.json({ pending });
   } catch (error) {

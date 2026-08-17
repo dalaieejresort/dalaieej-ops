@@ -40,6 +40,7 @@ import {
   replaceLiveOrdersSnapshotSafely,
   syncLiveOrderSafely,
 } from '@/lib/server/live-order-board';
+import { mergeManagementBoardSectionSafely } from '@/lib/server/management-board';
 
 type SettlementPaymentInput = {
   paymentMethod?: string;
@@ -1279,6 +1280,17 @@ async function handleGET(request: Request) {
             loadSalesList,
           );
     after(() => replaceLiveOrdersSnapshotSafely(payload.charges));
+    const managementBusinessDate =
+      url.searchParams.get('businessDate')?.trim() ?? '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(managementBusinessDate)) {
+      after(() =>
+        mergeManagementBoardSectionSafely(
+          managementBusinessDate,
+          'sales',
+          payload,
+        ),
+      );
+    }
 
     return NextResponse.json(
       waiterView ? { charges: payload.charges } : payload,
