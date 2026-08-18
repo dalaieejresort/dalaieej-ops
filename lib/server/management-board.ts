@@ -4,6 +4,7 @@ import { Redis } from "@upstash/redis";
 import type {
   ManagementBoardSectionName,
 } from "@/lib/management-board-types";
+import { isValidBusinessDate } from "@/lib/pos/business-date";
 
 type StoredSection = {
   data: unknown;
@@ -16,6 +17,10 @@ const REQUIRED_SECTIONS: ManagementBoardSectionName[] = [
   "inventory",
   "operations",
 ];
+const ALL_SECTIONS: ManagementBoardSectionName[] = [
+  ...REQUIRED_SECTIONS,
+  "quality",
+];
 const BOARD_TTL_SECONDS = 72 * 60 * 60;
 const BOARD_WRITE_TIMEOUT_MS = 2_000;
 
@@ -27,7 +32,7 @@ function getRedis() {
 }
 
 function boardKey(businessDate: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+  if (!isValidBusinessDate(businessDate)) {
     throw new Error("Invalid management board business date");
   }
   return `dalaieej:management:${businessDate}:v1`;
@@ -91,7 +96,7 @@ export async function getManagementBoardSnapshot(businessDate: string) {
     Record<ManagementBoardSectionName, string>
   > = {};
 
-  REQUIRED_SECTIONS.forEach((section) => {
+  ALL_SECTIONS.forEach((section) => {
     const value = stored[section];
     if (!value || typeof value !== "object" || !("data" in value)) return;
     sections[section] = value.data;

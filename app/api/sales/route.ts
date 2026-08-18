@@ -5,6 +5,7 @@ import {
 import { JWT } from 'google-auth-library';
 import { after, NextResponse } from 'next/server';
 import { isUnlimitedInventoryItem } from '@/lib/pos/inventory';
+import { isValidBusinessDate } from '@/lib/pos/business-date';
 import {
   parseSaleItemDetails,
   serializeSaleItemDetails,
@@ -28,6 +29,12 @@ import {
   operationFingerprint,
   operationTimestamp,
 } from '@/lib/server/operation-controls';
+import {
+  makeOrderItemRecords,
+  ORDER_ITEM_HEADERS,
+  ORDER_ITEMS_SHEET_TITLES,
+  orderItemValues,
+} from '@/lib/server/order-items';
 import {
   appendClaimRow,
   appendRowsRequest,
@@ -1282,7 +1289,7 @@ async function handleGET(request: Request) {
     after(() => replaceLiveOrdersSnapshotSafely(payload.charges));
     const managementBusinessDate =
       url.searchParams.get('businessDate')?.trim() ?? '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(managementBusinessDate)) {
+    if (isValidBusinessDate(managementBusinessDate)) {
       after(() =>
         mergeManagementBoardSectionSafely(
           managementBusinessDate,
@@ -1370,7 +1377,7 @@ async function handlePATCH(request: Request) {
     const doc = await loadSpreadsheet();
 
     if (body.action === 'edit_unpaid') {
-      const [salesLogSheet, paymentsLogSheet, daySessionSheet] =
+      const [salesLogSheet, paymentsLogSheet, daySessionSheet, orderItemsSheet] =
         await Promise.all([
           getOrCreateSalesLogSheet(doc),
           getOrCreatePaymentsLogSheet(doc),
@@ -1378,6 +1385,11 @@ async function handlePATCH(request: Request) {
             doc,
             DAY_SESSION_SHEET_TITLES,
             DAY_SESSION_HEADERS,
+          ),
+          getOrCreateSheet(
+            doc,
+            ORDER_ITEMS_SHEET_TITLES,
+            ORDER_ITEM_HEADERS,
           ),
         ]);
       const [salesRows, paymentRows, daySessionRows] = await Promise.all([
@@ -1557,10 +1569,30 @@ async function handlePATCH(request: Request) {
         header => updates[header] ?? row.get(header) ?? '',
       );
       const inventoryChanges = [...reversalRows, ...newInventoryRows];
+      const orderItemRows = makeOrderItemRecords(items, {
+        transactionId,
+        timestamp,
+        businessDate: activeSession.businessDate,
+        sessionId: activeSession.sessionId,
+        staff: actorName,
+        roomOrGuest: room,
+        revisionId: editRequestId,
+        revisionType: 'edit',
+      });
       await executeAtomicBatch(doc, [
         updateRowRequest(salesLogSheet, row.rowNumber, saleValues),
         ...(inventoryChanges.length > 0
           ? [appendRowsRequest(inventoryLogSheet, inventoryChanges)]
+          : []),
+        ...(orderItemRows.length > 0
+          ? [
+              appendRowsRequest(
+                orderItemsSheet,
+                orderItemRows.map(record =>
+                  orderItemValues(record, orderItemsSheet.headerValues),
+                ),
+              ),
+            ]
           : []),
       ]);
       clearCachedReads('sales:');

@@ -2,7 +2,8 @@ export type ManagementBoardSectionName =
   | "day"
   | "sales"
   | "inventory"
-  | "operations";
+  | "operations"
+  | "quality";
 
 export type ManagementBoardResponse = {
   initialized: boolean;

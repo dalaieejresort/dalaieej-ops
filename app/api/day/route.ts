@@ -18,6 +18,7 @@ import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
 import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
 import { mergeManagementBoardSectionSafely } from '@/lib/server/management-board';
+import { ORDER_ITEMS_SHEET_TITLES } from '@/lib/server/order-items';
 
 type DayAction = 'open' | 'close';
 
@@ -224,17 +225,22 @@ async function getDayReadContext(businessDate: string) {
   if (!daySheet || !salesLogSheet || !paymentsLogSheet) {
     throw new Error('Day, sales, or payments sheet is not initialized');
   }
-  const [dayRows, salesRows, paymentRows] = await batchReadRows(doc, [
+  const orderItemsSheet = findExistingSheet(doc, ORDER_ITEMS_SHEET_TITLES);
+  const sheets = [
     daySheet,
     salesLogSheet,
     paymentsLogSheet,
-  ]);
+    ...(orderItemsSheet ? [orderItemsSheet] : []),
+  ];
+  const [dayRows, salesRows, paymentRows, orderItemRows = []] =
+    await batchReadRows(doc, sheets);
   const sessionRow = getLatestSession(dayRows, businessDate);
   const { totals, itemTotals } = getDayMetrics(
     salesRows,
     paymentRows,
     businessDate,
     sessionRow,
+    orderItemRows,
   );
   return { dayRows, sessionRow, totals, itemTotals };
 }
@@ -538,12 +544,41 @@ function parseItemSummary(summary: string) {
 function getDayItemTotals(
   salesRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
+  orderItemRows: Array<{ get: (columnName: string) => unknown }> = [],
 ) {
   const totals = new Map<string, number>();
-  const daySalesRows = getDaySalesRows(salesRows, businessDate);
+  const daySalesRows = getDaySalesRows(salesRows, businessDate).filter(
+    row => getCell(row, 'paid_status').toLowerCase() !== 'voided',
+  );
+  const dayTransactionIds = new Set(
+    daySalesRows.map(row => getCell(row, 'transaction_id')).filter(Boolean),
+  );
+  const latestRevision = new Map<string, string>();
+  for (const row of orderItemRows) {
+    const transactionId = getCell(row, 'transaction_id');
+    const revisionId = getCell(row, 'revision_id');
+    if (dayTransactionIds.has(transactionId) && revisionId) {
+      latestRevision.set(transactionId, revisionId);
+    }
+  }
+  const normalizedTransactions = new Set<string>();
+  for (const row of orderItemRows) {
+    const transactionId = getCell(row, 'transaction_id');
+    if (
+      !dayTransactionIds.has(transactionId) ||
+      getCell(row, 'revision_id') !== latestRevision.get(transactionId)
+    ) {
+      continue;
+    }
+    const name = getCell(row, 'item_name');
+    const quantity = toNumber(row.get('quantity'));
+    if (!name || quantity <= 0) continue;
+    normalizedTransactions.add(transactionId);
+    totals.set(name, (totals.get(name) ?? 0) + quantity);
+  }
 
   for (const row of daySalesRows) {
-    if (getCell(row, 'paid_status').toLowerCase() === 'voided') continue;
+    if (normalizedTransactions.has(getCell(row, 'transaction_id'))) continue;
 
     for (const item of parseItemSummary(getCell(row, 'item_summary'))) {
       totals.set(item.name, (totals.get(item.name) ?? 0) + item.quantity);
@@ -560,6 +595,7 @@ function getDayMetrics(
   paymentRows: Array<{ get: (columnName: string) => unknown }>,
   businessDate: string,
   sessionRow: SheetRow | null,
+  orderItemRows: Array<{ get: (columnName: string) => unknown }> = [],
 ) {
   const startingCash = sessionRow ? toNumber(sessionRow.get('starting_cash')) : 0;
 
@@ -573,6 +609,7 @@ function getDayMetrics(
     itemTotals: getDayItemTotals(
       salesRows,
       businessDate,
+      orderItemRows,
     ),
   };
 }
@@ -620,10 +657,12 @@ async function getDayContext(businessDate: string) {
     PAYMENTS_LOG_SHEET_TITLES,
     PAYMENT_LOG_HEADERS,
   );
-  const [dayRows, salesRows, paymentRows] = await Promise.all([
+  const orderItemsSheet = findExistingSheet(doc, ORDER_ITEMS_SHEET_TITLES);
+  const [dayRows, salesRows, paymentRows, orderItemRows] = await Promise.all([
     daySheet.getRows() as Promise<SheetRow[]>,
     salesLogSheet.getRows(),
     paymentsLogSheet.getRows(),
+    orderItemsSheet ? orderItemsSheet.getRows() : Promise.resolve([]),
   ]);
   const sessionRow = getLatestSession(dayRows, businessDate);
   const { totals, itemTotals } = getDayMetrics(
@@ -631,6 +670,7 @@ async function getDayContext(businessDate: string) {
     paymentRows,
     businessDate,
     sessionRow,
+    orderItemRows,
   );
 
   return {
@@ -638,6 +678,7 @@ async function getDayContext(businessDate: string) {
     dayRows,
     salesRows,
     paymentRows,
+    orderItemRows,
     sessionRow,
     totals,
     itemTotals,
@@ -743,6 +784,7 @@ async function handlePOST(request: Request) {
       dayRows,
       salesRows,
       paymentRows,
+      orderItemRows,
     } = await getDayContext(requestedBusinessDate);
     const completedRequestRow = dayRows.find(
       row =>
@@ -756,6 +798,7 @@ async function handlePOST(request: Request) {
         paymentRows,
         completedBusinessDate,
         completedRequestRow,
+        orderItemRows,
       );
       return NextResponse.json({
         success: true,
@@ -781,6 +824,7 @@ async function handlePOST(request: Request) {
       paymentRows,
       businessDate,
       sessionRow,
+      orderItemRows,
     );
     const timestamp = nowTimestamp();
 

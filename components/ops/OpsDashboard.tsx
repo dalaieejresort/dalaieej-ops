@@ -11,6 +11,7 @@ import {
   fetchWithTimeout,
 } from "@/lib/client/network";
 import type { ManagementBoardResponse } from "@/lib/management-board-types";
+import type { DataQualityReport } from "@/lib/data-quality-types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
 
 type DayTotals = {
@@ -101,6 +102,7 @@ type DashboardData = {
   history: HistorySale[];
   catalog: CatalogItem[];
   pendingOperations: PendingOperation[];
+  quality: DataQualityReport | null;
 };
 
 type LoadState = "loading" | "ready" | "partial" | "error";
@@ -128,6 +130,7 @@ const EMPTY_DATA: DashboardData = {
   history: [],
   catalog: [],
   pendingOperations: [],
+  quality: null,
 };
 
 const MANAGEMENT_BOARD_REFRESH_MS = 30 * 1000;
@@ -145,6 +148,10 @@ function normalizeDashboardData(value: Partial<DashboardData>): DashboardData {
     pendingOperations: Array.isArray(value.pendingOperations)
       ? value.pendingOperations
       : [],
+    quality:
+      value.quality && typeof value.quality === "object"
+        ? value.quality
+        : null,
   };
 }
 
@@ -167,6 +174,10 @@ function dashboardFromManagementBoard(
     typeof payload.sections.operations === "object"
       ? (payload.sections.operations as { pending?: PendingOperation[] })
       : {};
+  const quality =
+    payload.sections.quality && typeof payload.sections.quality === "object"
+      ? (payload.sections.quality as DataQualityReport)
+      : null;
 
   return normalizeDashboardData({
     session: day.session ?? null,
@@ -176,6 +187,7 @@ function dashboardFromManagementBoard(
     history: sales.history,
     catalog: inventory,
     pendingOperations: operations.pending,
+    quality,
   });
 }
 
@@ -334,6 +346,8 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [adjustmentMessage, setAdjustmentMessage] = useState("");
   const [adjustmentSaving, setAdjustmentSaving] = useState(false);
+  const [qualityRepairing, setQualityRepairing] = useState(false);
+  const [qualityMessage, setQualityMessage] = useState("");
   const pendingAdjustmentRef = useRef<{
     fingerprint: string;
     requestId: string;
@@ -373,6 +387,26 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
             );
             setErrors([]);
             setLoadState("ready");
+            if (!nextData.quality) {
+              try {
+                const qualityResponse = await fetchWithTimeout(
+                  buildDashboardUrl(
+                    "/api/data-quality",
+                    businessDate,
+                    false,
+                  ),
+                  { cache: "no-store" },
+                );
+                const quality = (await readJson(
+                  qualityResponse,
+                )) as DataQualityReport;
+                const completeData = { ...nextData, quality };
+                setData(completeData);
+                writeOfflineCache(cacheKey, completeData);
+              } catch {
+                // The next scheduled refresh can retry this optional section.
+              }
+            }
             return;
           }
         } catch {
@@ -381,7 +415,13 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       }
       const nextErrors: string[] = [];
 
-      const [dayResult, salesResult, inventoryResult, operationsResult] =
+      const [
+        dayResult,
+        salesResult,
+        inventoryResult,
+        operationsResult,
+        qualityResult,
+      ] =
         await Promise.allSettled([
           fetchWithTimeout(
             buildDashboardUrl("/api/day", businessDate, fresh),
@@ -397,6 +437,10 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
           ).then(readJson),
           fetchWithTimeout(
             buildDashboardUrl("/api/operations", businessDate, fresh),
+            { cache: "no-store" },
+          ).then(readJson),
+          fetchWithTimeout(
+            buildDashboardUrl("/api/data-quality", businessDate, fresh),
             { cache: "no-store" },
           ).then(readJson),
         ]);
@@ -425,6 +469,10 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         operationsResult.status === "fulfilled"
           ? (operationsResult.value as { pending?: PendingOperation[] })
           : { pending: cached?.value.pendingOperations ?? [] };
+      const qualityPayload =
+        qualityResult.status === "fulfilled"
+          ? (qualityResult.value as DataQualityReport)
+          : cached?.value.quality ?? null;
 
       if (dayResult.status === "rejected") {
         nextErrors.push(`Өдрийн төлөв: ${dayResult.reason.message}`);
@@ -439,6 +487,9 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       }
       if (operationsResult.status === "rejected") {
         nextErrors.push(`Ажиллагаа: ${operationsResult.reason.message}`);
+      }
+      if (qualityResult.status === "rejected") {
+        nextErrors.push(`Өгөгдлийн чанар: ${qualityResult.reason.message}`);
       }
 
       const nextData: DashboardData = {
@@ -457,6 +508,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         pendingOperations: Array.isArray(operationsPayload.pending)
           ? operationsPayload.pending
           : [],
+        quality: qualityPayload,
       };
 
       hasLoadedDashboardRef.current = true;
@@ -474,7 +526,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       setLoadState(
         nextErrors.length === 0
           ? "ready"
-          : nextErrors.length === 4
+          : nextErrors.length === 5
             ? "error"
             : "partial",
       );
@@ -569,6 +621,32 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       );
     } finally {
       setAdjustmentSaving(false);
+    }
+  }
+
+  async function repairOrderItems() {
+    setQualityRepairing(true);
+    setQualityMessage("");
+    try {
+      const response = await fetchWithTimeout("/api/data-quality", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ businessDate }),
+      }, 30_000);
+      const result = (await readJson(response)) as {
+        ordersBackfilled?: number;
+        linesBackfilled?: number;
+      };
+      setQualityMessage(
+        `${formatNumber(result.ordersBackfilled ?? 0)} захиалгын ${formatNumber(result.linesBackfilled ?? 0)} барааны мөр нөхөгдлөө.`,
+      );
+      await loadDashboard(true);
+    } catch (error) {
+      setQualityMessage(
+        error instanceof Error ? error.message : "Нөхөлт хийж чадсангүй.",
+      );
+    } finally {
+      setQualityRepairing(false);
     }
   }
 
@@ -859,6 +937,99 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         </div>
 
         <aside className="grid min-w-0 content-start gap-4">
+          <SectionShell
+            title="Өгөгдлийн чанар"
+            action={
+              <span
+                className={`text-xs font-black ${
+                  data.quality?.status === "healthy"
+                    ? "text-[#047857]"
+                    : "text-[#b45309]"
+                }`}
+              >
+                {data.quality
+                  ? `${formatNumber(data.quality.summary.coveragePercent)}%`
+                  : "—"}
+              </span>
+            }
+          >
+            {!data.quality ? (
+              <EmptyState>Өгөгдлийн шалгалт хараахан ажиллаагүй.</EmptyState>
+            ) : (
+              <div className="p-4">
+                <div
+                  className={`rounded-lg border px-3 py-3 ${
+                    data.quality.status === "healthy"
+                      ? "border-[#bbf7d0] bg-[#f3fff8]"
+                      : "border-[#fed7aa] bg-[#fffaf0]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-black">
+                      {data.quality.status === "healthy"
+                        ? "Шалгалт цэвэр"
+                        : `${formatNumber(data.quality.summary.issueCount)} асуудал`}
+                    </p>
+                    <p className="text-xs font-black text-[#64748b]">
+                      {formatNumber(data.quality.summary.normalizedOrders)}/
+                      {formatNumber(data.quality.summary.salesOrders)} захиалга
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 divide-y divide-[#e5eaf1] rounded-lg border border-[#e5eaf1]">
+                  {data.quality.checks.map(check => (
+                    <div
+                      key={check.id}
+                      className="grid grid-cols-[minmax(0,1fr)_48px] gap-3 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-black text-[#334155]">
+                          {check.label}
+                        </p>
+                        <p className="mt-1 break-words text-[11px] font-bold leading-4 text-[#94a3b8]">
+                          {check.detail}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-right text-sm font-black ${
+                          check.count === 0
+                            ? "text-[#047857]"
+                            : check.severity === "error"
+                              ? "text-[#b91c1c]"
+                              : "text-[#b45309]"
+                        }`}
+                      >
+                        {formatNumber(check.count)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {data.quality.summary.repairableOrders > 0 && (
+                  <button
+                    type="button"
+                    disabled={qualityRepairing}
+                    onClick={() => void repairOrderItems()}
+                    className="mt-3 h-11 w-full rounded-lg bg-[#111827] px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {qualityRepairing
+                      ? "Нөхөж байна…"
+                      : `${formatNumber(data.quality.summary.repairableOrders)} захиалгыг нөхөх`}
+                  </button>
+                )}
+                {qualityMessage && (
+                  <p className="mt-3 break-words text-xs font-bold leading-5 text-[#64748b]">
+                    {qualityMessage}
+                  </p>
+                )}
+                <p className="mt-3 text-[11px] font-bold leading-4 text-[#94a3b8]">
+                  Бүх түүхэн Dalai Eej Ops өгөгдлийг шалгана. Нөхөлт нь зөвхөн Order_Items-д мөр нэмнэ; Master Ledger-д бичихгүй.
+                </p>
+              </div>
+            )}
+          </SectionShell>
+
           <SectionShell title="Бараа материал">
             <div className="p-4">
               <div className="grid grid-cols-2 gap-3">

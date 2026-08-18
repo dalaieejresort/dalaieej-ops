@@ -7,6 +7,8 @@ Adaptive operations app and POS for Dalai Eej Resort.
 - `/` - adaptive entry: desktop register on wider screens, phone-first mobile app on mobile screens.
 - `/ops` - desktop operations dashboard, always.
 - `/register` - touch-friendly POS/register workflow for sales, room charges, settlements, refunds, and day close.
+- `/kitchen` - live kitchen order display.
+- `/waiter` - order-only mobile waiter workflow.
 
 ## Development
 
@@ -24,6 +26,13 @@ npm run build
 ```
 
 The app reads live data from Google Sheets through the existing API routes. If the Google environment variables are missing or invalid, the dashboard shows partial/error states while the register falls back to its sample catalog.
+
+## Ops data model
+
+- `Sales_Log` remains the compatible order-level record.
+- `Order_Items` stores one row per sold item. New orders and edits write it atomically with the order record.
+- The management board checks normalization coverage, duplicate IDs, pending operations, receipt/payment totals, missing business dates, and zero-sale sessions.
+- Managers can safely backfill missing historical `Order_Items` rows from the management board. The repair is append-only and never writes to Master Ledger.
 
 ## Connectivity safeguards
 

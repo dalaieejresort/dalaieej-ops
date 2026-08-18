@@ -7,6 +7,7 @@ import { after, NextResponse } from 'next/server';
 import {
   isUnlimitedInventoryItem,
 } from '@/lib/pos/inventory';
+import { isValidBusinessDate } from '@/lib/pos/business-date';
 import { serializeSaleItemDetails } from '@/lib/pos/sale-item-details';
 import {
   makePaymentLineNumber,
@@ -28,6 +29,12 @@ import {
   operationFingerprint,
   operationTimestamp,
 } from '@/lib/server/operation-controls';
+import {
+  makeOrderItemRecords,
+  ORDER_ITEM_HEADERS,
+  ORDER_ITEMS_SHEET_TITLES,
+  orderItemValues,
+} from '@/lib/server/order-items';
 import {
   appendRowsRequest,
   executeAtomicBatch,
@@ -507,7 +514,7 @@ async function handleGET(request: Request) {
             loadCatalog,
           );
     const businessDate = url.searchParams.get('businessDate')?.trim() ?? '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+    if (isValidBusinessDate(businessDate)) {
       after(() =>
         mergeManagementBoardSectionSafely(
           businessDate,
@@ -583,6 +590,7 @@ async function handlePOST(request: Request) {
       paymentsLogSheet,
       receiptsLogSheet,
       daySessionSheet,
+      orderItemsSheet,
     ] =
       await Promise.all([
         ensureSheetHeaders(
@@ -600,6 +608,11 @@ async function handlePOST(request: Request) {
           doc,
           DAY_SESSION_SHEET_TITLES,
           DAY_SESSION_HEADERS,
+        ),
+        getOrCreateSheet(
+          doc,
+          ORDER_ITEMS_SHEET_TITLES,
+          ORDER_ITEM_HEADERS,
         ),
       ]);
     const [daySessionRows, existingSalesRows, existingReceiptRows] = await Promise.all([
@@ -920,6 +933,16 @@ async function handlePOST(request: Request) {
       session_id: activeSession.sessionId,
       business_date: activeSession.businessDate,
     }));
+    const orderItemRows = makeOrderItemRecords(items, {
+      transactionId,
+      timestamp,
+      businessDate: activeSession.businessDate,
+      sessionId: activeSession.sessionId,
+      staff: staffName || 'Staff',
+      roomOrGuest: room || '',
+      revisionId: normalizedClientRequestId,
+      revisionType: 'original',
+    });
 
     salesRow.receipt_id = receiptId ?? '';
     salesRow.operation_status = 'complete';
@@ -944,6 +967,16 @@ async function handlePOST(request: Request) {
           ]
         : []),
       ...(newRows.length > 0 ? [appendRowsRequest(logSheet, newRows)] : []),
+      ...(orderItemRows.length > 0
+        ? [
+            appendRowsRequest(
+              orderItemsSheet,
+              orderItemRows.map(record =>
+                orderItemValues(record, orderItemsSheet.headerValues),
+              ),
+            ),
+          ]
+        : []),
       ...(shouldAppendPayment && paymentRows.length > 0
         ? [
             appendRowsRequest(

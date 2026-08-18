@@ -8,3 +8,7 @@ export function getUlaanbaatarBusinessDate(date = new Date()) {
     .format(date)
     .replace(/\//g, ".");
 }
+
+export function isValidBusinessDate(value: string) {
+  return /^\d{4}[.-]\d{2}[.-]\d{2}$/.test(value);
+}

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isValidBusinessDate } from "@/lib/pos/business-date";
 import { withProtectedApiRoute } from "@/lib/server/api-route";
 import { listLiveOrders } from "@/lib/server/live-order-board";
 import { getManagementBoardSnapshot } from "@/lib/server/management-board";
@@ -7,7 +8,7 @@ async function handleGET(request: Request) {
   const businessDate = new URL(request.url).searchParams
     .get("businessDate")
     ?.trim();
-  if (!businessDate || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+  if (!businessDate || !isValidBusinessDate(businessDate)) {
     return NextResponse.json(
       { error: "Valid businessDate is required" },
       { status: 400 },

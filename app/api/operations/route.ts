@@ -1,6 +1,7 @@
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
 import { after, NextResponse } from "next/server";
+import { isValidBusinessDate } from "@/lib/pos/business-date";
 import { requireApiSession } from "@/lib/server/auth";
 import { withProtectedApiRoute } from "@/lib/server/api-route";
 import { getCachedRead } from "@/lib/server/read-cache";
@@ -152,7 +153,7 @@ async function handleGET(request: Request) {
             loadPending,
           );
     const businessDate = url.searchParams.get("businessDate")?.trim() ?? "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+    if (isValidBusinessDate(businessDate)) {
       after(() =>
         mergeManagementBoardSectionSafely(
           businessDate,
