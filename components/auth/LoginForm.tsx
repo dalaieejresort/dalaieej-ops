@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import styles from "./Auth.module.css";
 
 export function LoginForm({ nextPath }: { nextPath: string }) {
   const router = useRouter();
@@ -12,7 +13,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
 
   return (
     <form
-      className="mt-8 grid gap-5"
+      className={styles.form}
       onSubmit={async (event) => {
         event.preventDefault();
         if (submitting) return;
@@ -43,7 +44,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
         }
       }}
     >
-      <label className="grid gap-2 text-sm font-black text-[#334155]">
+      <label className={styles.label}>
         Хэрэглэгчийн нэр
         <input
           autoComplete="username"
@@ -51,10 +52,10 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           required
           value={username}
           onChange={(event) => setUsername(event.target.value)}
-          className="h-12 rounded-xl border border-[#cbd5e1] px-4 text-base font-semibold text-[#111827] outline-none focus:border-[#047857] focus:ring-2 focus:ring-[#bbf7d0]"
+          className={styles.input}
         />
       </label>
-      <label className="grid gap-2 text-sm font-black text-[#334155]">
+      <label className={styles.label}>
         Нууц үг
         <input
           type="password"
@@ -62,18 +63,18 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           required
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="h-12 rounded-xl border border-[#cbd5e1] px-4 text-base font-semibold text-[#111827] outline-none focus:border-[#047857] focus:ring-2 focus:ring-[#bbf7d0]"
+          className={styles.input}
         />
       </label>
       {error && (
-        <p role="alert" className="rounded-xl border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-sm font-bold text-[#b91c1c]">
+        <p role="alert" className={styles.error}>
           {error}
         </p>
       )}
       <button
         type="submit"
         disabled={submitting}
-        className="h-12 rounded-xl bg-[#047857] text-base font-black text-white hover:bg-[#065f46] disabled:bg-[#94a3b8]"
+        className={styles.primaryButton}
       >
         {submitting ? "Шалгаж байна…" : "Нэвтрэх"}
       </button>

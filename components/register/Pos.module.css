@@ -1,0 +1,94 @@
+.pos {
+  color-scheme: light;
+  background: #fff !important;
+  color: #111;
+  font: 400 12px Arial, Helvetica, sans-serif;
+}
+.pos *, .pos *::before, .pos *::after {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  letter-spacing: 0;
+  border-color: #8c8c8c;
+}
+.pos ::selection { background: #d2042d; color: #fff; }
+.pos :global([class*="font-"]) { font-weight: 400; }
+.pos :global([class*="border"]) { border-color: #8c8c8c !important; }
+.pos :global(.border) { border-width: .5px; }
+.pos :global(.border-b) { border-bottom-width: .5px; }
+.pos :global(.border-t) { border-top-width: .5px; }
+.pos :global(.border-r) { border-right-width: .5px; }
+.pos :global(.border-l) { border-left-width: .5px; }
+.pos :global([class*="divide-y"] > :not([hidden]) ~ :not([hidden])) { border-color: #8c8c8c; border-top-width: .5px; }
+.pos :global([class*="text-sm"]), .pos :global([class*="text-base"]) { font-size: 12px; }
+.pos :global([class*="text-xs"]), .pos :global([class*="text-[11px]"]) { font-size: 10px; }
+.pos :global([class*="text-2xl"]), .pos :global([class*="text-3xl"]) { font-size: 24px; }
+.pos :global([class*="text-[#6b7280]"]), .pos :global([class*="text-[#9ca3af]"]) { color: #666; }
+.topbar { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; height: 40px; padding: 0 16px; border-bottom: .5px solid #8c8c8c; background: #fff; font-size: 12px; }
+.topbar span:last-child { color: #666; font-size: 10px; }
+.pos > header { background: #fff !important; padding: 12px 16px; min-height: 72px; gap: 12px; }
+.pos > header h1 { font-size: 24px; font-weight: 400; }
+.pos > header button, .pos > header :global(.h-10) { min-height: 32px; height: 32px; }
+.pos main, .pos section, .pos aside { background: #fff; }
+.pos :global([class*="bg-[#f"]), .pos :global([class*="bg-[#e"]), .pos :global([class*="bg-white"]) { background-color: #fff; }
+.pos :global(button) { cursor: pointer; transition: background-color .12s; }
+.pos :global(button:not(:disabled):hover) { background-color: #f5f5f5 !important; color: #111; filter: none; }
+.pos :global(button:not(:disabled):active) { transform: none !important; scale: 1 !important; background-color: #f0f0f0 !important; }
+.pos :global(button[class*="bg-[#111827]"]), .pos :global(button[style*="background-color"]), .pos :global(button[aria-pressed="true"]) { background: #f0f0f0 !important; color: #111 !important; border-color: #8c8c8c !important; }
+.pos :global(button[class*="bg-[#047857]"]), .pos :global(button[class*="bg-[#b91c1c]"]) { background: #d2042d !important; color: #fff !important; border-color: #d2042d !important; }
+.pos :global(button[class*="bg-[#047857]"]:hover), .pos :global(button[class*="bg-[#b91c1c]"]:hover) { background: #b80327 !important; color: #fff; }
+.pos :global(button:disabled) { background: #d9d9d9 !important; color: #666 !important; border-color: #d9d9d9 !important; cursor: not-allowed; opacity: 1; }
+.pos :global(input:not([type="checkbox"]):not([type="radio"])), .pos :global(select), .pos :global(textarea) { background: transparent !important; border: 0; border-bottom: .5px solid #8c8c8c; color: #111; font-weight: 400; }
+.pos :global(input:focus-visible), .pos :global(select:focus-visible), .pos :global(textarea:focus-visible), .pos :global(button:focus-visible), .pos :global(a:focus-visible) { outline: 2px solid #d2042d !important; outline-offset: -2px; }
+.pos :global(.ring-2) { outline: 1px solid #111; outline-offset: -1px; background-color: #f0f0f0 !important; }
+.modeNav { display: none; }
+.productGrid { gap: 0; border-top: .5px solid #8c8c8c; border-left: .5px solid #8c8c8c; }
+.pos .productGrid > div { border: 0; border-right: .5px solid #8c8c8c; border-bottom: .5px solid #8c8c8c; }
+.pos :global([data-testid="product-tile"]) { min-height: 144px; height: auto; padding: 12px; background: #fff !important; }
+.pos :global([data-testid="product-tile"]:hover) { background: #f5f5f5 !important; }
+.pos :global([data-testid="product-tile"] > button) { min-height: 48px; background: transparent !important; font-size: 12px; }
+.pos :global([data-testid="product-tile"] div button) { min-height: 28px; border: .5px solid #8c8c8c; background: #fff; color: #111; white-space: normal; }
+.pos :global([data-testid="complete-sale"]) { height: 40px; font-size: 12px; }
+/* Payment warnings retain their words and restrained status text. */
+.pos :global([class*="fixed"][class*="inset-0"]:not(aside)) { background: rgb(0 0 0 / .4) !important; backdrop-filter: none; }
+.pos :global([class*="fixed"][class*="inset-0"]:not(aside) > div) { background: #fff !important; border: .5px solid #8c8c8c; }
+.pos :global([class*="backdrop-blur"]) { backdrop-filter: none; }
+@media (min-width: 768px) {
+  .modeNav { display: flex; gap: 0; border: .5px solid #8c8c8c; }
+  .modeNav button { border-right: .5px solid #8c8c8c; }
+}
+@media (min-width: 1280px) {
+  .pos { height: 100dvh; overflow: hidden; }
+  .pos > header, .pos > main { margin-left: 123px; }
+  .modeNav { position: fixed; top: 40px; bottom: 0; left: 0; width: 123px; z-index: 35; flex-direction: column; border: 0; border-right: .5px solid #8c8c8c; background: #fff; padding-top: 16px; counter-reset: pos-nav; }
+  .modeNav button { display: flex; align-items: center; gap: 8px; min-height: 36px !important; height: auto !important; padding: 8px; font-size: 10px !important; text-align: left; border: 0; }
+  .modeNav button::before { counter-increment: pos-nav; content: "0" counter(pos-nav); color: #666; font-size: 10px; }
+  .pos > main > section { min-height: 0; }
+  .pos > main > aside { min-height: 0; padding-bottom: 56px; }
+}
+@media (max-width: 767px) {
+  .pos input, .pos select, .pos textarea { font-size: 16px !important; }
+  .pos > header { position: static; }
+  .pos :global([data-testid="product-tile"]) { padding: 10px; }
+  .pos :global([data-testid="product-tile"] div button) { min-height: 36px; }
+}
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] { background: #fff; gap: 0; padding-top: 0; padding-left: 0; padding-right: 0; }
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] button { background: #fff; color: #111; border-right: .5px solid #8c8c8c; min-height: 56px; }
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] button[aria-expanded="true"] { background: #f0f0f0; }
+.reconciliationTab { display: flex; align-items: center; min-height: 36px; padding: 8px 12px; font-size: 12px; color: #111; }
+.reconciliationTab:hover, .mobileReconciliationTab:hover { background: #f5f5f5; }
+.mobileReconciliationTab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 56px; border-right: .5px solid #8c8c8c; background: #fff; color: #111; font-size: 10px; }
+@media (min-width: 1280px) { .modeNav .reconciliationTab { gap: 8px; padding: 8px; font-size: 10px; } .reconciliationTab::before { content: "05"; font-size: 10px; color: #666; } }
+
+/* Compact mobile navigation shares the desktop rail's typographic hierarchy. */
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] { padding-bottom: env(safe-area-inset-bottom); }
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] :is(button, a) {
+  height: 36px;
+  min-height: 36px;
+  gap: 2px;
+  padding: 4px 2px;
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 400;
+}
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] :is(button, a):last-child { border-right: 0; }
+.mobileTabIndex { color: #666; font-size: 10px; line-height: 12px; font-variant-numeric: tabular-nums; }

@@ -4,9 +4,14 @@ import type { NextRequest } from "next/server";
 const SESSION_COOKIE = "dalaieej_ops_session";
 const PUBLIC_PATHS = new Set([
   "/login",
+  "/receipt-payments",
+  "/receipt-payments/privacy",
   "/api/auth/login",
   "/api/health",
   "/api/telegram-webhook",
+  "/api/reconciliation/cron/sync",
+  "/api/reconciliation/paid-via",
+  "/api/receipt-payments/paid-via",
 ]);
 
 export function proxy(request: NextRequest) {

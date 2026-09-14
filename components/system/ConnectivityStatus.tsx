@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import styles from "./ConnectivityStatus.module.css";
 import type { OpsRole } from "@/lib/auth-types";
 
 type ConnectionState =
@@ -22,6 +24,10 @@ function statusMessage(state: ConnectionState) {
 }
 
 export function ConnectivityStatus({ role }: { role?: OpsRole }) {
+  const pathname = usePathname();
+  const reconciliationOnlyRoute =
+    pathname.startsWith("/reconciliation") || pathname === "/login" ||
+    pathname === "/receipt-payments" || pathname === "/receipt-payments/privacy";
   const [state, setState] = useState<ConnectionState>("checking");
   const [lastHealthyAt, setLastHealthyAt] = useState<Date | null>(null);
 
@@ -54,6 +60,7 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
   }, []);
 
   useEffect(() => {
+    if (reconciliationOnlyRoute) return;
     const syncStatus = () => void checkHealth();
 
     const initialCheck = window.setTimeout(checkHealth, 0);
@@ -72,13 +79,18 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
       window.removeEventListener("online", syncStatus);
       window.removeEventListener("offline", syncStatus);
     };
-  }, [checkHealth]);
+  }, [checkHealth, reconciliationOnlyRoute]);
+
+  if (reconciliationOnlyRoute) return null;
 
   if (state === "healthy") {
     if (role === "kitchen") return null;
     return (
-      <div className="fixed bottom-3 left-3 z-[110] hidden rounded-lg border border-[#bbf7d0] bg-white/95 px-3 py-2 text-xs font-black text-[#047857] shadow-md backdrop-blur print:hidden md:block">
-        Sheets холбогдсон · {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })}
+      <div role="status" className={styles.connected}>
+        <span>Sheets холбогдсон</span>
+        <time className={styles.timestamp} dateTime={lastHealthyAt?.toISOString()}>
+          {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit", hour12: false })}
+        </time>
       </div>
     );
   }
@@ -89,7 +101,7 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
     <div
       role="status"
       aria-live="polite"
-      className="sticky top-0 z-[100] border-b border-[#f59e0b] bg-[#fffbeb] px-4 py-2 text-center text-sm font-black text-[#92400e]"
+      className={styles.warning}
     >
       {statusMessage(state)}
     </div>

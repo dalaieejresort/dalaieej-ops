@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { OpsRole } from "@/lib/auth-types";
+import styles from "./Auth.module.css";
 
 const ROLE_LABELS: Record<OpsRole, string> = {
   kitchen: "Гал тогоо",
@@ -34,10 +35,10 @@ export function SessionControls({
   }
 
   return (
-    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-2 z-45 flex items-center gap-1.5 rounded-xl border border-[#555555] bg-[#2b2b2b] px-2 py-1.5 text-xs shadow-lg print:hidden md:bottom-3 md:right-3 md:z-[120] md:gap-2 md:border-[#cbd5e1] md:bg-white/95 md:px-3 md:py-2 md:backdrop-blur">
-      <span className="max-w-24 truncate font-black text-[#f7f7f7] sm:max-w-36 md:text-[#334155]">
-        <span className="md:hidden">{displayName}</span>
-        <span className="hidden md:inline">{displayName} · {ROLE_LABELS[role]}</span>
+    <div className={styles.session}>
+      <span className={styles.identity} title={`${displayName} · ${ROLE_LABELS[role]}`}>
+        <span className={styles.displayName}>{displayName}</span>
+        <span className={styles.role}>{ROLE_LABELS[role]}</span>
       </span>
       <button
         type="button"
@@ -48,9 +49,9 @@ export function SessionControls({
           router.replace("/login");
           router.refresh();
         }}
-        className="min-h-8 rounded-lg border border-[#f5a623] bg-[#f5a623] px-2 py-1 font-black text-[#111111] disabled:opacity-50 md:border-[#cbd5e1] md:bg-transparent md:hover:bg-[#f1f5f9]"
+        className={styles.logoutButton}
       >
-        Гарах
+        {submitting ? "Гарч байна…" : "Гарах"}
       </button>
     </div>
   );

@@ -1,0 +1,7 @@
+.next/
+node_modules/
+cloudflare/
+finance/
+outputs/
+tmp/
+tsconfig.tsbuildinfo

@@ -1,0 +1,36 @@
+.connected {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  z-index: 110;
+  display: none;
+  align-items: center;
+  min-height: 24px;
+  border: 0.5px solid #8c8c8c;
+  border-radius: 0;
+  background: #fff;
+  color: #047857;
+  color-scheme: light;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 16px;
+  box-shadow: none;
+}
+.connected > span { padding: 4px 8px; }
+.timestamp { padding: 4px 8px; border-left: 0.5px solid #8c8c8c; color: #666; font-variant-numeric: tabular-nums; }
+.warning {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  padding: 8px 16px;
+  border-bottom: 0.5px solid #8c8c8c;
+  background: #fff;
+  color: #92400e;
+  color-scheme: light;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  text-align: center;
+}
+@media (min-width: 768px) { .connected { display: flex; } }
+@media print { .connected, .warning { display: none; } }

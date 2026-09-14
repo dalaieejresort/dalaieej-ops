@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   readOfflineCache,
@@ -19,7 +20,7 @@ import type {
   PriceMode,
 } from "@/lib/pos/types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
-import styles from "./DayansoftSkin.module.css";
+import styles from "./Pos.module.css";
 
 type CatalogResponseItem = {
   sku: string;
@@ -591,6 +592,21 @@ function formatReceiptDate(date: Date) {
   });
 }
 
+function formatReceiptBusinessDate(date: Date) {
+  return date.toLocaleDateString("mn-MN", {
+    timeZone: "Asia/Ulaanbaatar",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+const RECEIPT_TAX_ID = process.env.NEXT_PUBLIC_RECEIPT_TAX_ID?.trim() || "—";
+const RECEIPT_BRANCH =
+  process.env.NEXT_PUBLIC_RECEIPT_BRANCH?.trim() || "Dalai Eej";
+const RECEIPT_POS_LABEL =
+  process.env.NEXT_PUBLIC_RECEIPT_POS_LABEL?.trim() || "POS";
+
 function printablePage(title: string, body: string) {
   return `<!doctype html>
 <html lang="mn">
@@ -719,6 +735,173 @@ function printablePage(title: string, body: string) {
         font-size: 13px;
         font-weight: 900;
         letter-spacing: .2px;
+      }
+      .receipt {
+        color: #252525;
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .receipt-title {
+        margin: 0 0 12px;
+        font-size: 15px;
+        font-weight: 800;
+      }
+      .receipt-operator {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-size: 13px;
+      }
+      .receipt-operator-item {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 7px;
+      }
+      .receipt-operator-item span:last-child {
+        overflow-wrap: anywhere;
+      }
+      .person-icon,
+      .pos-icon {
+        position: relative;
+        flex: 0 0 auto;
+        width: 14px;
+        height: 14px;
+      }
+      .person-icon::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 5px;
+        width: 5px;
+        height: 5px;
+        border: 1.4px solid currentColor;
+        border-radius: 50%;
+      }
+      .person-icon::after {
+        content: "";
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 6px;
+        border: 1.4px solid currentColor;
+        border-radius: 8px 8px 2px 2px;
+      }
+      .pos-icon {
+        width: 11px;
+        height: 16px;
+        border: 1.5px solid currentColor;
+        border-radius: 2px;
+      }
+      .pos-icon::after {
+        content: "";
+        position: absolute;
+        right: 2px;
+        bottom: 1px;
+        left: 2px;
+        border-top: 1px solid currentColor;
+      }
+      .receipt-meta {
+        display: grid;
+        grid-template-columns: 50px minmax(0, 1fr);
+        column-gap: 6px;
+        row-gap: 4px;
+        margin-bottom: 8px;
+      }
+      .receipt-meta-wide {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1.2fr);
+        column-gap: 5px;
+      }
+      .receipt-meta-value {
+        overflow-wrap: anywhere;
+      }
+      .receipt-rule {
+        margin: 6px 0;
+        border-top: 1px dashed #252525;
+      }
+      .receipt-items-header,
+      .receipt-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 27px 50px 58px;
+        gap: 5px;
+        align-items: baseline;
+      }
+      .receipt-items-header {
+        padding-bottom: 3px;
+      }
+      .receipt-item {
+        break-inside: avoid;
+        padding: 3px 0;
+      }
+      .receipt-item-name {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .receipt-number {
+        text-align: right;
+        white-space: nowrap;
+      }
+      .receipt-summary {
+        display: grid;
+        gap: 2px;
+      }
+      .receipt-summary .row {
+        min-height: 15px;
+      }
+      .receipt-summary-strong {
+        font-size: 12px;
+        font-weight: 900;
+      }
+      .receipt-payment-detail {
+        margin-top: 4px;
+      }
+      .receipt-fiscal {
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr);
+        gap: 9px;
+        align-items: start;
+        margin-top: 9px;
+        break-inside: avoid;
+      }
+      .receipt-qr-placeholder {
+        position: relative;
+        width: 72px;
+        height: 72px;
+        border: 4px solid #fff;
+        background: repeating-conic-gradient(#111 0 25%, #fff 0 50%) 50% / 8px 8px;
+        box-shadow: 0 0 0 1px #111;
+      }
+      .receipt-qr-marker {
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        border: 4px solid #111;
+        background: #fff;
+      }
+      .receipt-qr-marker::after {
+        content: "";
+        position: absolute;
+        inset: 4px;
+        background: #111;
+      }
+      .receipt-qr-marker:nth-child(1) { top: 2px; left: 2px; }
+      .receipt-qr-marker:nth-child(2) { top: 2px; right: 2px; }
+      .receipt-qr-marker:nth-child(3) { bottom: 2px; left: 2px; }
+      .receipt-fiscal-details {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+      .receipt-fiscal-details strong {
+        font-weight: 900;
+      }
+      .receipt-fiscal-value {
+        min-height: 13px;
+        overflow-wrap: anywhere;
       }
       .paper-check {
         display: grid;
@@ -1126,65 +1309,107 @@ function receiptBody(
   options: { isCopy?: boolean } = {},
 ) {
   const receiptDate = sale.settledAt ?? sale.createdAt;
-  const receiptDateLabel = sale.settledAt ? "Төлсөн цаг" : "Цаг";
   const receiptItems = sale.receiptItems ?? sale.items;
   const receiptTotal = sale.receiptTotal ?? sale.total;
+  const receiptNumber = sale.receiptId ?? sale.id;
+  const receiptTitle = sale.receiptTitle ?? "Борлуулалт";
+  const paymentLabel = sale.paymentLabel.toLocaleLowerCase("mn-MN");
+  const cashAmountMatch = sale.paymentLabel.match(
+    /(?:бэлэн|cash)\s+([\d.,\s]+)/i,
+  );
+  const parsedCashAmount = cashAmountMatch
+    ? Number(cashAmountMatch[1].replace(/\D/g, ""))
+    : 0;
+  const cashPaid = Math.min(
+    receiptTotal,
+    Math.max(
+      0,
+      sale.cashReceived > 0
+        ? sale.cashReceived - sale.changeDue
+        : parsedCashAmount > 0
+          ? parsedCashAmount
+          : (paymentLabel.includes("бэлэн") || paymentLabel.includes("cash")) &&
+              !paymentLabel.includes("+")
+            ? receiptTotal
+            : 0,
+    ),
+  );
+  const nonCashPaid = Math.max(0, receiptTotal - cashPaid);
 
-  return `<section class="receipt"><h1>DALAI EEJ</h1>
-    <h2>${escapeHtml(sale.receiptTitle ?? "Төлбөрийн баримт")}</h2>
+  return `<section class="receipt">
+    <h2 class="receipt-title">${escapeHtml(receiptTitle)}</h2>
     ${
       options.isCopy
-        ? '<h2>ХУУЛБАР / ДАХИН ХЭВЛЭВ</h2>'
+        ? '<h2 class="receipt-title">ХУУЛБАР / ДАХИН ХЭВЛЭВ</h2>'
         : ''
     }
-    <div class="meta">
-      <div class="row"><strong>Баримт №</strong><span class="control-number">${escapeHtml(sale.receiptId ?? sale.id)}</span></div>
-      ${
-        (sale.orderIds?.length || sale.orderId)
-          ? `<div class="row"><strong>Захиалга</strong><span>${escapeHtml((sale.orderIds ?? [sale.orderId ?? ""]).filter(Boolean).join(", "))}</span></div>`
-          : ""
-      }
-      <div class="row"><strong>${receiptDateLabel}</strong><span>${escapeHtml(formatReceiptDate(receiptDate))}</span></div>
-      <div class="row"><strong>Ажилтан</strong><span>${escapeHtml(sale.staffName)}</span></div>
-      <div class="row"><strong>Төлбөр</strong><span>${escapeHtml(sale.paymentLabel)}</span></div>
-      ${
-        sale.roomNumber
-          ? `<div class="row"><strong>Байшин/Зочин</strong><span>${escapeHtml(sale.roomNumber)}</span></div>`
-          : ""
-      }
+    <div class="receipt-operator">
+      <div class="receipt-operator-item"><span class="person-icon"></span><span>${escapeHtml(sale.staffName || "—")}</span></div>
+      <div class="receipt-operator-item"><span class="pos-icon"></span><span>${escapeHtml(RECEIPT_POS_LABEL)}</span></div>
     </div>
-    <div class="items">
+    <div class="receipt-meta">
+      <span>ТТД:</span><span class="receipt-meta-value">${escapeHtml(RECEIPT_TAX_ID)}</span>
+      <span>Салбар:</span>
+      <span class="receipt-meta-wide"><span class="receipt-meta-value">${escapeHtml(RECEIPT_BRANCH)}</span><span>Талон №:</span><span class="receipt-meta-value">${escapeHtml(receiptNumber)}</span></span>
+      <span>Огноо:</span><span class="receipt-meta-value">${escapeHtml(formatReceiptBusinessDate(receiptDate))}</span>
+    </div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-items-header">
+      <span>Бараа</span><span class="receipt-number">Т/Ш</span><span class="receipt-number">Үнэ</span><span class="receipt-number">Нийт</span>
+    </div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-items">
       ${receiptItems
         .map(
-          (item) => `<div class="item">
-            <div class="item-main">
-              <span>${item.quantity}x</span>
-              <span class="name">${escapeHtml(item.name)}</span>
-              <span class="price">${formatNumber(item.price * item.quantity)}</span>
-            </div>
+          (item) => `<div class="receipt-item">
+            <span class="receipt-item-name">${escapeHtml(item.name)}</span>
+            <span class="receipt-number">${item.quantity}</span>
+            <span class="receipt-number">${formatMNT(item.price)}</span>
+            <span class="receipt-number">${formatMNT(item.price * item.quantity)}</span>
           </div>`,
         )
         .join("")}
     </div>
-    <div class="row total"><span>Төлсөн</span><span>${formatMNT(receiptTotal)}</span></div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-summary">
+      <div class="row receipt-summary-strong"><span>Нийт</span><span>${formatMNT(receiptTotal)}</span></div>
+      <div class="row"><span>Хөнгөлөлт</span><span>${formatMNT(0)}</span></div>
+      <div class="row"><span>Дүн /НӨАТ-гүй/</span><span>${formatMNT(receiptTotal)}</span></div>
+      <div class="row"><span>НХАТ</span><span>${formatMNT(0)}</span></div>
+      <div class="row"><span>НӨАТ</span><span>${formatMNT(0)}</span></div>
+      <div class="row receipt-summary-strong"><span>Төлөх дүн /НӨАТ-тай/</span><span>${formatMNT(receiptTotal)}</span></div>
+    </div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-summary">
+      <div class="row"><span>Бэлэн</span><span>${formatMNT(cashPaid)}</span></div>
+      <div class="row"><span>Бэлэн бус</span><span>${formatMNT(nonCashPaid)}</span></div>
+      <div class="row receipt-summary-strong"><span>Төлсөн</span><span>${formatMNT(receiptTotal)}</span></div>
+    </div>
     ${
       sale.cashReceived
-        ? `<div class="row"><span>Авсан</span><strong>${formatMNT(sale.cashReceived)}</strong></div>
-           <div class="row"><span>Хариулт</span><strong>${formatMNT(sale.changeDue)}</strong></div>`
+        ? `<div class="receipt-payment-detail row"><span>Хариулт</span><strong>${formatMNT(sale.changeDue)}</strong></div>`
         : ""
     }
     ${
       typeof sale.balance === "number" && sale.balance > 0
-        ? `<div class="row"><span>Үлдэгдэл</span><strong>${formatMNT(sale.balance)}</strong></div>`
+        ? `<div class="receipt-payment-detail row"><span>Үлдэгдэл</span><strong>${formatMNT(sale.balance)}</strong></div>`
         : ""
     }
-    <div class="paper-check">
-      <div class="paper-check-title">ТӨЛБӨР ТУЛГАСАН</div>
-      <div class="paper-check-options"><span>□ Бэлэн</span><span>□ Карт</span><span>□ Данс</span></div>
-      <div>Банк / терминал лавлах № __________________</div>
-      <div>Шалгасан __________________　Гарын үсэг __________</div>
+    <div class="receipt-rule"></div>
+    <div class="receipt-fiscal">
+      <div class="receipt-qr-placeholder" title="eBarimt QR холболт тохируулаагүй" aria-label="eBarimt QR placeholder">
+        <span class="receipt-qr-marker"></span><span class="receipt-qr-marker"></span><span class="receipt-qr-marker"></span>
+      </div>
+      <div class="receipt-fiscal-details">
+        <strong>ДДТД:</strong>
+        <span class="receipt-fiscal-value">—</span>
+        <strong>Сугалааны дугаар:</strong>
+        <span class="receipt-fiscal-value">—</span>
+        <strong>Борлуулалтын дүн:</strong>
+        <span class="receipt-fiscal-value">${formatMNT(receiptTotal)}</span>
+      </div>
     </div>
-    <div class="note">Баярлалаа</div></section>`;
+  </section>`;
 }
 
 function printReceipt(
@@ -1686,6 +1911,7 @@ export function RegisterApp({
   const [dayTotals, setDayTotals] = useState<DayTotals>(EMPTY_DAY_TOTALS);
   const [dayItemTotals, setDayItemTotals] = useState<DayItemTotal[]>([]);
   const [dayCloseHistory, setDayCloseHistory] = useState<DaySession[]>([]);
+  const [selectedCloseKey, setSelectedCloseKey] = useState("current");
   const [dayModalMode, setDayModalMode] = useState<DayModalMode>(null);
   const [dayCashAmount, setDayCashAmount] = useState(0);
   const [dayNotes, setDayNotes] = useState("");
@@ -2274,7 +2500,8 @@ export function RegisterApp({
   }, [catalogStatus, loadCatalog]);
 
   useEffect(() => {
-    const storedMode = window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
+    const requestedMode = new URLSearchParams(window.location.search).get("tab");
+    const storedMode = isRegisterMode(requestedMode) ? requestedMode : window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
     const storedCategory = window.localStorage.getItem(
       REGISTER_CATEGORY_STORAGE_KEY,
     );
@@ -2492,6 +2719,15 @@ export function RegisterApp({
       );
     });
   }, [historyQuery, historySales]);
+  const closeKey = (session: DaySession) => session.sessionId || `${session.businessDate}-${session.closedAt}`;
+  const selectedClose = dayCloseHistory.find((session) => closeKey(session) === selectedCloseKey) ?? null;
+  const activeCloseKey = selectedClose ? closeKey(selectedClose) : "current";
+  function selectCloseDetails(key: string) {
+    setSelectedCloseKey(key);
+    if (window.innerWidth < 1024) {
+      requestAnimationFrame(() => document.getElementById("register-cart")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  }
   const activeHistoryTransactionId = filteredHistorySales.some(
     (sale) => sale.transactionId === selectedHistoryTransactionId,
   )
@@ -4152,17 +4388,19 @@ export function RegisterApp({
   }
 
   return (
-    <div className={`${styles.dayansoftPos} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
+    <div className={`${styles.pos} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
+      <div className={styles.topbar}><span>Dalai Eej</span><span>Operations / POS · {businessDate}</span></div>
       <header className="sticky top-0 z-30 flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-3 py-3 md:static md:px-4">
         <div>
-          <h1 className="text-lg font-bold leading-tight">Dalai Eej POS</h1>
+          <h1 className="text-lg font-bold leading-tight">Касс</h1>
           <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
         </div>
 
-        <div className="hidden rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-1 md:flex">
+        <nav aria-label="Кассын хэсгүүд" className={styles.modeNav}>
           <button
             type="button"
             onClick={() => selectRegisterMode("sale")}
+            aria-pressed={registerMode === "sale"}
             className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "sale"
                 ? "bg-[#111827] text-white"
@@ -4174,6 +4412,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("charges")}
+            aria-pressed={registerMode === "charges"}
             className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "charges"
                 ? "bg-[#111827] text-white"
@@ -4186,6 +4425,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("history")}
+            aria-pressed={registerMode === "history"}
             className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "history"
                 ? "bg-[#111827] text-white"
@@ -4198,6 +4438,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("day-close")}
+            aria-pressed={registerMode === "day-close"}
             className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "day-close"
                 ? "bg-[#111827] text-white"
@@ -4206,7 +4447,8 @@ export function RegisterApp({
           >
             Өдрийн хаалт
           </button>
-        </div>
+          {role === "owner" && <Link href="/reconciliation" className={styles.reconciliationTab}>Тулгалт</Link>}
+        </nav>
 
         <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-2 md:order-none">
           <div
@@ -4280,200 +4522,38 @@ export function RegisterApp({
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-base font-black">Өдрийн хаалт</h2>
-                    <p className="text-xs font-semibold text-[#6b7280]">
-                      {businessDate} өдрийн борлуулалт, төлбөр, бэлэн мөнгөний тулгалт
-                    </p>
+                  <div><h2 className="text-base font-black">Өдрийн хаалт</h2>
+                    <p className="text-xs text-[#6b7280]">Хаалт сонгож дэлгэрэнгүйг харна уу</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void loadDayStatus({ fresh: true })}
-                    className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold hover:bg-[#f8fafc]"
-                  >
-                    Шинэчлэх
-                  </button>
+                  <button type="button" onClick={() => void loadDayStatus({ fresh: true })} className="h-10 border bg-white px-3">Шинэчлэх</button>
                 </div>
               </div>
-
-              <div className="min-h-0 flex-1 overflow-y-auto p-4 pb-24 md:pb-4">
-                {!dayOpen ? (
-                  <div className="flex min-h-64 items-center justify-center rounded-md border border-dashed border-[#cbd5e1] bg-white px-6 text-center">
-                    <div>
-                      <p className="text-lg font-black">
-                        {dayStatus === "loading"
-                          ? "Өдрийн мэдээлэл ачаалж байна"
-                          : "Өдөр нээгээгүй байна"}
-                      </p>
-                      <p className="mt-2 text-sm font-semibold text-[#6b7280]">
-                        Хаалт хийхийн өмнө тухайн өдрийг нээсэн байх шаардлагатай.
-                      </p>
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 md:pb-3">
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                  <button type="button" aria-pressed={activeCloseKey === "current"} onClick={() => selectCloseDetails("current")}
+                    className={`border bg-white p-3 text-left ${activeCloseKey === "current" ? "ring-2" : ""}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div><p className="text-base">{businessDate}</p><p className="mt-1 text-xs text-[#6b7280]">Одоогийн өдөр · {daySession?.openedBy || staffName}</p></div>
+                      <span className="text-lg">{formatMNT(dayTotals.salesTotal)}</span>
                     </div>
-                  </div>
-                ) : (
-                  <div className="grid gap-4">
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                      {[
-                        ["Нийт борлуулалт", dayTotals.salesTotal],
-                        ["Нийт төлбөр", dayTotals.paymentTotal],
-                        ["Бэлэн төлбөр", dayTotals.cashPaymentTotal],
-                        ["Карт / Данс", dayNonCashPaymentTotal],
-                        ["Байшин/зочинд бичсэн", dayTotals.roomChargeTotal],
-                        ["Бэлнээр байх ёстой", dayTotals.expectedCash],
-                      ].map(([label, amount]) => (
-                        <div
-                          key={String(label)}
-                          className="rounded-md border border-[#d1d5db] bg-white p-4 shadow-sm"
-                        >
-                          <p className="text-xs font-bold text-[#6b7280]">
-                            {label}
-                          </p>
-                          <p className="mt-2 text-2xl font-black">
-                            {formatMNT(Number(amount))}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="overflow-hidden rounded-md border border-[#cbd5e1] bg-white">
-                      <div className="flex items-center justify-between border-b border-[#cbd5e1] bg-[#f8fafc] px-3 py-3">
-                        <h3 className="text-sm font-black">
-                          Бараагаар зарагдсан тоо
-                        </h3>
-                        <span className="text-xs font-bold text-[#6b7280]">
-                          {dayItemTotals.length} бараа
-                        </span>
+                    <p className="mt-3 text-xs">{dayStatus === "loading" ? "Ачаалж байна…" : dayOpen ? "Нээлттэй" : dayClosed ? "Хаалттай" : "Нээгээгүй"}</p>
+                    <p className="mt-2 text-xs text-[#6b7280]">Дэлгэрэнгүй →</p>
+                  </button>
+                  {dayCloseHistory.map((session) => (
+                    <button key={closeKey(session)} type="button" aria-pressed={activeCloseKey === closeKey(session)}
+                      onClick={() => selectCloseDetails(closeKey(session))}
+                      className={`border bg-white p-3 text-left ${activeCloseKey === closeKey(session) ? "ring-2" : ""}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div><p className="text-base">{session.businessDate}</p><p className="mt-1 text-xs text-[#6b7280]">{session.closedBy || "—"} · {formatDayCloseTime(session.closedAt) || "—"}</p></div>
+                        <span className="text-lg">{formatMNT(session.salesTotal)}</span>
                       </div>
-                      <table className="w-full border-collapse text-sm">
-                        <thead>
-                          <tr>
-                            <th className="w-12 border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
-                              #
-                            </th>
-                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
-                              Бараа
-                            </th>
-                            <th className="w-24 border-b border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
-                              Тоо
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dayItemTotals.length > 0 ? (
-                            dayItemTotals.map((item, index) => (
-                              <tr key={item.name}>
-                                <td className="border-b border-r border-[#e5e7eb] px-3 py-2 font-bold text-[#6b7280]">
-                                  {index + 1}
-                                </td>
-                                <td className="border-b border-r border-[#e5e7eb] px-3 py-2 font-bold">
-                                  {item.name}
-                                </td>
-                                <td className="border-b border-[#e5e7eb] px-3 py-2 text-right font-black">
-                                  {formatNumber(item.quantity)}
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td
-                                colSpan={3}
-                                className="px-3 py-8 text-center text-sm font-semibold text-[#6b7280]"
-                              >
-                                Одоогоор зарагдсан бараа алга.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-4 overflow-hidden rounded-md border border-[#cbd5e1] bg-white">
-                  <div className="flex items-center justify-between border-b border-[#cbd5e1] bg-[#f8fafc] px-3 py-3">
-                    <div>
-                      <h3 className="text-sm font-black">Хаалтын түүх</h3>
-                      <p className="mt-0.5 text-xs font-semibold text-[#6b7280]">
-                        Хамгийн сүүлд хаасан өдрөөс эхэлж харуулав
-                      </p>
-                    </div>
-                    <span className="text-xs font-bold text-[#6b7280]">
-                      {dayCloseHistory.length} хаалт
-                    </span>
-                  </div>
-
-                  {dayCloseHistory.length === 0 ? (
-                    <div className="px-4 py-10 text-center text-sm font-semibold text-[#6b7280]">
-                      Хадгалагдсан өдрийн хаалт алга.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[760px] border-collapse text-sm">
-                        <thead>
-                          <tr className="bg-white">
-                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
-                              Огноо
-                            </th>
-                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-left text-xs font-black text-[#6b7280]">
-                              Хаасан
-                            </th>
-                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
-                              Борлуулалт
-                            </th>
-                            <th className="border-b border-r border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
-                              Тоолсон бэлэн
-                            </th>
-                            <th className="border-b border-[#e5e7eb] px-3 py-2 text-right text-xs font-black text-[#6b7280]">
-                              Зөрүү
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {dayCloseHistory.map((session) => (
-                            <tr
-                              key={`${session.businessDate}-${session.closedAt}`}
-                              className="align-top"
-                            >
-                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3 font-black">
-                                {session.businessDate}
-                                {session.notes && (
-                                  <p className="mt-1 max-w-48 break-words text-xs font-semibold text-[#6b7280]">
-                                    {session.notes}
-                                  </p>
-                                )}
-                              </td>
-                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3">
-                                <p className="font-bold">
-                                  {session.closedBy || "—"}
-                                </p>
-                                <p className="mt-1 text-xs font-semibold text-[#6b7280]">
-                                  {formatDayCloseTime(session.closedAt) || "—"}
-                                </p>
-                              </td>
-                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3 text-right font-black">
-                                {formatMNT(session.salesTotal)}
-                              </td>
-                              <td className="border-b border-r border-[#e5e7eb] px-3 py-3 text-right font-black">
-                                {formatMNT(session.countedCash)}
-                              </td>
-                              <td
-                                className={`border-b border-[#e5e7eb] px-3 py-3 text-right font-black ${
-                                  session.cashDifference === 0
-                                    ? "text-[#047857]"
-                                    : session.cashDifference < 0
-                                      ? "text-[#b91c1c]"
-                                      : "text-[#c2410c]"
-                                }`}
-                              >
-                                {formatMNT(session.cashDifference)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                      <p className="mt-3 text-xs">Хаалттай · Тоолсон {formatMNT(session.countedCash)}</p>
+                      <p className={`mt-2 text-xs ${session.cashDifference === 0 ? "text-[#047857]" : "text-[#b91c1c]"}`}>Зөрүү {formatMNT(session.cashDifference)}</p>
+                      <p className="mt-2 text-xs text-[#6b7280]">Дэлгэрэнгүй →</p>
+                    </button>
+                  ))}
                 </div>
+                {dayStatus !== "loading" && dayCloseHistory.length === 0 && <p className="px-3 py-8 text-center text-xs text-[#6b7280]">Хадгалагдсан өдрийн хаалт алга.</p>}
               </div>
             </>
           ) : registerMode === "sale" ? (
@@ -4497,6 +4577,7 @@ export function RegisterApp({
                         key={category}
                         type="button"
                         onClick={() => setActiveCategory(category)}
+                        aria-pressed={activeCategory === category}
                         className={`h-11 shrink-0 rounded-md border px-3 text-sm font-bold ${
                           activeCategory === category
                             ? "border-transparent text-white"
@@ -4569,7 +4650,7 @@ export function RegisterApp({
                 )}
 
                 {catalogStatus === "loading" ? (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  <div className={`${styles.productGrid} grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5}`}>
                     {Array.from({ length: 10 }).map((_, index) => (
                       <div
                         key={index}
@@ -4578,7 +4659,7 @@ export function RegisterApp({
                     ))}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  <div className={`${styles.productGrid} grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5}`}>
                     {visibleProducts.map((item) => (
                       <div
                         key={item.id}
@@ -4914,6 +4995,37 @@ export function RegisterApp({
         >
           {registerMode === "day-close" ? (
             <>
+              {selectedClose ? (
+                <>
+                  <div className="flex h-14 shrink-0 items-center border-b px-4"><h2 className="text-base">Хаалтын дэлгэрэнгүй</h2></div>
+                  <div className="min-h-0 flex-1 overflow-y-auto p-4" data-testid="close-details">
+                    <p className="text-2xl">{selectedClose.businessDate}</p>
+                    <p className="mt-2 text-xs text-[#6b7280]">Хаалттай · {selectedClose.closedBy || "—"}</p>
+                    <dl className="mt-4 divide-y">
+                      {[
+                        ["Нээсэн", `${selectedClose.openedBy || "—"} · ${formatDayCloseTime(selectedClose.openedAt) || "—"}`],
+                        ["Хаасан", `${selectedClose.closedBy || "—"} · ${formatDayCloseTime(selectedClose.closedAt) || "—"}`],
+                        ["Нийт борлуулалт", formatMNT(selectedClose.salesTotal)],
+                        ["Нийт төлбөр", formatMNT(selectedClose.paymentTotal)],
+                        ["Бэлэн төлбөр", formatMNT(selectedClose.cashPaymentTotal)],
+                        ["Карт", formatMNT(selectedClose.cardPaymentTotal)],
+                        ["QPay", formatMNT(selectedClose.qpayPaymentTotal)],
+                        ["Бусад төлбөр", formatMNT(selectedClose.otherPaymentTotal)],
+                        ["Байшин/зочинд бичсэн", formatMNT(selectedClose.roomChargeTotal)],
+                        ["Эхлэх бэлэн мөнгө", formatMNT(selectedClose.startingCash)],
+                        ["Бэлнээр байх ёстой", formatMNT(selectedClose.expectedCash)],
+                        ["Тоолсон бэлэн мөнгө", formatMNT(selectedClose.countedCash)],
+                      ].map(([label, value]) => <div key={label} className="flex justify-between gap-3 py-3"><dt className="text-xs text-[#6b7280]">{label}</dt><dd className="text-right text-xs">{value}</dd></div>)}
+                      <div className="flex justify-between gap-3 py-3"><dt>Зөрүү</dt><dd className={selectedClose.cashDifference === 0 ? "text-[#047857]" : "text-[#b91c1c]"}>{formatMNT(selectedClose.cashDifference)}</dd></div>
+                    </dl>
+                    {selectedClose.receiptCount != null && <p className="mt-4 text-xs">Баримтын тоо: {selectedClose.receiptCount}</p>}
+                    {selectedClose.firstReceiptId && <p className="mt-2 break-words text-xs">Эхний баримт: {selectedClose.firstReceiptId}</p>}
+                    {selectedClose.lastReceiptId && <p className="mt-2 break-words text-xs">Сүүлийн баримт: {selectedClose.lastReceiptId}</p>}
+                    <div className="mt-4 border-t py-3"><p className="text-xs text-[#6b7280]">Тайлбар</p><p className="mt-2 whitespace-pre-wrap break-words text-sm">{selectedClose.notes || "Тайлбаргүй"}</p></div>
+                  </div>
+                </>
+              ) : (
+              <>
               <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#d1d5db] px-4">
                 <h2 className="text-base font-bold">Хаалтын бэлэн байдал</h2>
                 <span
@@ -4923,12 +5035,18 @@ export function RegisterApp({
                       : "border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]"
                   }`}
                 >
-                  {dayOpen ? "Нээлттэй" : "Нээгээгүй"}
+                  {dayOpen ? "Нээлттэй" : dayClosed ? "Хаалттай" : "Нээгээгүй"}
                 </span>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="grid gap-3">
+                  {[
+                    ["Нийт борлуулалт", dayTotals.salesTotal], ["Нийт төлбөр", dayTotals.paymentTotal],
+                    ["Бэлэн төлбөр", dayTotals.cashPaymentTotal], ["Карт / Данс", dayNonCashPaymentTotal],
+                    ["Байшин/зочинд бичсэн", dayTotals.roomChargeTotal],
+                  ].map(([label, amount]) => <div key={String(label)} className="flex justify-between gap-3 border-b py-3"><span className="text-xs text-[#6b7280]">{label}</span><span>{formatMNT(Number(amount))}</span></div>)}
+                  <div className="border-b py-3"><h3 className="mb-2 text-sm">Бараагаар зарагдсан тоо</h3>{dayItemTotals.length ? dayItemTotals.map(item => <div key={item.name} className="flex justify-between gap-3 py-1"><span>{item.name}</span><span>{formatNumber(item.quantity)}</span></div>) : <p className="text-xs text-[#6b7280]">Одоогоор зарагдсан бараа алга.</p>}</div>
                   <div className="rounded-md border border-[#d1d5db] bg-[#f8fafc] p-3">
                     <p className="text-xs font-bold text-[#6b7280]">Огноо</p>
                     <p className="mt-1 text-lg font-black">{businessDate}</p>
@@ -4997,6 +5115,8 @@ export function RegisterApp({
                   {dayOpen ? "Өдрийн хаалт хийх" : "Өдөр нээх"}
                 </button>
               </div>
+              </>
+              )}
             </>
           ) : registerMode === "sale" ? (
             <>
@@ -6075,13 +6195,13 @@ export function RegisterApp({
       {!voidModalOpen && !dayModalMode ? (
         <nav
           aria-label="Гар утасны үндсэн цэс"
-          className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 gap-1 border-t border-[#555555] bg-[#2b2b2b] px-1.5 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.2)] md:hidden"
+          className={`fixed inset-x-0 bottom-0 z-40 grid ${role === "owner" ? "grid-cols-6" : "grid-cols-5"} gap-1 border-t border-[#555555] bg-[#2b2b2b] px-1.5 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.2)] md:hidden`}
         >
           {([
-            ["sale", "+", "Зарах"],
-            ["charges", "₮", "Өр"],
-            ["history", "≡", "Түүх"],
-            ["day-close", "✓", "Хаалт"],
+            ["sale", "01", "Зарах"],
+            ["charges", "02", "Өр"],
+            ["history", "03", "Түүх"],
+            ["day-close", "04", "Хаалт"],
           ] as const).map(([mode, symbol, label]) => (
             <button
               key={mode}
@@ -6094,15 +6214,17 @@ export function RegisterApp({
                   : "text-[#f7f7f7]"
               }`}
             >
-              <span className="text-lg leading-none" aria-hidden="true">
+              <span className={styles.mobileTabIndex} aria-hidden="true">
                 {symbol}
               </span>
               <span>{label}</span>
             </button>
           ))}
+          {role === "owner" && <Link href="/reconciliation" className={styles.mobileReconciliationTab}><span className={styles.mobileTabIndex} aria-hidden="true">05</span><span>Тулгалт</span></Link>}
           <button
             type="button"
             aria-controls="register-cart"
+            aria-label={`Сагс · ${formatNumber(cartItemCount)} бараа`}
             aria-expanded={mobileCartOpen}
             onClick={() => {
               if (registerMode !== "sale") selectRegisterMode("sale");
@@ -6114,13 +6236,9 @@ export function RegisterApp({
                 : "text-[#f7f7f7]"
             }`}
           >
-            <span className="text-lg leading-none" aria-hidden="true">▣</span>
+            <span className={styles.mobileTabIndex} aria-hidden="true">{formatNumber(cartItemCount)}</span>
             <span>Сагс</span>
-            {cartItemCount > 0 ? (
-              <span className="absolute right-1.5 top-1.5 min-w-5 rounded-full bg-[#dc2626] px-1 text-[10px] leading-5 text-white">
-                {formatNumber(cartItemCount)}
-              </span>
-            ) : null}
+
           </button>
         </nav>
       ) : null}

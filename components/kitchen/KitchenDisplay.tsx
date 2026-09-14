@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import styles from "../service/Service.module.css";
 import { useRouter } from "next/navigation";
 import { canRefreshInBackground, fetchWithTimeout } from "@/lib/client/network";
 import type {
@@ -20,25 +21,21 @@ const COLUMNS: Array<{
   status: KitchenOrderStatus;
   label: string;
   empty: string;
-  headerClass: string;
 }> = [
   {
     status: "new",
     label: "Шинэ",
     empty: "Шинэ захиалга алга",
-    headerClass: "bg-[#f5a623] text-[#111111]",
   },
   {
     status: "preparing",
     label: "Бэлтгэж байна",
     empty: "Бэлтгэж буй захиалга алга",
-    headerClass: "bg-[#3b9dd4] text-white",
   },
   {
     status: "ready",
     label: "Бэлэн",
     empty: "Бэлэн захиалга алга",
-    headerClass: "bg-[#86efac] text-[#14532d]",
   },
 ];
 
@@ -65,13 +62,6 @@ function elapsedLabel(minutes: number) {
   if (minutes < 60) return `${minutes} мин`;
   const hours = Math.floor(minutes / 60);
   return `${hours}ц ${minutes % 60}м`;
-}
-
-function ageClass(status: KitchenOrderStatus, minutes: number) {
-  if (status === "ready") return "border-[#22c55e]";
-  if (minutes >= 20) return "border-[#dc2626] bg-[#fff1f2]";
-  if (minutes >= 10) return "border-[#f5a623] bg-[#fff7ed]";
-  return "border-[#a7a7a7] bg-[#f7f7f7]";
 }
 
 function actionStatus(action: KitchenAction): KitchenOrderStatus | "archived" {
@@ -240,29 +230,27 @@ export function KitchenDisplay({
   }
 
   return (
-    <main className="flex min-h-dvh flex-col bg-[#e8e8e8] text-[#151515]">
-      <header className="flex flex-wrap items-center gap-3 border-b border-[#555555] bg-[#2b2b2b] px-4 py-3 text-white">
+    <main className={`${styles.screen} ${styles.kitchen}`}>
+      <div className={styles.topbar}><span>Dalai Eej</span><span>Гал тогоо · {businessDate}</span></div>
+      <header className={styles.kitchenHeader}>
         <div className="min-w-48">
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-[#f5a623]">
+          <p className="text-xs font-normal  text-black">
             Dalai Eej · Гал тогоо
           </p>
-          <h1 className="text-2xl font-black">Захиалгын дэлгэц</h1>
+          <h1 className="text-2xl font-normal">Захиалгын дэлгэц</h1>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <div className="rounded-md border border-[#555555] bg-[#3a3a3a] px-3 py-2 text-right">
-            <p className="text-xs font-bold text-[#c9c9c9]">{businessDate.replaceAll("-", ".")}</p>
-            <p className="text-lg font-black tabular-nums">
+          <div className="rounded-none border border-[#8c8c8c] bg-white px-3 py-2 text-right">
+            <p className="text-xs font-normal text-[#666666]">{businessDate.replaceAll("-", ".")}</p>
+            <p className="text-lg font-normal tabular-nums">
               {now.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })}
             </p>
           </div>
           <button
             type="button"
             onClick={() => void enableSound()}
-            className={`min-h-12 rounded-md px-4 text-sm font-black ${
-              soundEnabled
-                ? "bg-[#86efac] text-[#14532d]"
-                : "bg-[#f5a623] text-[#111111]"
-            }`}
+            aria-pressed={soundEnabled}
+            className="min-h-12 px-4 text-sm font-normal"
           >
             {soundEnabled ? "Дуу асаалттай" : "Дуу асаах"}
           </button>
@@ -270,14 +258,14 @@ export function KitchenDisplay({
             type="button"
             onClick={() => void loadOrders(true)}
             disabled={refreshing}
-            className="min-h-12 rounded-md bg-[#3b9dd4] px-4 text-sm font-black text-white disabled:opacity-50"
+            className="min-h-12 rounded-none bg-white px-4 text-sm font-normal text-black disabled:opacity-50"
           >
             {refreshing ? "Шинэчилж…" : "Шинэчлэх"}
           </button>
           <button
             type="button"
             onClick={() => void document.documentElement.requestFullscreen?.()}
-            className="min-h-12 rounded-md border border-[#555555] bg-[#3a3a3a] px-4 text-sm font-black"
+            className="min-h-12 rounded-none border border-[#8c8c8c] bg-white px-4 text-sm font-normal"
           >
             Бүтэн дэлгэц
           </button>
@@ -285,7 +273,7 @@ export function KitchenDisplay({
             type="button"
             onClick={() => void logOut()}
             disabled={loggingOut}
-            className="min-h-12 rounded-md border border-[#555555] bg-[#3a3a3a] px-4 text-sm font-black disabled:opacity-50"
+            className="min-h-12 rounded-none border border-[#8c8c8c] bg-white px-4 text-sm font-normal disabled:opacity-50"
           >
             {authenticatedStaffName} · Гарах
           </button>
@@ -293,29 +281,29 @@ export function KitchenDisplay({
       </header>
 
       {error && (
-        <div role="status" className="border-b border-[#dc2626] bg-[#fef2f2] px-4 py-2 text-center text-sm font-black text-[#b91c1c]">
+        <div role="status" className="border-b border-[#8c8c8c] bg-white px-4 py-2 text-center text-sm font-normal text-black">
           {error}
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 md:grid-cols-3">
+      <div className={styles.kitchenBoard}>
         {COLUMNS.map((column) => {
           const columnOrders = groupedOrders[column.status];
           return (
-            <section key={column.status} className="flex min-h-[18rem] flex-col overflow-hidden rounded-md border border-[#a7a7a7] bg-[#f1f1f1]">
-              <div className={`flex min-h-14 items-center justify-between px-4 ${column.headerClass}`}>
-                <h2 className="text-xl font-black">{column.label}</h2>
-                <span className="flex h-9 min-w-9 items-center justify-center rounded-full bg-black/15 px-2 text-lg font-black">
+            <section key={column.status} data-status={column.status} className={styles.kitchenColumn}>
+              <div className="flex min-h-14 items-center justify-between px-4">
+                <h2 className="text-xl font-normal">{column.label}</h2>
+                <span className="flex h-9 min-w-9 items-center justify-center rounded-none bg-[#f0f0f0] px-2 text-lg font-normal">
                   {columnOrders.length}
                 </span>
               </div>
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+              <div className={styles.orderList}>
                 {loading ? (
                   Array.from({ length: 2 }, (_, index) => (
-                    <div key={index} className="h-48 animate-pulse rounded-md bg-white" />
+                    <div key={index} className="h-48 animate-pulse rounded-none bg-white" />
                   ))
                 ) : columnOrders.length === 0 ? (
-                  <div className="flex min-h-48 items-center justify-center rounded-md border border-dashed border-[#a7a7a7] bg-white px-4 text-center text-sm font-black text-[#6b7280]">
+                  <div className="flex min-h-48 items-center justify-center rounded-none border border-dashed border-[#8c8c8c] bg-white px-4 text-center text-sm font-normal text-[#666666]">
                     {column.empty}
                   </div>
                 ) : (
@@ -323,28 +311,22 @@ export function KitchenDisplay({
                     const minutes = minutesSince(order.createdAt, now);
                     const isPending = pendingOrderId === order.orderId;
                     return (
-                      <article key={order.orderId} className={`rounded-md border-2 p-4 ${ageClass(order.status, minutes)}`}>
+                      <article key={order.orderId} data-age={order.status === "ready" ? "ready" : minutes >= 20 ? "late" : minutes >= 10 ? "waiting" : "new"} className={styles.order}>
                         <div className="flex items-start justify-between gap-3 border-b border-black/10 pb-3">
                           <div className="min-w-0">
-                            <h3 className="break-words text-2xl font-black">{order.roomOrGuest}</h3>
-                            <p className="mt-1 text-xs font-bold text-[#6b7280]">
+                            <h3 className="break-words text-2xl font-normal">{order.roomOrGuest}</h3>
+                            <p className="mt-1 text-xs font-normal text-[#666666]">
                               {order.staff} · {order.orderId}
                             </p>
                           </div>
-                          <span className={`shrink-0 rounded-md px-3 py-2 text-lg font-black tabular-nums ${
-                            minutes >= 20 && order.status !== "ready"
-                              ? "bg-[#dc2626] text-white"
-                              : minutes >= 10 && order.status !== "ready"
-                                ? "bg-[#f5a623] text-[#111111]"
-                                : "bg-[#2b2b2b] text-white"
-                          }`}>
+                          <span className="shrink-0 px-3 py-2 tabular-nums">
                             {elapsedLabel(minutes)}
                           </span>
                         </div>
                         <ul className="my-4 space-y-3">
                           {order.items.map((item, index) => (
-                            <li key={`${item.sku}-${item.name}-${index}`} className="grid grid-cols-[3rem_minmax(0,1fr)] items-start gap-2 text-xl font-black leading-tight">
-                              <span className="rounded bg-[#b9e3ff] px-2 py-1 text-center text-[#102033]">
+                            <li key={`${item.sku}-${item.name}-${index}`} className="grid grid-cols-[3rem_minmax(0,1fr)] items-start gap-2 text-xl font-normal leading-tight">
+                              <span className="rounded-none bg-white px-2 py-1 text-center text-black">
                                 {item.quantity}×
                               </span>
                               <span className="py-1">{item.name}</span>
@@ -357,7 +339,7 @@ export function KitchenDisplay({
                               type="button"
                               onClick={() => void updateOrder(order.orderId, "start")}
                               disabled={Boolean(pendingOrderId)}
-                              className="col-span-2 min-h-14 rounded-md bg-[#3b9dd4] text-lg font-black text-white disabled:opacity-50"
+                              className={`${styles.primary} col-span-2`}
                             >
                               {isPending ? "Хадгалж…" : "Эхлэх"}
                             </button>
@@ -367,7 +349,7 @@ export function KitchenDisplay({
                                 type="button"
                                 onClick={() => void updateOrder(order.orderId, "reopen")}
                                 disabled={Boolean(pendingOrderId)}
-                                className="min-h-14 rounded-md border border-[#a7a7a7] bg-white text-base font-black disabled:opacity-50"
+                                className="min-h-14 rounded-none border border-[#8c8c8c] bg-white text-base font-normal disabled:opacity-50"
                               >
                                 Буцаах
                               </button>
@@ -375,7 +357,7 @@ export function KitchenDisplay({
                                 type="button"
                                 onClick={() => void updateOrder(order.orderId, "ready")}
                                 disabled={Boolean(pendingOrderId)}
-                                className="min-h-14 rounded-md bg-[#f5a623] text-lg font-black text-[#111111] disabled:opacity-50"
+                                className={styles.primary}
                               >
                                 {isPending ? "Хадгалж…" : "Бэлэн"}
                               </button>
@@ -386,7 +368,7 @@ export function KitchenDisplay({
                                 type="button"
                                 onClick={() => void updateOrder(order.orderId, "reopen")}
                                 disabled={Boolean(pendingOrderId)}
-                                className="min-h-14 rounded-md border border-[#a7a7a7] bg-white text-base font-black disabled:opacity-50"
+                                className="min-h-14 rounded-none border border-[#8c8c8c] bg-white text-base font-normal disabled:opacity-50"
                               >
                                 Буцаах
                               </button>
@@ -394,7 +376,7 @@ export function KitchenDisplay({
                                 type="button"
                                 onClick={() => void updateOrder(order.orderId, "archive")}
                                 disabled={Boolean(pendingOrderId)}
-                                className="min-h-14 rounded-md bg-[#86efac] text-base font-black text-[#14532d] disabled:opacity-50"
+                                className={styles.primary}
                               >
                                 {isPending ? "Хадгалж…" : "Дэлгэцээс авах"}
                               </button>

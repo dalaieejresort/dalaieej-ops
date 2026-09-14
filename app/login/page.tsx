@@ -1,4 +1,4 @@
-import Image from "next/image";
+import styles from "@/components/auth/Auth.module.css";
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { getServerSession } from "@/lib/server/auth";
@@ -19,17 +19,23 @@ export default async function LoginPage({
   if (await getServerSession()) redirect(nextPath);
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-[#f1f5f9] px-4 py-10 text-[#111827]">
-      <section className="w-full max-w-md rounded-3xl border border-[#dbe3ec] bg-white p-7 shadow-xl sm:p-10">
-        <div className="flex items-center gap-4">
-          <Image src="/app-icon.svg" alt="" width={56} height={56} className="rounded-2xl border border-[#dbe3ec] bg-[#f8fafc] p-3" priority />
-          <div>
-            <h1 className="text-2xl font-black">Dalai Eej Ops</h1>
-            <p className="mt-1 text-sm font-bold text-[#64748b]">Ажилтны хамгаалалттай нэвтрэх хэсэг</p>
+    <main className={styles.loginPage}>
+      <header className={styles.topbar}>
+        <span>Dalai Eej</span>
+        <span className={styles.metadata}>Operations</span>
+      </header>
+      <div className={styles.loginWorkspace}>
+        <aside className={styles.index} aria-hidden="true">01 / Нэвтрэх</aside>
+        <section className={styles.loginPanel} aria-labelledby="login-title">
+          <div className={styles.titleBand}>
+            <h1 id="login-title">Нэвтрэх</h1>
+            <p>Ажилтны хамгаалалттай нэвтрэх хэсэг</p>
           </div>
-        </div>
-        <LoginForm nextPath={nextPath} />
-      </section>
+          <div className={styles.formBody}>
+            <LoginForm nextPath={nextPath} />
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

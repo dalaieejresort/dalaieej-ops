@@ -29,3 +29,9 @@ button,
 select {
   user-select: none;
 }
+
+@media (display-mode: standalone) {
+  .reconciliation-install-button {
+    display: none;
+  }
+}
