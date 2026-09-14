@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import ReceiptShell from "../ReceiptShell";
+import styles from "../ReceiptPayments.module.css";
 import { requirePageSession } from "@/lib/server/auth";
 import { CONNECTION_PAGE, RECEIPT_MAILBOX, receiptSetup } from "@/lib/receipt-payments/config";
 import { getReceiptConnection } from "@/lib/receipt-payments/database";
@@ -24,18 +26,37 @@ export default async function ReceiptConnectionPage({ searchParams }: {
     "authorization-error": "The connection was not completed. Please try again.",
     "setup-required": "The separate receipt integration needs its server configuration before Gmail can be connected.",
   };
-  return <main className="mx-auto max-w-2xl px-6 py-12">
-    <p className="text-sm text-slate-500">2027 season · Telegram + Google Sheets</p>
-    <h1 className="mt-3 text-3xl font-semibold">Connect receipt payment emails</h1>
-    <p className="mt-5">Allow Telegram expense receipts to look for matching Khan Bank ••••9325 emails and fill Paid via in the Master Ledger.</p>
-    <p className="mt-4">This connection is separate from DGB / Global / Batsarai reconciliation. It does not import bank transactions or update the 2026 SQLite database.</p>
-    <section className="mt-8 rounded-xl border border-slate-200 p-6" aria-label="Gmail connection">
-      <h2 className="text-lg font-semibold">{RECEIPT_MAILBOX}</h2>
-      <p className="mt-2">{connected ? "Connected" : "Not connected"} · Gmail read-only access</p>
-      {status && messages[status] && <p role="status" className="mt-4">{messages[status]}</p>}
-      {(!ready || storageError) && <p className="mt-4" role="status">Server setup is still needed for this separate connection. Existing reconciliation credentials will not be used.</p>}
-      {ready && !storageError && <a className="mt-6 inline-block rounded-lg bg-slate-900 px-5 py-3 text-white" href="/api/receipt-payments/gmail/connect">{connected ? "Reconnect Gmail" : "Connect Gmail"}</a>}
+  return <ReceiptShell active="connect" title="Receipt payment emails">
+    <p className={styles.metadata}>2027 season · Telegram + Google Sheets</p>
+    <p>Match Telegram expense receipts to Khan Bank ••••9325 emails and fill “Paid via” in the Master Ledger.</p>
+    <section className={styles.connection} aria-label="Gmail connection">
+      <h2 className={styles.sectionLabel}>Gmail connection</h2>
+      <dl>
+        <div className={styles.detailRow}>
+          <dt>Mailbox</dt><dd>{RECEIPT_MAILBOX}</dd>
+        </div>
+        <div className={styles.detailRow}>
+          <dt>Status</dt>
+          <dd className={connected ? styles.connected : undefined}>
+            {storageError ? "Unable to check connection" : connected ? "Connected" : "Not connected"}
+          </dd>
+        </div>
+        <div className={styles.detailRow}>
+          <dt>Access</dt><dd>Gmail · Read-only</dd>
+        </div>
+      </dl>
+      {status && messages[status] && (status !== "connected" || connected) && (
+        <div role="status" className={`${styles.notice} ${status === "connected" ? styles.connected : styles.error}`}>
+          <p>{messages[status]}</p>
+        </div>
+      )}
+      {(!ready || storageError) && <p className={styles.notice} role="status">This connection is temporarily unavailable. Please contact the operator before reconnecting.</p>}
+      {ready && !storageError && <div className={styles.actions}>
+        <a className={styles.primary} href="/api/receipt-payments/gmail/connect">{connected ? "Reconnect Gmail" : "Connect Gmail"}</a>
+      </div>}
     </section>
-    <p className="mt-6 text-sm text-slate-600">Google grants read access to the mailbox. This integration only searches Khan Bank transfer-receipt emails for matching payments. Ambiguous or missing matches do not receive an automatic bank label.</p>
-  </main>;
+    <h2>Payment matching</h2>
+    <p>Google grants read access to the mailbox. This integration only searches Khan Bank transfer-receipt emails for matching payments. Ambiguous or missing matches do not receive an automatic bank label.</p>
+    <p className={styles.metadata}>This receipt connection is separate from DGB / Global / Batsarai reconciliation.</p>
+  </ReceiptShell>;
 }

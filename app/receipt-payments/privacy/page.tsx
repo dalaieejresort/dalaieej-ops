@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import ReceiptShell from "../ReceiptShell";
+import styles from "../ReceiptPayments.module.css";
 
 export const metadata: Metadata = {
   title: "Privacy policy · Dalai Eej Receipts 2027",
@@ -7,11 +8,8 @@ export const metadata: Metadata = {
 };
 
 export default function ReceiptPrivacyPage() {
-  return <main lang="en" className="mx-auto w-full max-w-3xl px-6 py-12 sm:py-20">
-    <article className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-10 [&_h2]:mt-8 [&_h2]:text-xl [&_h2]:font-semibold [&_p]:mt-4 [&_p]:leading-7 [&_p]:text-slate-700 [&_a]:text-emerald-800 [&_a]:underline [&_a]:underline-offset-4">
-      <Link href="/receipt-payments">Dalai Eej Receipts 2027</Link>
-      <h1 className="mt-6 text-3xl font-semibold tracking-tight sm:text-4xl">Privacy policy</h1>
-      <p>Effective date: 8 September 2026</p>
+  return <ReceiptShell active="privacy" title="Privacy policy">
+      <p className={styles.metadata}>Effective date: 8 September 2026</p>
       <p>Dalai Eej Resort operates Dalai Eej Receipts 2027. This notice covers its Gmail payment lookup and the resulting match information used in the Telegram-to-Google-Sheets receipt workflow. It does not cover the separate 2026 reconciliation system or the resort’s booking website.</p>
 
       <h2>Information accessed and why</h2>
@@ -39,6 +37,5 @@ export default function ReceiptPrivacyPage() {
 
       <h2>Contact and updates</h2>
       <p>For privacy questions, contact Dalai Eej Resort at <a href="mailto:dalaieejcamp@gmail.com">dalaieejcamp@gmail.com</a>. Updates to this notice will be published on this page with a revised effective date.</p>
-    </article>
-  </main>;
+    </ReceiptShell>;
 }
