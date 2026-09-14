@@ -10,9 +10,12 @@ export const metadata: Metadata = {
   applicationName: "Dalai Eej Ops",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/app-icon.svg",
-    shortcut: "/favicon.ico",
-    apple: "/app-icon.svg",
+    icon: [
+      { url: "/branding/favicons/favicon-96x96.png", sizes: "96x96", type: "image/png" },
+      { url: "/branding/favicons/favicon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/branding/favicons/favicon.ico",
+    apple: [{ url: "/branding/favicons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   appleWebApp: {
     capable: true,

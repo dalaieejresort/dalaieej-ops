@@ -1,7 +1,13 @@
 const NAVIGATION_CACHE = "dalaieej-navigation-v3";
-const ASSET_CACHE = "dalaieej-assets-v1";
+const ASSET_CACHE = "dalaieej-assets-v2";
 const OFFLINE_ROUTES = ["/", "/register", "/ops"];
 const STATIC_ASSETS = new Set([
+  "/branding/favicons/favicon.svg",
+  "/branding/favicons/favicon-96x96.png",
+  "/branding/favicons/favicon.ico",
+  "/branding/favicons/apple-touch-icon.png",
+  "/branding/favicons/web-app-manifest-192x192.png",
+  "/branding/favicons/web-app-manifest-512x512.png",
   "/app-icon.svg",
   "/favicon.ico",
   "/manifest.webmanifest",

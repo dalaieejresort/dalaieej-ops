@@ -14,16 +14,10 @@ const manifest: MetadataRoute.Manifest = {
   categories: ["finance", "business", "productivity"],
   icons: [
     {
-      src: "/reconciliation/icon",
+      src: "/branding/favicons/web-app-manifest-512x512.png",
       sizes: "512x512",
       type: "image/png",
       purpose: "any",
-    },
-    {
-      src: "/reconciliation/icon",
-      sizes: "512x512",
-      type: "image/png",
-      purpose: "maskable",
     },
   ],
 };
