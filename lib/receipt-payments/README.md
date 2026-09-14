@@ -31,7 +31,7 @@ Configure these on dalaieej-ops (no fallbacks to existing reconciliation values)
   OAuth web client, ideally in its own Google Cloud project so consent/revocation
   cannot affect the existing reconciliation integration. Enable Gmail API.
 - `RECEIPT_GMAIL_REDIRECT_URI`:
-  `https://dalaieej-ops.vercel.app/api/receipt-payments/gmail/callback`
+  `https://ops.dalaieej.mn/api/receipt-payments/gmail/callback`
   (register this exact authorized redirect URI on the new OAuth client).
 - `RECEIPT_PAYMENTS_DATABASE_URL`: a separate PostgreSQL database/role, with
   permission to create its own `receipt_payments` schema and table.
@@ -39,7 +39,7 @@ Configure these on dalaieej-ops (no fallbacks to existing reconciliation values)
 - `RECEIPT_MATCH_SECRET`: existing dedicated bot-to-ops bearer secret.
 
 On the bot set `RECEIPT_MATCH_URL` to
-`https://dalaieej-ops.vercel.app/api/receipt-payments/paid-via`.
+`https://ops.dalaieej.mn/api/receipt-payments/paid-via`.
 The former `/api/reconciliation/paid-via` URL is a compatibility alias to this
 isolated handler, never to reconciliation credentials or data.
 

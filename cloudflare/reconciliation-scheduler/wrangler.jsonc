@@ -8,7 +8,7 @@
     "crons": ["*/5 * * * *"]
   },
   "vars": {
-    "SYNC_URL": "https://dalaieej-ops.vercel.app/api/reconciliation/cron/sync"
+    "SYNC_URL": "https://ops.dalaieej.mn/api/reconciliation/cron/sync"
   },
   "observability": {
     "enabled": true,
