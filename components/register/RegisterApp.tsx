@@ -239,7 +239,7 @@ type SettlementPaymentLine = {
 type RegisterDraft = {
   cart: RegisterCartLine[];
   staffName: string;
-  paymentMethod: PaymentMethodId;
+  paymentMethod: PaymentMethodId | null;
   cashReceived: number;
   cardTerminalApproved: boolean;
   partialPaymentMethod: SettlementMethod;
@@ -1807,6 +1807,8 @@ export function RegisterApp({
 }: RegisterAppProps) {
   const phoneLayout = layout === "phone";
   const isWaiter = role === "waiter";
+  const simplePaymentFlow = isWaiter || phoneLayout;
+  const defaultPaymentMethod = simplePaymentFlow ? null : PAYMENT_METHODS[0].id;
   const canPrint = !phoneLayout && !isWaiter;
   const modeStorageKey = isWaiter ? `waiter:mode:${authenticatedStaffName}` : REGISTER_MODE_STORAGE_KEY;
   const draftCacheKey = isWaiter ? `waiter:draft:${authenticatedStaffName}` : REGISTER_DRAFT_CACHE_KEY;
@@ -1829,8 +1831,8 @@ export function RegisterApp({
   const staffName = authenticatedStaffName;
   const canManageOperations = !isWaiter && (role === "manager" || role === "owner");
   const [cart, setCart] = useState<RegisterCartLine[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>(
-    PAYMENT_METHODS[0].id,
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId | null>(
+    defaultPaymentMethod,
   );
   const [cashReceived, setCashReceived] = useState(0);
   const [cardTerminalApproved, setCardTerminalApproved] = useState(false);
@@ -2487,7 +2489,10 @@ export function RegisterApp({
         setServiceTable(draft.serviceTable ?? "");
         setPreparationNotes(draft.preparationNotes ?? "");
         setEditingCharge(draft.editingCharge ?? null);
-        if (isPaymentMethod(draft.paymentMethod)) {
+        if (simplePaymentFlow) {
+          // Restored orders require a fresh choice; editing keeps the charge method.
+          setPaymentMethod(draft.editingCharge ? "room" : null);
+        } else if (isPaymentMethod(draft.paymentMethod)) {
           setPaymentMethod(draft.paymentMethod);
         }
         setCashReceived(Number(draft.cashReceived) || 0);
@@ -2498,7 +2503,7 @@ export function RegisterApp({
         if (isPartialPaymentOption(draft.partialPaymentOption)) {
           setPartialPaymentOption(draft.partialPaymentOption);
         }
-        setPaymentEvidence(draft.paymentEvidence ?? "");
+        setPaymentEvidence(simplePaymentFlow ? "" : draft.paymentEvidence ?? "");
         setPartialPaymentAmount(Number(draft.partialPaymentAmount) || 0);
         setPartialPaymentLines(
           Array.isArray(draft.partialPaymentLines) ? draft.partialPaymentLines : [],
@@ -2513,7 +2518,7 @@ export function RegisterApp({
     }, 0);
 
     return () => window.clearTimeout(restoreTimer);
-  }, [draftCacheKey]);
+  }, [draftCacheKey, simplePaymentFlow]);
 
   useEffect(() => {
     if (!draftLoadedRef.current) return;
@@ -2612,8 +2617,7 @@ export function RegisterApp({
   );
   const isEditingCharge = Boolean(editingCharge);
   const selectedPayment =
-    PAYMENT_METHODS.find((method) => method.id === paymentMethod) ??
-    PAYMENT_METHODS[0];
+    PAYMENT_METHODS.find((method) => method.id === paymentMethod);
   const cashRequired = paymentMethod === "cash";
   const cardRequired = paymentMethod === "card";
   const cashShort = Math.max(cartTotal - cashReceived, 0);
@@ -2718,13 +2722,14 @@ export function RegisterApp({
     voidReason.trim().length > 0;
   const canCompleteSale =
     dayOpen &&
+    Boolean(selectedPayment) &&
     cart.length > 0 &&
     saleStatus !== "saving" &&
     (!isEditingCharge || roomRequired) &&
     (!cashRequired || cashShort === 0) &&
-    (!cardRequired || cardTerminalApproved) &&
+    (!cardRequired || simplePaymentFlow || cardTerminalApproved) &&
     (!roomRequired || chargeReferenceValue.length > 0) &&
-    (!bankTransferRequired || bankTransferConfirmed) &&
+    (!bankTransferRequired || simplePaymentFlow || bankTransferConfirmed) &&
     (!partialRequired ||
       (partialPaymentLines.length > 0 &&
         partialPaymentAmount === 0 &&
@@ -2735,6 +2740,8 @@ export function RegisterApp({
       ? "Засвар хадгалах"
     : !dayOpen
       ? isWaiter ? "Эхлээд үйлчилгээ эхлүүлнэ үү" : "Өдрөө нээнэ үү"
+    : !selectedPayment
+      ? "Төлбөрийн хэлбэр сонгоно уу"
     : roomRequired
       ? "Байшин/зочинд бичих"
     : partialRequired
@@ -2748,11 +2755,15 @@ export function RegisterApp({
           ? "Үлдэгдэл бичих хүнээ оруулна уу"
           : "Хэсэгчилсэн хадгалах"
       : cardRequired
-        ? cardTerminalApproved
+        ? simplePaymentFlow
+          ? `Картаар төлсөн · ${formatMNT(cartTotal)}`
+          : cardTerminalApproved
           ? "Карт борлуулалт хадгалах"
           : "Терминал баталгаажуулна уу"
       : bankTransferRequired
-        ? bankTransferConfirmed
+        ? simplePaymentFlow
+          ? `Дансаар төлсөн · ${formatMNT(cartTotal)}`
+          : bankTransferConfirmed
           ? "Дансны борлуулалт хадгалах"
           : "Данс шалгаж баталгаажуулна уу"
         : "Төлбөр авах";
@@ -2908,7 +2919,7 @@ export function RegisterApp({
     setSaleMessage("");
     setLastSale(null);
     setEditingCharge(null);
-    setPaymentMethod("cash");
+    setPaymentMethod(defaultPaymentMethod);
     setCardTerminalApproved(false);
     resetBankTransferPayment();
     resetPartialPaymentState();
@@ -2918,6 +2929,7 @@ export function RegisterApp({
     if (isEditingCharge && method !== "room") return;
 
     setPaymentMethod(method);
+    setPaymentEvidence("");
     setCardTerminalApproved(false);
     resetBankTransferPayment();
     resetPartialPaymentState();
@@ -3379,7 +3391,7 @@ export function RegisterApp({
       setCart([]);
       setCashReceived(0);
       setRoomNumber("");
-      setPaymentMethod("cash");
+      setPaymentMethod(defaultPaymentMethod);
       setCardTerminalApproved(false);
       resetBankTransferPayment();
       resetPartialPaymentState();
@@ -3767,14 +3779,9 @@ export function RegisterApp({
       settlementRequestInFlightRef.current
     ) return;
     if (settlementLines.length === 0) return;
-    if (isWaiter && settlementLines.some(line => line.method !== "cash") && !settlementEvidence.trim()) {
-      setSettlementStatus("error");
-      setSettlementMessage("Терминал / шилжүүлгийн баримтын дугаарыг бичнэ үү.");
-      return;
-    }
 
     settlementRequestInFlightRef.current = true;
-    const shouldAutoPrintSettlementReceipt = !isWaiter && settlementLines.length > 0;
+    const shouldAutoPrintSettlementReceipt = canPrint && settlementLines.length > 0;
     const receiptWindow = shouldAutoPrintSettlementReceipt
       ? openPrintWindow()
       : false;
@@ -3980,6 +3987,7 @@ export function RegisterApp({
       return `Хэсэгчилсэн: ${getSettlementPaymentLabel(partialPaymentLines)}, үлдэгдэл ${formatNumber(partialRemaining)}`;
     }
 
+    if (!selectedPayment) return "Төлбөр хүлээгдэж байна";
     if (!cashRequired) return selectedPayment.label;
 
     return `${selectedPayment.label} төлсөн ${formatNumber(cashReceived)}, хариулт ${formatNumber(changeDue)}`;
@@ -4149,6 +4157,11 @@ export function RegisterApp({
 
   async function completeSale() {
     if (cart.length === 0 || saleStatus === "saving") return;
+    if (!selectedPayment) {
+      setSaleStatus("error");
+      setSaleMessage("Төлбөрийн хэлбэр сонгоно уу");
+      return;
+    }
     if (!dayOpen) {
       setSaleStatus("error");
       setSaleMessage("Борлуулалт хийхээс өмнө өдрөө нээнэ үү");
@@ -4164,7 +4177,7 @@ export function RegisterApp({
       setSaleMessage(`${formatMNT(cashShort)} дутуу байна`);
       return;
     }
-    if (cardRequired && !cardTerminalApproved) {
+    if (cardRequired && !simplePaymentFlow && !cardTerminalApproved) {
       setSaleStatus("error");
       setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
       return;
@@ -4174,7 +4187,7 @@ export function RegisterApp({
       setSaleMessage("Байшин, нэр эсвэл утас оруулна уу");
       return;
     }
-    if (bankTransferRequired && !bankTransferConfirmed) {
+    if (bankTransferRequired && !simplePaymentFlow && !bankTransferConfirmed) {
       setSaleStatus("error");
       setSaleMessage("Дансны орлогоо мобайл банк дээр шалгаж баталгаажуулна уу");
       return;
@@ -4192,12 +4205,6 @@ export function RegisterApp({
     if (partialRequired && partialRemaining > 0 && chargeReferenceValue.length === 0) {
       setSaleStatus("error");
       setSaleMessage("Үлдэгдэл бичих байшин, нэр эсвэл утас оруулна уу");
-      return;
-    }
-
-    if (isWaiter && (cardRequired || bankTransferRequired || (partialRequired && partialPaymentLines.some(line => line.method !== "cash"))) && !paymentEvidence.trim()) {
-      setSaleStatus("error");
-      setSaleMessage("Терминал / шилжүүлгийн баримтын дугаарыг бичнэ үү.");
       return;
     }
 
@@ -4224,7 +4231,7 @@ export function RegisterApp({
       qpayInvoiceId: "",
     });
     const salePrintWindow =
-      !isWaiter && (shouldAutoPrintOrder || willRecordPayment) ? openPrintWindow() : false;
+      canPrint && (shouldAutoPrintOrder || willRecordPayment) ? openPrintWindow() : false;
 
     setSaleStatus("saving");
     setSaleMessage("");
@@ -4354,12 +4361,13 @@ export function RegisterApp({
       setRoomNumber("");
       resetBankTransferPayment();
       resetPartialPaymentState();
-      if (partialRequired) {
-        setPaymentMethod("cash");
+      setPaymentEvidence("");
+      if (simplePaymentFlow || partialRequired) {
+        setPaymentMethod(defaultPaymentMethod);
       }
       setLastSale(completedSale);
       setSaleSequence(nextSaleSequence);
-      const documentsPrinted = !isWaiter && printOrderDocuments(
+      const documentsPrinted = canPrint && printOrderDocuments(
         completedSale,
         Boolean(responseData?.receiptId),
         salePrintWindow,
@@ -4388,7 +4396,7 @@ export function RegisterApp({
           partialSaleHasBalance
             ? `${chargeReference} дээр ${formatMNT(partialRemaining)} үлдэгдэл бичигдлээ`
             : "",
-          isWaiter ? "Захиалга хадгалагдлаа." : documentsPrinted
+          !canPrint ? "Захиалга хадгалагдлаа." : documentsPrinted
             ? responseData?.receiptId
               ? "Захиалга болон төлбөрийн баримт хэвлэгдэж байна"
               : "Гал тогоо / бар захиалга хэвлэгдэж байна"
@@ -5291,7 +5299,8 @@ export function RegisterApp({
                   key={method.id}
                   type="button"
                   onClick={() => selectPaymentMethod(method.id)}
-                  disabled={isEditingCharge && method.id !== "room"}
+                  aria-pressed={paymentMethod === method.id}
+                  disabled={saleStatus === "saving" || (isEditingCharge && method.id !== "room")}
                   className={`h-9 rounded-md border px-1 text-[11px] font-extrabold leading-tight ${
                     paymentMethod === method.id
                       ? "border-[#111827] bg-[#111827] text-white"
@@ -5303,7 +5312,7 @@ export function RegisterApp({
               ))}
             </div>
 
-            {(cardRequired || bankTransferRequired || (partialRequired && partialPaymentLines.some(line => line.method !== "cash"))) && (
+            {!simplePaymentFlow && (cardRequired || bankTransferRequired || (partialRequired && partialPaymentLines.some(line => line.method !== "cash"))) && (
               <PaymentEvidenceField value={paymentEvidence} onChange={setPaymentEvidence} />
             )}
 
@@ -5372,7 +5381,7 @@ export function RegisterApp({
               </div>
             )}
 
-            {cardRequired && (
+            {cardRequired && !simplePaymentFlow && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
@@ -5452,7 +5461,7 @@ export function RegisterApp({
               </div>
             )}
 
-            {bankTransferRequired && (
+            {bankTransferRequired && !simplePaymentFlow && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
@@ -6085,7 +6094,7 @@ export function RegisterApp({
                       </div>
                     )}
 
-                    {settlementLines.some(line => line.method !== "cash") && (
+                    {!simplePaymentFlow && settlementLines.some(line => line.method !== "cash") && (
                       <PaymentEvidenceField value={settlementEvidence} onChange={setSettlementEvidence} />
                     )}
 

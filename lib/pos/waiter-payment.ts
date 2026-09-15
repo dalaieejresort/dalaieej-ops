@@ -1,4 +1,4 @@
-/** A staff-entered reference is evidence for later reconciliation, not bank verification. */
+/** Staff confirm receipt of payment; a reference is optional, not bank verification. */
 export function waiterPaymentError(payment: {
   paymentMethod?: string;
   amount?: number;
@@ -12,6 +12,5 @@ export function waiterPaymentError(payment: {
   if (!["card", "карт", "bank", "данс"].includes(method)) {
     return "Зөөгчийн төлбөрийн хэлбэр: бэлэн, карт эсвэл данс.";
   }
-  if (!payment.notes?.trim()) return "Терминал / шилжүүлгийн баримтын дугаарыг бичнэ үү.";
   return null;
 }

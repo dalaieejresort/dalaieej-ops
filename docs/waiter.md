@@ -72,7 +72,8 @@ The custom Захиалах / Үйлчлэх / Тооцоо navigation, service 
 Current behavior:
 
 - POS catalogue, cart, payment forms, debt list, history, desktop navigation, and mobile navigation are shared. Cash is the default payment method, as in POS.
-- Waiters retain permission to settle their own orders, including partial payments. Payment attribution uses authenticated staff identity; card/transfer entries require a supporting reference. A reference is not independent bank verification.
+- Waiters retain permission to settle their own orders, including partial payments. Payment attribution uses authenticated staff identity. Card/transfer reference numbers are optional; the waiter interface omits the reference field and its helper note, including for partial payments and settlement of existing bills.
+- New waiter orders start with no payment method selected. Card and transfer payments use two actions: choose the method, then confirm receipt of the displayed amount. There is no separate terminal/bank verification button. This records the staff member's confirmation, not independent bank verification. After saving, clearing, or restoring an ordinary order, the payment method is unselected again; editing a charge retains its charge method.
 - Permissions derive from the authenticated role, never the page title. Waiters can start service (Decision 05) but cannot confirm opening cash, close the business day, void/refund orders, view reconciliation, or access management controls. The shared Хаалт navigation is disabled for waiters. Their caches, drafts and payment history remain scoped to their identity.
 - Table/cabin separation and preparation notes are shared order fields. Kitchen queue metadata and POS food routing remain intact; this reset does not delete orders or payment records.
 - Cash receipts retain tender and change. Automatic printing remains off for waiters, with shared manual print actions available.

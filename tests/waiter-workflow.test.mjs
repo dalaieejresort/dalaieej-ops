@@ -10,14 +10,17 @@ function load(path, mocks = {}) {
 }
 const preparation=load('lib/pos/preparation.ts');
 const {waiterPaymentError}=load('lib/pos/waiter-payment.ts');
-test('waiters collect cash and record references for card or transfer; references do not claim bank verification',()=>{
+test('waiters record cash, card and transfer payments without requiring references',()=>{
   assert.equal(waiterPaymentError({paymentMethod:'Бэлэн',amount:12000}),null);
   for(const method of ['Карт','Данс']) {
-    assert.ok(waiterPaymentError({paymentMethod:method,amount:12000}));
+    assert.equal(waiterPaymentError({paymentMethod:method,amount:12000}),null);
+    assert.equal(waiterPaymentError({paymentMethod:method,amount:12000,notes:'  '}),null);
     assert.equal(waiterPaymentError({paymentMethod:method,amount:12000,notes:'Terminal 123, 12000 MNT'}),null);
   }
-  for(const amount of [0,-1,NaN,Infinity])assert.ok(waiterPaymentError({paymentMethod:'Бэлэн',amount}));
-  assert.ok(waiterPaymentError({paymentMethod:'Өр',amount:12000}));
+  for(const method of ['Бэлэн','Карт','Данс']) {
+    for(const amount of [0,-1,NaN,Infinity])assert.ok(waiterPaymentError({paymentMethod:method,amount}));
+  }
+  for(const paymentMethod of ['',undefined,'Өр'])assert.ok(waiterPaymentError({paymentMethod,amount:12000}));
 });
 test('POS ticket and kitchen queue use the same food routing, including salad and pizza',()=>{
   for(const name of ['Ногоотой шөл','Грек салат','Пицца','Сүүтэй цай'])assert.equal(preparation.isKitchenTicketItem({name}),true,name);
