@@ -1808,7 +1808,7 @@ export function RegisterApp({
   const phoneLayout = layout === "phone";
   const isWaiter = role === "waiter";
   const simplePaymentFlow = isWaiter || phoneLayout;
-  const defaultPaymentMethod = simplePaymentFlow ? null : PAYMENT_METHODS[0].id;
+  const defaultPaymentMethod = simplePaymentFlow ? "card" : PAYMENT_METHODS[0].id;
   const canPrint = !phoneLayout && !isWaiter;
   const modeStorageKey = isWaiter ? `waiter:mode:${authenticatedStaffName}` : REGISTER_MODE_STORAGE_KEY;
   const draftCacheKey = isWaiter ? `waiter:draft:${authenticatedStaffName}` : REGISTER_DRAFT_CACHE_KEY;
@@ -2490,8 +2490,8 @@ export function RegisterApp({
         setPreparationNotes(draft.preparationNotes ?? "");
         setEditingCharge(draft.editingCharge ?? null);
         if (simplePaymentFlow) {
-          // Restored orders require a fresh choice; editing keeps the charge method.
-          setPaymentMethod(draft.editingCharge ? "room" : null);
+          // Restore the waiter default; editing keeps the charge method.
+          setPaymentMethod(draft.editingCharge ? "room" : defaultPaymentMethod);
         } else if (isPaymentMethod(draft.paymentMethod)) {
           setPaymentMethod(draft.paymentMethod);
         }
@@ -2518,7 +2518,7 @@ export function RegisterApp({
     }, 0);
 
     return () => window.clearTimeout(restoreTimer);
-  }, [draftCacheKey, simplePaymentFlow]);
+  }, [draftCacheKey, simplePaymentFlow, defaultPaymentMethod]);
 
   useEffect(() => {
     if (!draftLoadedRef.current) return;
