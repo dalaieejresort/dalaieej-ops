@@ -265,7 +265,7 @@ function buildDashboardUrl(path: string, businessDate: string, fresh: boolean) {
 }
 
 function formatUpdatedAt(date: Date | null) {
-  if (!date) return "Шинэчлээгүй";
+  if (!date) return "Шинэчлэгдээгүй";
 
   return date.toLocaleTimeString("mn-MN", {
     timeZone: "Asia/Ulaanbaatar",
@@ -483,10 +483,10 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       }
 
       if (inventoryResult.status === "rejected") {
-        nextErrors.push(`Бараа: ${inventoryResult.reason.message}`);
+        nextErrors.push(`Бараа материал: ${inventoryResult.reason.message}`);
       }
       if (operationsResult.status === "rejected") {
-        nextErrors.push(`Ажиллагаа: ${operationsResult.reason.message}`);
+        nextErrors.push(`Системийн ажиллагаа: ${operationsResult.reason.message}`);
       }
       if (qualityResult.status === "rejected") {
         nextErrors.push(`Өгөгдлийн чанар: ${qualityResult.reason.message}`);
@@ -574,11 +574,11 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
     const quantityDelta = Number(adjustmentDelta);
     const selectedItem = data.catalog.find(item => item.sku === adjustmentSku);
     if (!selectedItem || !Number.isFinite(quantityDelta) || quantityDelta === 0) {
-      setAdjustmentMessage("Бараа болон 0-ээс өөр зөрүү сонгоно уу.");
+      setAdjustmentMessage("Бараагаа сонгож, 0-ээс өөр зөрүү оруулна уу.");
       return;
     }
     if (!adjustmentReason.trim()) {
-      setAdjustmentMessage("Тооллогын тайлбар заавал бичнэ үү.");
+      setAdjustmentMessage("Тооллогын тайлбараа заавал бичнэ үү.");
       return;
     }
     const fingerprint = JSON.stringify({
@@ -613,11 +613,11 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       pendingAdjustmentRef.current = null;
       setAdjustmentDelta("");
       setAdjustmentReason("");
-      setAdjustmentMessage("Тооллогын тохируулга аудитын мөрөөр хадгалагдлаа.");
+      setAdjustmentMessage("Тооллогын тохируулга амжилттай хадгалагдлаа.");
       await loadDashboard(true);
     } catch (error) {
       setAdjustmentMessage(
-        error instanceof Error ? error.message : "Тохируулга хадгалж чадсангүй.",
+        error instanceof Error ? error.message : "Тохируулгыг хадгалж чадсангүй.",
       );
     } finally {
       setAdjustmentSaving(false);
@@ -638,12 +638,12 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         linesBackfilled?: number;
       };
       setQualityMessage(
-        `${formatNumber(result.ordersBackfilled ?? 0)} захиалгын ${formatNumber(result.linesBackfilled ?? 0)} барааны мөр нөхөгдлөө.`,
+        `${formatNumber(result.ordersBackfilled ?? 0)} захиалгын ${formatNumber(result.linesBackfilled ?? 0)} барааны мөр амжилттай нөхөгдлөө.`,
       );
       await loadDashboard(true);
     } catch (error) {
       setQualityMessage(
-        error instanceof Error ? error.message : "Нөхөлт хийж чадсангүй.",
+        error instanceof Error ? error.message : "Өгөгдөл нөхөхөд алдаа гарлаа.",
       );
     } finally {
       setQualityRepairing(false);
@@ -689,7 +689,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
               href="/register"
               className="flex h-10 items-center rounded-lg bg-[#111827] px-4 text-sm font-black text-white hover:bg-[#374151]"
             >
-              Касс нээх
+              Касс руу очих
             </a>
             <button
               type="button"
@@ -708,7 +708,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   : "border-[#cbd5e1] bg-white text-[#475569]"
               }`}
             >
-              Авто {autoRefresh ? "асаалттай" : "унтраалттай"}
+              Авто: {autoRefresh ? "асаалттай" : "унтраастай"}
             </button>
           </nav>
         </div>
@@ -731,22 +731,22 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
               <MetricCard
                 label="Өдрийн борлуулалт"
                 value={formatMNT(data.totals.salesTotal)}
-                detail={`Тухайн өдрийн төлөлт ${formatMNT(data.totals.currentSalePaymentTotal)}`}
+                detail={`Өнөөдрийн төлөлт ${formatMNT(data.totals.currentSalePaymentTotal)}`}
                 tone="green"
               />
               <MetricCard
-                label="Төлбөр авсан"
+                label="Хүлээн авсан төлбөр"
                 value={formatMNT(data.totals.paymentTotal)}
-                detail={`Хуучин өр ${formatMNT(data.totals.priorDebtCollectedTotal)} · Буцаалт ${formatMNT(data.totals.refundTotal)}`}
+                detail={`Өмнөх өр ${formatMNT(data.totals.priorDebtCollectedTotal)} · Буцаалт ${formatMNT(data.totals.refundTotal)}`}
               />
               <MetricCard
-                label="Хүлээгдэж буй өр"
+                label="Төлөгдөөгүй өр"
                 value={formatMNT(unpaidBalance)}
-                detail={`Өнөөдөр шинээр ${formatMNT(data.totals.newRoomDebtTotal)} · ${formatNumber(data.charges.length)} мөр`}
+                detail={`Өнөөдөр шинээр ${formatMNT(data.totals.newRoomDebtTotal)} · ${formatNumber(data.charges.length)} өр`}
                 tone={unpaidBalance > 0 ? "amber" : "neutral"}
               />
               <MetricCard
-                label="Бэлнээр байх"
+                label="Бэлнээр байх ёстой"
                 value={formatMNT(data.totals.expectedCash)}
                 detail={`Эхлэх ${formatMNT(data.session?.startingCash ?? 0)} · Касс ${statusText(data.session)}`}
                 tone={data.session?.status?.toLowerCase() === "open" ? "green" : "neutral"}
@@ -820,7 +820,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                     ["Эхлэх бэлэн мөнгө", data.session?.startingCash ?? 0],
                     ["Бэлэн орлого", data.totals.cashPaymentTotal],
                     ["Бэлнээр байх ёстой", data.totals.expectedCash],
-                    ["Төлбөрийн нийт дүн", paymentTotal],
+                    ["Нийт төлбөрийн дүн", paymentTotal],
                   ].map(([label, value]) => (
                     <div
                       key={String(label)}
@@ -845,12 +845,12 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   href="/register"
                   className="rounded-lg border border-[#cbd5e1] px-3 py-2 text-xs font-black text-[#111827] hover:bg-[#f8fafc]"
                 >
-                  Касс
+                  Өр хаах
                 </a>
               }
             >
               {visibleCharges.length === 0 ? (
-                <EmptyState>Хаагдаагүй өр алга.</EmptyState>
+                <EmptyState>Төлөгдөөгүй өр алга.</EmptyState>
               ) : (
                 <div className="divide-y divide-[#e5eaf1]">
                   {visibleCharges.map((charge) => (
@@ -866,7 +866,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                           {charge.itemSummary || `${charge.itemCount ?? 1} бараа`}
                         </p>
                         <p className="mt-1 truncate text-xs font-bold text-[#94a3b8]">
-                          {charge.timestamp} · {charge.staff || "Staff"}
+                          {charge.timestamp} · {charge.staff || "Ажилтан"}
                         </p>
                       </div>
                       <div className="text-left sm:text-right">
@@ -888,7 +888,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
 
           <SectionShell title="Сүүлийн төлбөрүүд">
             {recentHistory.length === 0 ? (
-              <EmptyState>Өнөөдрийн хаагдсан төлбөр алга.</EmptyState>
+              <EmptyState>Өнөөдөр бүртгэгдсэн төлбөр алга.</EmptyState>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px] border-collapse text-sm">
@@ -922,7 +922,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                           </p>
                         </td>
                         <td className="px-4 py-3 font-bold">
-                          {sale.staff || "Staff"}
+                          {sale.staff || "Ажилтан"}
                         </td>
                         <td className="px-4 py-3 text-right font-black">
                           {formatMNT(sale.paidAmount ?? sale.total)}
@@ -954,7 +954,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
             }
           >
             {!data.quality ? (
-              <EmptyState>Өгөгдлийн шалгалт хараахан ажиллаагүй.</EmptyState>
+              <EmptyState>Өгөгдлийн шалгалт хийгдээгүй байна.</EmptyState>
             ) : (
               <div className="p-4">
                 <div
@@ -967,8 +967,8 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-black">
                       {data.quality.status === "healthy"
-                        ? "Шалгалт цэвэр"
-                        : `${formatNumber(data.quality.summary.issueCount)} асуудал`}
+                        ? "Бүх шалгалт хэвийн"
+                        : `${formatNumber(data.quality.summary.issueCount)} зөрчил илэрсэн`}
                     </p>
                     <p className="text-xs font-black text-[#64748b]">
                       {formatNumber(data.quality.summary.normalizedOrders)}/
@@ -1024,7 +1024,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   </p>
                 )}
                 <p className="mt-3 text-[11px] font-bold leading-4 text-[#94a3b8]">
-                  Бүх түүхэн Dalai Eej Ops өгөгдлийг шалгана. Нөхөлт нь зөвхөн Order_Items-д мөр нэмнэ; Master Ledger-д бичихгүй.
+                  Dalai Eej Ops-ын бүх түүхэн өгөгдлийг шалгана. Дутуу захиалгыг нөхөхдөө зөвхөн Order_Items-д мөр нэмэх ба Master Ledger-ийн өгөгдөлд хүрэхгүй.
                 </p>
               </div>
             )}
@@ -1035,7 +1035,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border border-[#e5eaf1] px-3 py-3">
                   <p className="text-xs font-black uppercase tracking-normal text-[#64748b]">
-                    Каталог
+                    Нийт бараа
                   </p>
                   <p className="mt-2 text-2xl font-black">
                     {formatNumber(data.catalog.length)}
@@ -1054,7 +1054,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
               <div className="mt-4 divide-y divide-[#e5eaf1] rounded-lg border border-[#e5eaf1]">
                 {lowStockItems.length === 0 ? (
                   <div className="px-3 py-5 text-center text-sm font-bold text-[#64748b]">
-                    Бага үлдэгдэлтэй бараа алга.
+                    Үлдэгдэл багассан бараа байхгүй байна.
                   </div>
                 ) : (
                   lowStockItems.map((item) => (
@@ -1089,7 +1089,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
             }
           >
             {data.pendingOperations.length === 0 ? (
-              <EmptyState>Гацсан эсвэл хүлээгдэж буй ажиллагаа алга.</EmptyState>
+              <EmptyState>Хүлээгдэж буй эсвэл гацсан ажиллагаа алга.</EmptyState>
             ) : (
               <div className="divide-y divide-[#e5eaf1]">
                 {data.pendingOperations.slice(0, 10).map(operation => (
@@ -1103,12 +1103,12 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                       </span>
                     </div>
                     <p className="mt-1 break-words text-xs font-bold text-[#64748b]">
-                      {operation.businessDate || "Огноогүй"} · {operation.actor || "Тодорхойгүй"}
+                      {operation.businessDate || "Огноогүй"} · {operation.actor || "Ажилтан тодорхойгүй"}
                     </p>
                     <p className="mt-1 text-xs font-bold text-[#94a3b8]">
                       {operation.recoverable
-                        ? "Ижил Save хүсэлтээр автоматаар үргэлжлүүлнэ"
-                        : "Менежер гараар шалгана"}
+                        ? "Дахин хадгалах үед автоматаар үргэлжлүүлнэ"
+                        : "Менежер гараар шалгах шаардлагатай"}
                     </p>
                   </div>
                 ))}
@@ -1125,7 +1125,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   onChange={event => setAdjustmentSku(event.target.value)}
                   className="h-11 rounded-lg border border-[#cbd5e1] bg-white px-3 text-sm font-bold text-[#111827]"
                 >
-                  <option value="">Сонгох</option>
+                  <option value="">Бараа сонгох</option>
                   {data.catalog.map(item => (
                     <option key={item.sku} value={item.sku}>
                       {item.name} ({item.sku}) · {formatNumber(item.stock ?? 0)}
@@ -1134,7 +1134,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                 </select>
               </label>
               <label className="grid gap-1 text-xs font-black text-[#475569]">
-                Зөрүү (+ нэмнэ, − хасна)
+                Зөрүү (+ нэмэх, − хасах)
                 <input
                   type="number"
                   step="1"
@@ -1148,7 +1148,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                 <input
                   value={adjustmentReason}
                   onChange={event => setAdjustmentReason(event.target.value)}
-                  placeholder="Жишээ: 2026.08.17 биечлэн тоолсон"
+                  placeholder="Жишээ: 2026.08.17 тооллогоор зөрсөн"
                   className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
                 />
               </label>
@@ -1158,7 +1158,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                 onClick={() => void submitInventoryAdjustment()}
                 className="h-11 rounded-lg bg-[#111827] px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {adjustmentSaving ? "Хадгалж байна…" : "Аудитын мөр хадгалах"}
+                {adjustmentSaving ? "Хадгалж байна…" : "Тохируулга хадгалах"}
               </button>
               {adjustmentMessage && (
                 <p className="break-words text-xs font-bold text-[#64748b]">
@@ -1166,14 +1166,14 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                 </p>
               )}
               <p className="text-xs font-bold leading-5 text-[#94a3b8]">
-                Каталогийн тоог шууд дарж өөрчлөхгүй; засвар бүр Inventory_Log-д нэр, шалтгаан, хүсэлтийн ID-тай хадгалагдана.
+                Барааны үлдэгдлийг шууд дарж өөрчлөхгүй бөгөөд засвар бүр Inventory_Log-д ажилтны нэр, шалтгаан, хүсэлтийн дугаартай бүртгэгдэнэ.
               </p>
             </div>
           </SectionShell>
 
-          <SectionShell title="Топ зарагдсан">
+          <SectionShell title="Их зарагдсан бараа">
             {topItems.length === 0 ? (
-              <EmptyState>Өдрийн барааны дүн алга.</EmptyState>
+              <EmptyState>Өнөөдөр зарагдсан бараа бүртгэгдээгүй байна.</EmptyState>
             ) : (
               <div className="divide-y divide-[#e5eaf1]">
                 {topItems.map((item, index) => (
@@ -1196,7 +1196,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
             )}
           </SectionShell>
 
-          <SectionShell title="Ажиллагаа">
+          <SectionShell title="Шуурхай үйлдлүүд">
             <div className="grid gap-2 p-4">
               <a
                 href="/register"
