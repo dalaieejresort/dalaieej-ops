@@ -4622,6 +4622,16 @@ export function RegisterApp({
                     onClick={() => { setSearchByCode(!searchByCode); setNumberEntry(searchByCode ? null : "code"); }}>
                     {searchByCode ? "Нэрээр хайх" : "Кодоор хайх"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={undoLastItemAddition}
+                    disabled={!cartState.lastAddition || saleStatus === "saving"}
+                    aria-label="Сүүлд нэмсэн барааг буцаах"
+                    title={cartState.lastAddition ? `${cartState.lastAddition.name}: сүүлийн нэмэлтийг буцаах` : "Буцаах нэмэлт алга"}
+                    className="h-11 shrink-0 rounded-md border border-[#cbd5e1] bg-[#fff7e6] px-3 text-sm font-bold text-[#111827] hover:bg-[#ffedc2] disabled:bg-white disabled:opacity-40"
+                  >
+                    ↶ Буцаах
+                  </button>
                   <div className="flex max-w-full gap-2 overflow-x-auto">
                     {categories.map((category) => (
                       <button
@@ -5184,7 +5194,7 @@ export function RegisterApp({
             </>
           ) : registerMode === "sale" ? (
             <>
-          <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#d1d5db] px-4 py-2">
+          <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-[#d1d5db] px-4 py-2">
             <div className="min-w-0">
               <h2 className="truncate text-base font-bold">
                 {isEditingCharge ? "Захиалга засах" : "Одоогийн борлуулалт"}
@@ -5196,16 +5206,6 @@ export function RegisterApp({
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={undoLastItemAddition}
-                disabled={!cartState.lastAddition || saleStatus === "saving"}
-                aria-label="Сүүлд нэмсэн барааг буцаах"
-                title={cartState.lastAddition ? `${cartState.lastAddition.name}: сүүлийн нэмэлтийг буцаах` : "Буцаах нэмэлт алга"}
-                className="rounded-md border border-[#cbd5e1] px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc] disabled:opacity-40"
-              >
-                ↶ Буцаах
-              </button>
               <button
                 type="button"
                 onClick={clearCurrentSale}
