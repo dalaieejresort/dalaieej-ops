@@ -29,6 +29,7 @@ type StoredAccount = {
   role: OpsRole;
   salt: string;
   passwordHash: string;
+  active?: boolean;
 };
 
 const ROLE_RANK: Record<OpsRole, number> = {
@@ -72,7 +73,12 @@ function getAccounts(): StoredAccount[] {
     throw new Error("OPS_AUTH_ACCOUNTS must be an array");
   }
 
-  const accounts = parsed.map((value, index) => {
+  const waiterRaw = process.env.OPS_WAITER_ACCOUNTS?.trim();
+  const waiters: unknown = waiterRaw ? JSON.parse(waiterRaw) : [];
+  if (!Array.isArray(waiters) || waiters.some(value => !value || value.role !== "waiter")) {
+    throw new Error("OPS_WAITER_ACCOUNTS must contain only waiter accounts");
+  }
+  const accounts = [...parsed, ...waiters].map((value, index) => {
     if (!value || typeof value !== "object") {
       throw new Error(`OPS_AUTH_ACCOUNTS[${index}] is invalid`);
     }
@@ -94,10 +100,14 @@ function getAccounts(): StoredAccount[] {
       role: account.role,
       salt: account.salt,
       passwordHash: account.passwordHash,
+      active: account.active !== false,
     };
   });
 
   const kitchenRaw = process.env.OPS_KITCHEN_ACCOUNT?.trim();
+  if (new Set(accounts.map(account => account.username)).size !== accounts.length) {
+    throw new Error("Staff usernames must be unique");
+  }
   if (!kitchenRaw) return accounts;
 
   let kitchenValue: unknown;
@@ -133,6 +143,12 @@ function getAccounts(): StoredAccount[] {
     ),
     normalizedKitchenAccount,
   ];
+}
+
+export function getWaiterLoginOptions() {
+  return getAccounts()
+    .filter(account => account.role === "waiter" && account.active !== false)
+    .map(({ username, displayName }) => ({ username, displayName }));
 }
 
 function encode(value: string | Buffer) {
@@ -192,6 +208,8 @@ export function verifySessionToken(token: string | undefined | null) {
       return null;
     }
 
+    if (payload.role === "waiter" && !getAccounts().some(account =>
+      account.username === payload.username && account.role === "waiter" && account.active !== false)) return null;
     return payload as OpsSession;
   } catch {
     return null;
@@ -201,7 +219,7 @@ export function verifySessionToken(token: string | undefined | null) {
 export function authenticateAccount(username: string, password: string) {
   const normalizedUsername = username.trim().toLowerCase();
   const account = getAccounts().find(
-    (candidate) => candidate.username === normalizedUsername,
+    (candidate) => candidate.username === normalizedUsername && candidate.active !== false,
   );
   if (!account) return null;
 

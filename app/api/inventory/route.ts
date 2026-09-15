@@ -1,3 +1,4 @@
+import { waiterPaymentError } from "@/lib/pos/waiter-payment";
 import {
   GoogleSpreadsheet,
   type GoogleSpreadsheetWorksheet,
@@ -55,6 +56,8 @@ type InventoryPostBody = {
   }>;
   method?: string;
   room?: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   staffName?: string;
   paidStatus?: string;
   total?: number;
@@ -148,6 +151,8 @@ const SALES_LOG_HEADERS = [
   'operation_updated_at',
   'last_edit_request_id',
   'last_edit_fingerprint',
+  'service_table',
+  'preparation_notes',
 ];
 
 const INVENTORY_LOG_HEADERS = [
@@ -561,24 +566,10 @@ async function handlePOST(request: Request) {
       payments,
       clientRequestId,
     } = body;
+    const serviceTable = String(body.serviceTable ?? "").trim().slice(0, 80);
+    const preparationNotes = String(body.preparationNotes ?? "").trim().slice(0, 1000);
     const staffName = sessionOrResponse.displayName;
     void requestedStaffName;
-    if (sessionOrResponse.role === 'waiter') {
-      const isOrderOnly =
-        String(paidStatus ?? '').toLowerCase() === 'unpaid' &&
-        method === 'Байшин/Зочин' &&
-        Boolean(room?.trim()) &&
-        (!payments || payments.length === 0) &&
-        !Number(cashReceived ?? 0) &&
-        !Number(changeDue ?? 0) &&
-        !qpayInvoiceId;
-      if (!isOrderOnly) {
-        return NextResponse.json(
-          { error: 'Зөөгч зөвхөн төлбөргүй захиалга илгээх эрхтэй.' },
-          { status: 403 },
-        );
-      }
-    }
     if (!items?.length) {
       return NextResponse.json({ error: 'No items to log' }, { status: 400 });
     }
@@ -679,6 +670,14 @@ async function handlePOST(request: Request) {
       );
     }
 
+    if (sessionOrResponse.role === 'waiter' && (normalizedPaidStatus !== 'unpaid' || hasExplicitPayments)) {
+      const error = inventoryPayments.map(waiterPaymentError).find(Boolean);
+      if (error) return NextResponse.json({ error }, { status: 400 });
+      if (normalizedPaidStatus === 'paid' && paymentTotal !== saleTotal) {
+        return NextResponse.json({ error: 'Төлсөн дүн захиалгын дүнтэй тэнцүү байна.' }, { status: 400 });
+      }
+    }
+
     const requestFingerprint = operationFingerprint({
       action: 'sale',
       items: items.map(item => ({
@@ -690,77 +689,19 @@ async function handlePOST(request: Request) {
         priceMode: item.priceMode ?? '',
       })),
       room: room?.trim() ?? '',
+      ...(serviceTable || preparationNotes ? { serviceTable, preparationNotes } : {}),
       paidStatus: normalizedPaidStatus,
       total: Number(saleTotal),
       payments: inventoryPayments,
     });
     let resumedSale = false;
     if (existingSale) {
+      if (sessionOrResponse.role === 'waiter' && String(existingSale.get('staff') ?? '') !== staffName) {
+        return NextResponse.json({ error: 'Энэ захиалгыг өөр ажилтан бүртгэсэн.' }, { status: 403 });
+      }
       const existingOrderId = String(existingSale.get('transaction_id') ?? '').trim();
       const existingReceiptId = String(existingSale.get('receipt_id') ?? '').trim();
       const operationStatus = String(existingSale.get('operation_status') ?? '').trim();
-      if (operationStatus === 'complete') {
-        await syncKitchenOrderSafely({
-          orderId: existingOrderId,
-          businessDate: String(existingSale.get('business_date') ?? '').trim(),
-          roomOrGuest: String(existingSale.get('room_or_guest') ?? '').trim(),
-          staff: String(existingSale.get('staff') ?? staffName).trim(),
-          items,
-        });
-        if (
-          String(existingSale.get('paid_status') ?? '').toLowerCase() ===
-          'unpaid'
-        ) {
-          after(() =>
-            syncLiveOrderSafely({
-              transactionId: existingOrderId,
-              businessDate: String(
-                existingSale.get('business_date') ?? '',
-              ).trim(),
-              timestamp: String(existingSale.get('timestamp') ?? '').trim(),
-              staff: String(existingSale.get('staff') ?? staffName).trim(),
-              paymentMethod: String(
-                existingSale.get('payment_method') ?? '',
-              ).trim(),
-              roomOrGuest: String(
-                existingSale.get('room_or_guest') ?? '',
-              ).trim(),
-              subtotal: toNumber(existingSale.get('subtotal')),
-              discount: toNumber(existingSale.get('discount')),
-              originalTotal: toNumber(existingSale.get('total')),
-              paidAmount: paymentTotal,
-              itemCount: toNumber(existingSale.get('item_count')),
-              itemSummary: String(
-                existingSale.get('item_summary') ?? '',
-              ).trim(),
-              qpayInvoiceId: String(
-                existingSale.get('qpay_invoice_id') ?? '',
-              ).trim(),
-              notes: String(existingSale.get('notes') ?? '').trim(),
-              items: items.map(item => ({
-                sku: item.sku?.trim(),
-                name: String(item.name ?? item.sku ?? '').trim(),
-                category: item.category?.trim(),
-                qty: Number(item.qty ?? 1),
-                unitPrice: Number(item.unitPrice ?? 0),
-                priceMode: item.priceMode,
-              })),
-            }),
-          );
-        }
-        return NextResponse.json({
-          success: true,
-          duplicateRequest: true,
-          transactionId: existingOrderId,
-          orderId: existingOrderId,
-          receiptId: existingReceiptId || undefined,
-          sessionId: String(existingSale.get('session_id') ?? '').trim(),
-          businessDate: String(existingSale.get('business_date') ?? '').trim(),
-          paidAt: existingReceiptId
-            ? String(existingSale.get('timestamp') ?? '').trim()
-            : undefined,
-        });
-      }
       const storedFingerprint = String(
         existingSale.get('request_fingerprint') ?? '',
       ).trim();
@@ -774,6 +715,21 @@ async function handlePOST(request: Request) {
           },
           { status: 409 },
         );
+      }
+      if (operationStatus === 'complete') {
+        // A completed retry must not replay old items or overwrite later payments.
+        return NextResponse.json({
+          success: true,
+          duplicateRequest: true,
+          transactionId: existingOrderId,
+          orderId: existingOrderId,
+          receiptId: existingReceiptId || undefined,
+          sessionId: String(existingSale.get('session_id') ?? '').trim(),
+          businessDate: String(existingSale.get('business_date') ?? '').trim(),
+          paidAt: existingReceiptId
+            ? String(existingSale.get('timestamp') ?? '').trim()
+            : undefined,
+        });
       }
       resumedSale = true;
       timestamp = String(existingSale.get('timestamp') ?? timestamp).trim();
@@ -845,6 +801,8 @@ async function handlePOST(request: Request) {
       payment_method: paymentMethod || '',
       paid_status: normalizedPaidStatus,
       room_or_guest: room || '',
+      service_table: serviceTable,
+      preparation_notes: preparationNotes,
       subtotal: saleSubtotal,
       discount: 0,
       total: saleTotal,
@@ -993,6 +951,8 @@ async function handlePOST(request: Request) {
       orderId: transactionId,
       businessDate: activeSession.businessDate,
       roomOrGuest: room,
+      serviceTable,
+      preparationNotes,
       staff: staffName || 'Staff',
       items,
       createdAt: saleCreatedAt.toISOString(),
@@ -1006,10 +966,12 @@ async function handlePOST(request: Request) {
           staff: staffName || 'Staff',
           paymentMethod: paymentMethod || '',
           roomOrGuest: room || '',
+          serviceTable,
+          preparationNotes,
           subtotal: saleSubtotal,
           discount: 0,
           originalTotal: saleTotal,
-          paidAmount: paymentTotal,
+          paidAmount: hasExplicitPayments ? paymentTotal : 0,
           itemCount: items.reduce((sum, item) => sum + (item.qty ?? 1), 0),
           itemSummary,
           qpayInvoiceId: paymentBankReferenceId,

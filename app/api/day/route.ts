@@ -19,8 +19,9 @@ import { requireApiSession } from '@/lib/server/auth';
 import { staleBusinessDayResponse } from '@/lib/server/business-day-guard';
 import { mergeManagementBoardSectionSafely } from '@/lib/server/management-board';
 import { ORDER_ITEMS_SHEET_TITLES } from '@/lib/server/order-items';
+import { acquireDayWriteLock } from '@/lib/server/day-write-lock';
 
-type DayAction = 'open' | 'close';
+type DayAction = 'start-service' | 'open' | 'close';
 
 type DayPostBody = {
   action?: DayAction;
@@ -387,6 +388,10 @@ function serializeSession(row: SheetRow | null) {
     openedAt: getCell(row, 'opened_at'),
     openedBy: getCell(row, 'opened_by'),
     startingCash: toNumber(row.get('starting_cash')),
+    // Historical openings already included a confirmed cash amount.
+    cashOpened: getCell(row, 'opening_mode') !== 'service' || Boolean(getCell(row, 'cash_opened_at')),
+    cashOpenedAt: getCell(row, 'cash_opened_at'),
+    cashOpenedBy: getCell(row, 'cash_opened_by'),
     status: getCell(row, 'status') || 'open',
     closedAt: getCell(row, 'closed_at'),
     closedBy: getCell(row, 'closed_by'),
@@ -756,14 +761,15 @@ async function handleGET(request: Request) {
 }
 
 async function handlePOST(request: Request) {
+  let writeLock: Awaited<ReturnType<typeof acquireDayWriteLock>> = null;
   try {
     const body = (await request.json()) as DayPostBody;
     const action = body.action;
     const requestedBusinessDate = normalizeBusinessDate(body.businessDate);
     const clientRequestId = body.clientRequestId?.trim() ?? '';
 
-    if (action !== 'open' && action !== 'close') {
-      return NextResponse.json({ error: 'action must be open or close' }, { status: 400 });
+    if (action !== 'start-service' && action !== 'open' && action !== 'close') {
+      return NextResponse.json({ error: 'action must be start-service, open or close' }, { status: 400 });
     }
     if (!clientRequestId || clientRequestId.length > 128) {
       return NextResponse.json(
@@ -774,10 +780,25 @@ async function handlePOST(request: Request) {
 
     const sessionOrResponse = requireApiSession(
       request,
-      action === 'close' ? 'manager' : 'cashier',
+      action === 'close' ? 'manager' : action === 'start-service' ? 'waiter' : 'cashier',
     );
     if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
+    if (sessionOrResponse.role === 'kitchen') {
+      return NextResponse.json({ error: 'Энэ үйлдлийг хийх эрх хүрэлцэхгүй байна.' }, { status: 403 });
+    }
+    if (action === 'start-service' && (body.startingCash !== undefined || body.countedCash !== undefined)) {
+      return NextResponse.json({ error: 'Үйлчилгээ эхлүүлэхэд кассын мөнгө бүртгэхгүй.' }, { status: 400 });
+    }
+    if (action === 'open' && (body.startingCash === undefined || !Number.isFinite(Number(body.startingCash)) || Number(body.startingCash) < 0)) {
+      return NextResponse.json({ error: 'Эхлэх бэлэн мөнгийг оруулна уу (0 байж болно).' }, { status: 400 });
+    }
     const actorName = sessionOrResponse.displayName;
+    try {
+      writeLock = await acquireDayWriteLock();
+    } catch {
+      return NextResponse.json({ error: 'Өдрийн төлөв хадгалах холболт түр боломжгүй. Дахин оролдоно уу.' }, { status: 503 });
+    }
+    if (!writeLock) return NextResponse.json({ error: 'Өдрийн төлөв өөрчлөгдөж байна. Шинэчлээд дахин оролдоно уу.' }, { status: 409 });
 
     const {
       daySheet,
@@ -828,10 +849,32 @@ async function handlePOST(request: Request) {
     );
     const timestamp = nowTimestamp();
 
-    if (action === 'open') {
+    if (action === 'open' || action === 'start-service') {
       if (activeSession) {
         const staleResponse = staleBusinessDayResponse(businessDate);
         if (staleResponse) return staleResponse;
+        if (action === 'open' && !serializeSession(activeSession)?.cashOpened) {
+          const startingCash = Number(body.startingCash);
+          await writeLock.assertOwned();
+          activeSession.set('starting_cash', startingCash);
+          activeSession.set('expected_cash', startingCash + totals.cashPaymentTotal);
+          activeSession.set('cash_opened_at', timestamp);
+          activeSession.set('cash_opened_by', actorName);
+          activeSession.set('cash_opened_by_username', sessionOrResponse.username);
+          activeSession.set('cash_open_request_id', clientRequestId);
+          activeSession.set('cash_open_notes', body.notes || '');
+          await activeSession.save();
+          clearCachedReads('day:');
+          return NextResponse.json({
+            success: true, businessDate, activeBusinessDate: businessDate,
+            session: serializeSession(activeSession),
+            totals: { ...totals, expectedCash: startingCash + totals.cashPaymentTotal }, itemTotals,
+          });
+        }
+        // Once counted, opening cash cannot be overwritten by a retry or another cashier.
+        if (action === 'open' && Number(body.startingCash) !== toNumber(activeSession.get('starting_cash'))) {
+          return NextResponse.json({ error: 'Кассын эхлэх мөнгө аль хэдийн баталгаажсан. Шинэчлэнэ үү.' }, { status: 409 });
+        }
         const storedSessionId = getCell(activeSession, 'session_id');
         if (
           storedSessionId &&
@@ -844,6 +887,7 @@ async function handlePOST(request: Request) {
               businessDate,
             ),
           );
+          await writeLock.assertOwned();
           await activeSession.save();
         }
         return NextResponse.json({
@@ -869,7 +913,7 @@ async function handlePOST(request: Request) {
         );
       }
 
-      const startingCash = Number(body.startingCash ?? 0);
+      const startingCash = action === 'start-service' ? 0 : Number(body.startingCash);
       if (!Number.isFinite(startingCash) || startingCash < 0) {
         return NextResponse.json(
           { error: 'startingCash must be zero or greater' },
@@ -878,6 +922,7 @@ async function handlePOST(request: Request) {
       }
 
       const shouldBackdateOpening =
+        action === 'open' &&
         !sessionRow &&
         (totals.salesTotal > 0 ||
           totals.paymentTotal > 0 ||
@@ -886,11 +931,18 @@ async function handlePOST(request: Request) {
         ? startOfBusinessDateTimestamp(businessDate)
         : timestamp;
 
+      await writeLock.assertOwned();
       const [newRow] = await daySheet.addRows([
         {
           business_date: businessDate,
           opened_at: openedAt,
           opened_by: actorName,
+          opened_by_username: sessionOrResponse.username,
+          opening_mode: action === 'start-service' ? 'service' : 'cash',
+          cash_opened_at: action === 'open' ? timestamp : '',
+          cash_opened_by: action === 'open' ? actorName : '',
+          cash_opened_by_username: action === 'open' ? sessionOrResponse.username : '',
+          cash_open_request_id: action === 'open' ? clientRequestId : '',
           starting_cash: startingCash,
           status: 'open',
           closed_at: '',
@@ -942,6 +994,9 @@ async function handlePOST(request: Request) {
       );
     }
 
+    if (!serializeSession(activeSession)?.cashOpened) {
+      return NextResponse.json({ error: 'Хаалт хийхээс өмнө кассын эхлэх мөнгийг баталгаажуулна уу.' }, { status: 409 });
+    }
     const countedCash = Number(body.countedCash ?? 0);
     if (!Number.isFinite(countedCash) || countedCash < 0) {
       return NextResponse.json(
@@ -976,6 +1031,7 @@ async function handlePOST(request: Request) {
     activeSession.set('operation_error', '');
     activeSession.set('operation_updated_at', new Date().toISOString());
     activeSession.set('notes', body.notes || '');
+    await writeLock.assertOwned();
     await activeSession.save();
     clearCachedReads('day:');
     clearCachedReads('sales:');
@@ -1005,8 +1061,10 @@ async function handlePOST(request: Request) {
         headers: rateLimited ? { 'Retry-After': '60' } : undefined,
       },
     );
+  } finally {
+    if (writeLock) await writeLock.release().catch(() => console.error('Day write lock release failed'));
   }
 }
 
 export const GET = withProtectedApiRoute('/api/day', 'waiter', handleGET);
-export const POST = withProtectedApiRoute('/api/day', 'cashier', handlePOST);
+export const POST = withProtectedApiRoute('/api/day', 'waiter', handlePOST);

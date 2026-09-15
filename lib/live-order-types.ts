@@ -16,6 +16,8 @@ export type LiveOrder = {
   staff: string;
   paymentMethod: string;
   roomOrGuest: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   subtotal: number;
   discount: number;
   total: number;

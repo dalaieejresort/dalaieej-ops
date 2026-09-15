@@ -13,6 +13,8 @@ const STATIC_ASSETS = new Set([
   "/manifest.webmanifest",
 ]);
 const NAVIGATION_TIMEOUT_MS = 5000;
+// Development chunk URLs are reused between edits, so never cache them locally.
+const LOCAL_PREVIEW = ["localhost", "127.0.0.1", "[::1]"].includes(self.location.hostname);
 
 async function fetchNavigation(request) {
   const controller = new AbortController();
@@ -38,6 +40,7 @@ async function cacheFirstAsset(request) {
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
+      if (LOCAL_PREVIEW) { await self.skipWaiting(); return; }
       const cache = await caches.open(NAVIGATION_CACHE);
 
       await Promise.allSettled(
@@ -72,6 +75,7 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  if (LOCAL_PREVIEW) return;
   const request = event.request;
   if (request.method !== "GET") return;
 

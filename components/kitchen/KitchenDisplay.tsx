@@ -314,7 +314,8 @@ export function KitchenDisplay({
                       <article key={order.orderId} data-age={order.status === "ready" ? "ready" : minutes >= 20 ? "late" : minutes >= 10 ? "waiting" : "new"} className={styles.order}>
                         <div className="flex items-start justify-between gap-3 border-b border-black/10 pb-3">
                           <div className="min-w-0">
-                            <h3 className="break-words text-2xl font-normal">{order.roomOrGuest}</h3>
+                            <h3 className="break-words text-2xl font-normal">{order.serviceTable ? `Ширээ ${order.serviceTable}` : order.roomOrGuest}</h3>
+                            {order.serviceTable && <p>Байшин / зочин: {order.roomOrGuest}</p>}
                             <p className="mt-1 text-xs font-normal text-[#666666]">
                               {order.staff} · {order.orderId}
                             </p>
@@ -323,6 +324,7 @@ export function KitchenDisplay({
                             {elapsedLabel(minutes)}
                           </span>
                         </div>
+                        {order.preparationNotes && <p className="my-3 whitespace-pre-wrap border-b pb-3">{order.preparationNotes}</p>}
                         <ul className="my-4 space-y-3">
                           {order.items.map((item, index) => (
                             <li key={`${item.sku}-${item.name}-${index}`} className="grid grid-cols-[3rem_minmax(0,1fr)] items-start gap-2 text-xl font-normal leading-tight">

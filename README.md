@@ -8,7 +8,11 @@ Adaptive operations app and POS for Dalai Eej Resort.
 - `/ops` - desktop operations dashboard, always.
 - `/register` - touch-friendly POS/register workflow for sales, room charges, settlements, refunds, and day close.
 - `/kitchen` - live kitchen order display.
-- `/waiter` - order-only mobile waiter workflow.
+- `/waiter` - mobile POS for taking orders, serving, and settling the waiter’s bills.
+
+## Product discovery
+
+- [Waiter workflow and design brief](docs/waiter.md) — agreed requirements, proposals, and open decisions for evolving the current waiter interface.
 
 ## Development
 

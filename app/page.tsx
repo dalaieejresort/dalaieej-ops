@@ -1,6 +1,5 @@
 import { KitchenDisplay } from "@/components/kitchen/KitchenDisplay";
 import { RegisterApp } from "@/components/register/RegisterApp";
-import { WaiterApp } from "@/components/waiter/WaiterApp";
 import { getActiveBusinessDate } from "@/lib/server/active-business-date";
 import { requirePageSession } from "@/lib/server/auth";
 
@@ -19,17 +18,10 @@ export default async function Home() {
     );
   }
 
-  if (session.role === "waiter") {
-    return (
-      <WaiterApp
-        businessDate={businessDate}
-        authenticatedStaffName={session.displayName}
-      />
-    );
-  }
-
   return (
     <RegisterApp
+      title={session.role === "waiter" ? "Зөөгч" : "Касс"}
+      layout={session.role === "waiter" ? "phone" : "adaptive"}
       businessDate={businessDate}
       authenticatedStaffName={session.displayName}
       role={session.role}

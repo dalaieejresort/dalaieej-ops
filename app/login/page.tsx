@@ -1,7 +1,9 @@
 import styles from "@/components/auth/Auth.module.css";
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
-import { getServerSession } from "@/lib/server/auth";
+import { getServerSession, getWaiterLoginOptions } from "@/lib/server/auth";
+import { WaiterLoginForm } from "@/components/auth/WaiterLoginForm";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +15,11 @@ function safeNextPath(value: string | undefined) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; method?: string }>;
 }) {
-  const nextPath = safeNextPath((await searchParams).next);
+  const params = await searchParams;
+  const nextPath = safeNextPath(params.next);
+  const waiterLogin = params.method !== "password" && nextPath === "/waiter";
   if (await getServerSession()) redirect(nextPath);
 
   return (
@@ -28,11 +32,14 @@ export default async function LoginPage({
         <aside className={styles.index} aria-hidden="true">01 / Нэвтрэх</aside>
         <section className={styles.loginPanel} aria-labelledby="login-title">
           <div className={styles.titleBand}>
-            <h1 id="login-title">Нэвтрэх</h1>
-            <p>Ажилтны хамгаалалттай нэвтрэх хэсэг</p>
+            <h1 id="login-title">{waiterLogin ? "Зөөгч нэвтрэх" : "Нэвтрэх"}</h1>
+            <p>{waiterLogin ? "Нэрээ сонгоод ПИН кодоо оруулна уу" : "Ажилтны хамгаалалттай нэвтрэх хэсэг"}</p>
           </div>
           <div className={styles.formBody}>
-            <LoginForm nextPath={nextPath} />
+            {waiterLogin ? <WaiterLoginForm waiters={getWaiterLoginOptions()} /> : <>
+              <LoginForm nextPath={nextPath} />
+              <Link className={styles.waiterLink} href="/login?next=%2Fwaiter">Зөөгчөөр нэвтрэх</Link>
+            </>}
           </div>
         </section>
       </div>

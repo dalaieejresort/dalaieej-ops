@@ -1,4 +1,5 @@
 import "server-only";
+import { isKitchenTicketItem } from "@/lib/pos/preparation";
 
 import { Redis } from "@upstash/redis";
 
@@ -15,6 +16,8 @@ export type KitchenOrder = {
   orderId: string;
   businessDate: string;
   roomOrGuest: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   staff: string;
   items: KitchenOrderItem[];
   status: KitchenOrderStatus;
@@ -38,6 +41,8 @@ type KitchenOrderInput = {
   orderId: string;
   businessDate: string;
   roomOrGuest?: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   staff: string;
   items: KitchenOrderInputItem[];
   createdAt?: string;
@@ -70,16 +75,6 @@ async function withOrderSaveTimeout<T>(operation: Promise<T>) {
   }
 }
 
-function isKitchenCategory(category: string) {
-  const normalized = category.trim().toLocaleLowerCase("mn-MN");
-  return (
-    normalized.includes("хоол") ||
-    normalized.includes("гал тогоо") ||
-    normalized.includes("kitchen") ||
-    normalized.includes("food")
-  );
-}
-
 function toKitchenItems(items: KitchenOrderInputItem[]) {
   return items
     .map((item) => ({
@@ -93,7 +88,7 @@ function toKitchenItems(items: KitchenOrderInputItem[]) {
         item.name &&
         Number.isFinite(item.quantity) &&
         item.quantity > 0 &&
-        isKitchenCategory(item.category),
+        isKitchenTicketItem(item),
     );
 }
 
@@ -118,6 +113,7 @@ export async function syncKitchenOrder(input: KitchenOrderInput) {
   const existing = await redis.hget<KitchenOrder>(KITCHEN_QUEUE_KEY, orderId);
   const fingerprint = JSON.stringify({
     roomOrGuest: input.roomOrGuest?.trim() ?? "",
+    ...(input.serviceTable || input.preparationNotes ? { serviceTable: input.serviceTable, preparationNotes: input.preparationNotes } : {}),
     staff: input.staff.trim(),
     items: kitchenItems,
   });
@@ -127,6 +123,8 @@ export async function syncKitchenOrder(input: KitchenOrderInput) {
     orderId,
     businessDate: input.businessDate,
     roomOrGuest: input.roomOrGuest?.trim() || "Касс",
+    serviceTable: input.serviceTable?.trim(),
+    preparationNotes: input.preparationNotes?.trim(),
     staff: input.staff.trim(),
     items: kitchenItems,
     status: changed ? "new" : existing?.status ?? "new",

@@ -1,3 +1,4 @@
+import { waiterPaymentError } from "@/lib/pos/waiter-payment";
 import {
   GoogleSpreadsheet,
   type GoogleSpreadsheetWorksheet,
@@ -78,6 +79,8 @@ type SettleSaleBody = {
   qpayInvoiceId?: string;
   payments?: SettlementPaymentInput[];
   room?: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   items?: SaleEditItemInput[];
   total?: number;
   settlements?: Array<{
@@ -185,6 +188,8 @@ const SALES_LOG_HEADERS = [
   'operation_updated_at',
   'last_edit_request_id',
   'last_edit_fingerprint',
+  'service_table',
+  'preparation_notes',
 ];
 
 const INVENTORY_LOG_HEADERS = [
@@ -938,12 +943,6 @@ async function handleGET(request: Request) {
       ?.trim();
 
     if (settlementRequestId) {
-      if (waiterView) {
-        return NextResponse.json(
-          { error: 'Зөөгч төлбөрийн ажиллагаа харах эрхгүй.' },
-          { status: 403 },
-        );
-      }
       if (settlementRequestId.length > 128) {
         return NextResponse.json(
           { error: 'settlementRequestId is invalid' },
@@ -980,6 +979,9 @@ async function handleGET(request: Request) {
         );
       }
 
+      if (waiterView && getCell(receiptRow, 'staff') !== sessionOrResponse.displayName) {
+        return NextResponse.json({ error: 'Таны төлбөрийн ажиллагаа биш байна.' }, { status: 403 });
+      }
       const operationStatus = getCell(receiptRow, 'operation_status');
       return NextResponse.json(
         {
@@ -1038,6 +1040,8 @@ async function handleGET(request: Request) {
           paymentMethod: getCell(saleRow, 'payment_method'),
           paidStatus: getCell(saleRow, 'paid_status'),
           roomOrGuest: getCell(saleRow, 'room_or_guest'),
+          serviceTable: getCell(saleRow, 'service_table'),
+          preparationNotes: getCell(saleRow, 'preparation_notes'),
           subtotal: toNumber(saleRow.get('subtotal')),
           discount: toNumber(saleRow.get('discount')),
           total: Math.max(total - paidAmount, 0),
@@ -1091,6 +1095,8 @@ async function handleGET(request: Request) {
             staff: getCell(row, 'staff'),
             paymentMethod: getCell(row, 'payment_method'),
             roomOrGuest: getCell(row, 'room_or_guest'),
+            serviceTable: getCell(row, 'service_table'),
+            preparationNotes: getCell(row, 'preparation_notes'),
             subtotal: toNumber(row.get('subtotal')),
             discount: toNumber(row.get('discount')),
             total: balance,
@@ -1144,6 +1150,8 @@ async function handleGET(request: Request) {
               getCell(row, 'payment_method'),
             paidStatus: historyStatus,
             roomOrGuest: getCell(row, 'room_or_guest'),
+            serviceTable: getCell(row, 'service_table'),
+            preparationNotes: getCell(row, 'preparation_notes'),
             total: displayPaidAmount,
             saleTotal,
             paidAmount: displayPaidAmount,
@@ -1176,6 +1184,8 @@ async function handleGET(request: Request) {
           paymentMethod: sale.paymentMethod,
           paidStatus: sale.paidStatus,
           roomOrGuest: sale.roomOrGuest,
+          serviceTable: sale.serviceTable,
+          preparationNotes: sale.preparationNotes,
           total: sale.total,
           saleTotal: sale.saleTotal,
           paidAmount: sale.paidAmount,
@@ -1300,7 +1310,7 @@ async function handleGET(request: Request) {
     }
 
     return NextResponse.json(
-      waiterView ? { charges: payload.charges } : payload,
+      waiterView ? { charges: payload.charges, history: payload.history.filter(sale => sale.staff === sessionOrResponse.displayName) } : payload,
     );
   } catch (error) {
     console.error(`Sales GET Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -1326,12 +1336,6 @@ async function handlePATCH(request: Request) {
     if (sessionOrResponse instanceof NextResponse) return sessionOrResponse;
     const actorName = sessionOrResponse.displayName;
     const body = (await request.json()) as SettleSaleBody;
-    if (sessionOrResponse.role === 'waiter' && body.action !== 'edit_unpaid') {
-      return NextResponse.json(
-        { error: 'Зөөгч төлбөр хаах эрхгүй.' },
-        { status: 403 },
-      );
-    }
     settlementRequestId = String(body.clientRequestId ?? '').trim();
     if (!settlementRequestId || settlementRequestId.length > 128) {
       return NextResponse.json(
@@ -1451,6 +1455,8 @@ async function handlePATCH(request: Request) {
       const subtotal = items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
       const total = Number.isFinite(body.total) ? toNumber(body.total) : subtotal;
       const room = String(body.room ?? '').trim();
+      const serviceTable = String(body.serviceTable ?? getCell(row, 'service_table')).trim().slice(0, 80);
+      const preparationNotes = String(body.preparationNotes ?? getCell(row, 'preparation_notes')).trim().slice(0, 1000);
 
       if (!room) {
         return NextResponse.json({ error: 'room is required' }, { status: 400 });
@@ -1463,6 +1469,7 @@ async function handlePATCH(request: Request) {
       const editRequestId = settlementRequestId || crypto.randomUUID();
       const editFingerprint = operationFingerprint({
         action: 'edit_unpaid',
+        ...(serviceTable || preparationNotes ? { serviceTable, preparationNotes } : {}),
         transactionId,
         room,
         total,
@@ -1479,6 +1486,8 @@ async function handlePATCH(request: Request) {
           orderId: transactionId,
           businessDate: activeSession.businessDate,
           roomOrGuest: room,
+          serviceTable,
+          preparationNotes,
           staff: actorName,
           items,
         });
@@ -1490,6 +1499,8 @@ async function handlePATCH(request: Request) {
             staff: actorName,
             paymentMethod: 'Байшин/Зочин',
             roomOrGuest: room,
+            serviceTable,
+            preparationNotes,
             subtotal,
             discount: 0,
             originalTotal: total,
@@ -1550,6 +1561,8 @@ async function handlePATCH(request: Request) {
         payment_method: 'Байшин/Зочин',
         paid_status: 'unpaid',
         room_or_guest: room,
+        service_table: serviceTable,
+        preparation_notes: preparationNotes,
         subtotal,
         discount: 0,
         total,
@@ -1601,6 +1614,8 @@ async function handlePATCH(request: Request) {
         orderId: transactionId,
         businessDate: activeSession.businessDate,
         roomOrGuest: room,
+        serviceTable,
+        preparationNotes,
         staff: actorName,
         items,
       });
@@ -1612,6 +1627,8 @@ async function handlePATCH(request: Request) {
           staff: actorName,
           paymentMethod: 'Байшин/Зочин',
           roomOrGuest: room,
+          serviceTable,
+          preparationNotes,
           subtotal,
           discount: 0,
           originalTotal: total,
@@ -1677,23 +1694,11 @@ async function handlePATCH(request: Request) {
       : undefined;
     let resumedReceipt = false;
     if (existingReceipt) {
-      const operationStatus = getCell(existingReceipt, 'operation_status');
-      if (operationStatus === 'complete') {
-        console.info('[sales:settlement] replay-complete', {
-          requestId: normalizedClientRequestId,
-          receiptId: getCell(existingReceipt, 'receipt_id'),
-          durationMs: Date.now() - requestStartedAt,
-        });
-        return NextResponse.json({
-          success: true,
-          duplicateRequest: true,
-          receiptId: getCell(existingReceipt, 'receipt_id'),
-          settledAt: getCell(existingReceipt, 'timestamp'),
-          sessionId: getCell(existingReceipt, 'session_id'),
-          businessDate: getCell(existingReceipt, 'business_date'),
-        });
+      if (sessionOrResponse.role === 'waiter' && getCell(existingReceipt, 'staff') !== actorName) {
+        return NextResponse.json({ error: 'Энэ төлбөрийг өөр ажилтан бүртгэсэн.' }, { status: 403 });
       }
 
+      const operationStatus = getCell(existingReceipt, 'operation_status');
       const storedFingerprint = getCell(existingReceipt, 'request_fingerprint');
       if (!storedFingerprint || storedFingerprint !== requestFingerprint) {
         console.warn('[sales:settlement] replay-pending', {
@@ -1712,6 +1717,22 @@ async function handlePATCH(request: Request) {
           { status: 409 },
         );
       }
+      if (operationStatus === 'complete') {
+        console.info('[sales:settlement] replay-complete', {
+          requestId: normalizedClientRequestId,
+          receiptId: getCell(existingReceipt, 'receipt_id'),
+          durationMs: Date.now() - requestStartedAt,
+        });
+        return NextResponse.json({
+          success: true,
+          duplicateRequest: true,
+          receiptId: getCell(existingReceipt, 'receipt_id'),
+          settledAt: getCell(existingReceipt, 'timestamp'),
+          sessionId: getCell(existingReceipt, 'session_id'),
+          businessDate: getCell(existingReceipt, 'business_date'),
+        });
+      }
+
       resumedReceipt = true;
       console.info('[sales:settlement] resuming-pending', {
         requestId: normalizedClientRequestId,
@@ -1753,6 +1774,9 @@ async function handlePATCH(request: Request) {
           { status: 404 },
         );
       }
+      if (sessionOrResponse.role === 'waiter' && getCell(row, 'staff') !== actorName) {
+        return NextResponse.json({ error: 'Зөөгч зөвхөн өөрийн захиалгын төлбөрийг авна.' }, { status: 403 });
+      }
       if (getCell(row, 'paid_status').toLowerCase() !== 'unpaid') {
         return NextResponse.json(
           { error: `Sale is not an unpaid charge: ${settlementTransactionId}` },
@@ -1779,6 +1803,10 @@ async function handlePATCH(request: Request) {
             (!hasNestedPaymentArray && index === 0 ? balance : 0),
         ),
       }));
+      if (sessionOrResponse.role === 'waiter') {
+        const error = requestedPayments.map(waiterPaymentError).find(Boolean);
+        if (error) return NextResponse.json({ error }, { status: 400 });
+      }
       const invalidPayment = requestedPayments.find(
         payment =>
           !payment.paymentMethod ||
@@ -1945,6 +1973,8 @@ async function handlePATCH(request: Request) {
             staff: getCell(saleRow, 'staff'),
             paymentMethod: getCell(saleRow, 'payment_method'),
             roomOrGuest: getCell(saleRow, 'room_or_guest'),
+          serviceTable: getCell(saleRow, 'service_table'),
+          preparationNotes: getCell(saleRow, 'preparation_notes'),
             subtotal: toNumber(saleRow.get('subtotal')),
             discount: toNumber(saleRow.get('discount')),
             originalTotal: toNumber(saleRow.get('total')),

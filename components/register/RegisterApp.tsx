@@ -1,6 +1,11 @@
 "use client";
 
+import { PaymentEvidenceField } from "./PaymentEvidenceField";
+import { StaffIdentity } from "@/components/auth/StaffIdentity";
+import { NumberPad } from "@/components/input/NumberPad";
+
 import Link from "next/link";
+import { isKitchenTicketItem } from "@/lib/pos/preparation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   readOfflineCache,
@@ -21,6 +26,7 @@ import type {
 } from "@/lib/pos/types";
 import { formatMNT, formatNumber } from "@/lib/pos/utils";
 import styles from "./Pos.module.css";
+import { OrderServiceFields } from "./OrderServiceFields";
 
 type CatalogResponseItem = {
   sku: string;
@@ -38,7 +44,7 @@ type RegisterCartLine = CartLine & { category: ItemCategory };
 type BankTransferStatus = "idle" | "paid";
 
 type DayStatus = "loading" | "ready" | "saving" | "error";
-type DayModalMode = "open" | "close" | null;
+type DayModalMode = "start-service" | "open" | "close" | null;
 type VoidStatus = "idle" | "loading" | "saving" | "success" | "error";
 
 type DayTotals = {
@@ -70,6 +76,9 @@ type DaySession = {
   openedAt: string;
   openedBy: string;
   startingCash: number;
+  cashOpened?: boolean;
+  cashOpenedAt?: string;
+  cashOpenedBy?: string;
   status: "open" | "closed" | string;
   closedAt: string;
   closedBy: string;
@@ -101,6 +110,8 @@ type RecentSale = {
   refundPaymentMethod?: string;
   paidStatus: string;
   roomOrGuest: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   total: number;
   saleTotal?: number;
   paidAmount: number;
@@ -211,6 +222,7 @@ function getDaySessionSignature(session: DaySession | null) {
     session.openedAt,
     session.closedAt,
     session.startingCash,
+    session.cashOpened,
   ].join("|");
 }
 
@@ -235,6 +247,10 @@ type RegisterDraft = {
   partialPaymentAmount: number;
   partialPaymentLines: SettlementPaymentLine[];
   roomNumber: string;
+  serviceTable?: string;
+  preparationNotes?: string;
+  paymentEvidence?: string;
+  editingCharge?: UnpaidCharge | null;
 };
 
 type UnpaidCharge = {
@@ -243,6 +259,8 @@ type UnpaidCharge = {
   staff: string;
   paymentMethod: string;
   roomOrGuest: string;
+  serviceTable?: string;
+  preparationNotes?: string;
   subtotal: number;
   discount: number;
   total: number;
@@ -975,84 +993,6 @@ function printHtml(title: string, body: string, reservedWindow?: Window | false)
   return true;
 }
 
-const KITCHEN_TICKET_KEYWORDS = [
-  "food",
-  "хоол",
-  "шөл",
-  "soup",
-  "салат",
-  "salad",
-  "амттан",
-  "dessert",
-  "дессерт",
-  "десерт",
-  "тараг",
-  "yogurt",
-  "бялуу",
-  "cake",
-  "чизкейк",
-  "cheesecake",
-  "тирамису",
-  "tiramisu",
-  "панакота",
-  "panna cotta",
-  "пирог",
-  "pie",
-  "пицца",
-  "пизза",
-  "pizza",
-  "паста",
-  "pasta",
-  "калзони",
-  "calzone",
-  "лазан",
-  "lasagn",
-  "болонез",
-  "bolognese",
-  "карбонара",
-  "carbonara",
-  "сүүтэй цай",
-  "suutei tsai",
-  "milk tea",
-  "зөгийн балтай сүү",
-  "зөгийн бал",
-  "honey milk",
-  "халуун вино",
-  "халуун дарс",
-  "hot wine",
-  "mulled wine",
-  "глинтвейн",
-  "аарц",
-  "халуун шоколад",
-  "hot chocolate",
-  "какао",
-  "хачир",
-  "монгол",
-  "европ",
-  "ази",
-  "сет",
-  "set",
-];
-
-const BAR_TICKET_KEYWORDS = [
-  "чацаргана",
-  "sea buckthorn",
-  "зайрмаг",
-  "ice cream",
-  "мороженое",
-  "печень",
-  "жигнэмэг",
-  "cookie",
-  "cookies",
-  "biscuit",
-  "вафли",
-  "wafer",
-  "чихэр",
-  "candy",
-  "packaged sweet",
-  "packaged sweets",
-];
-
 function normalizeTicketText(value: unknown) {
   return String(value ?? "")
     .normalize("NFKC")
@@ -1196,16 +1136,6 @@ function filterChargeGroupsByQuery(groups: ChargeGroup[], query: string) {
   });
 }
 
-function isKitchenTicketItem(item: RegisterCartLine) {
-  const searchableText = `${normalizeTicketText(item.category)} ${normalizeTicketText(item.name)}`;
-  if (BAR_TICKET_KEYWORDS.some((keyword) => searchableText.includes(keyword))) {
-    return false;
-  }
-
-  return KITCHEN_TICKET_KEYWORDS.some((keyword) =>
-    searchableText.includes(keyword),
-  );
-}
 
 function splitPrepTicketItems(items: RegisterCartLine[]) {
   return items.reduce(
@@ -1864,23 +1794,39 @@ interface RegisterAppProps {
   businessDate: string;
   authenticatedStaffName: string;
   role: OpsRole;
+  title?: "Касс" | "Зөөгч";
+  layout?: "adaptive" | "phone";
 }
 
 export function RegisterApp({
   businessDate: initialBusinessDate,
   authenticatedStaffName,
   role,
+  title = "Касс",
+  layout = "adaptive",
 }: RegisterAppProps) {
+  const phoneLayout = layout === "phone";
+  const isWaiter = role === "waiter";
+  const modeStorageKey = isWaiter ? `waiter:mode:${authenticatedStaffName}` : REGISTER_MODE_STORAGE_KEY;
+  const draftCacheKey = isWaiter ? `waiter:draft:${authenticatedStaffName}` : REGISTER_DRAFT_CACHE_KEY;
+  const scopedCacheKey = useCallback((section: string, date?: string) =>
+    isWaiter ? `waiter:${authenticatedStaffName}:${section}:${date ?? ""}` : registerCacheKey(section, date), [isWaiter, authenticatedStaffName]);
+  const [paymentEvidence, setPaymentEvidence] = useState("");
+  const [settlementEvidence, setSettlementEvidence] = useState("");
+  const [serviceTable, setServiceTable] = useState("");
+  const [preparationNotes, setPreparationNotes] = useState("");
   const [businessDate, setBusinessDate] = useState(initialBusinessDate);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
   const [catalogMessage, setCatalogMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [numberEntry, setNumberEntry] = useState<"code" | "amount" | null>(null);
+  const [searchByCode, setSearchByCode] = useState(false);
   const [activeCategory, setActiveCategory] = useState<ItemCategory | "all">(
     "all",
   );
   const staffName = authenticatedStaffName;
-  const canManageOperations = role === "manager" || role === "owner";
+  const canManageOperations = !isWaiter && (role === "manager" || role === "owner");
   const [cart, setCart] = useState<RegisterCartLine[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>(
     PAYMENT_METHODS[0].id,
@@ -1982,7 +1928,7 @@ export function RegisterApp({
   }
 
   const loadCatalog = useCallback(async (options?: { fresh?: boolean }) => {
-    const cacheKey = registerCacheKey("catalog");
+    const cacheKey = scopedCacheKey("catalog");
     try {
       const response = await registerFetch(
         options?.fresh ? "/api/inventory?fresh=1" : "/api/inventory",
@@ -2026,10 +1972,10 @@ export function RegisterApp({
         error instanceof Error ? error.message : "Каталог татаж чадсангүй.",
       );
     }
-  }, []);
+  }, [scopedCacheKey]);
 
   const applyUnpaidCharges = useCallback((charges: UnpaidCharge[]) => {
-    const groups = buildChargeGroups(charges);
+    const groups = buildChargeGroups(isWaiter ? charges.filter(charge => charge.staff === staffName) : charges);
     const nextGroup =
       groups.find((group) => group.key === selectedChargeGroupKeyRef.current) ??
       groups[0] ??
@@ -2041,7 +1987,7 @@ export function RegisterApp({
     setSelectedChargeIds(
       nextGroup?.charges.map((charge) => charge.transactionId) ?? [],
     );
-  }, []);
+  }, [isWaiter, staffName]);
 
   const loadLiveCharges = useCallback(async () => {
     try {
@@ -2057,11 +2003,11 @@ export function RegisterApp({
       applyUnpaidCharges(payload.orders);
       setChargesStatus("ready");
       setChargesMessage("");
-      writeOfflineCache(registerCacheKey("charges"), payload.orders);
+      writeOfflineCache(scopedCacheKey("charges"), payload.orders);
     } catch {
       // Periodic Sheets synchronization remains the authoritative fallback.
     }
-  }, [applyUnpaidCharges]);
+  }, [applyUnpaidCharges, scopedCacheKey]);
 
   const applySalesHistory = useCallback((history: RecentSale[]) => {
     setHistorySales(history);
@@ -2078,7 +2024,7 @@ export function RegisterApp({
       setChargesStatus("loading");
       setChargesMessage("");
     }
-    const cacheKey = registerCacheKey("charges");
+    const cacheKey = scopedCacheKey("charges");
 
     try {
       const response = await registerFetch(
@@ -2117,7 +2063,7 @@ export function RegisterApp({
         error instanceof Error ? error.message : "Өр төлбөрүүдийг авч чадсангүй",
       );
     }
-  }, [applyUnpaidCharges]);
+  }, [applyUnpaidCharges, scopedCacheKey]);
 
   const loadSalesHistory = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -2125,7 +2071,7 @@ export function RegisterApp({
       setHistoryStatus("loading");
       setHistoryMessage("");
     }
-    const cacheKey = registerCacheKey("history");
+    const cacheKey = scopedCacheKey("history");
 
     try {
       const params = new URLSearchParams();
@@ -2164,7 +2110,7 @@ export function RegisterApp({
         error instanceof Error ? error.message : "Төлөгдсөн түүх авч чадсангүй",
       );
     }
-  }, [applySalesHistory]);
+  }, [applySalesHistory, scopedCacheKey]);
 
   const loadSharedSalesData = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -2174,8 +2120,8 @@ export function RegisterApp({
       setChargesMessage("");
       setHistoryMessage("");
     }
-    const chargesCacheKey = registerCacheKey("charges");
-    const historyCacheKey = registerCacheKey("history");
+    const chargesCacheKey = scopedCacheKey("charges");
+    const historyCacheKey = scopedCacheKey("history");
 
     try {
       const params = new URLSearchParams();
@@ -2230,7 +2176,7 @@ export function RegisterApp({
       setChargesMessage(message);
       setHistoryMessage(message);
     }
-  }, [applySalesHistory, applyUnpaidCharges]);
+  }, [applySalesHistory, applyUnpaidCharges, scopedCacheKey]);
 
   const loadDayStatus = useCallback(async (options?: { fresh?: boolean; silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -2238,10 +2184,11 @@ export function RegisterApp({
       setDayStatus("loading");
       setDayMessage("");
     }
-    const cacheKey = registerCacheKey("day", businessDate);
+    const cacheKey = scopedCacheKey("day", businessDate);
 
     try {
       const params = new URLSearchParams({ businessDate });
+      if (isWaiter) params.set("sessionOnly", "1");
       if (options?.fresh) params.set("fresh", "1");
       const response = await registerFetch(
         `/api/day?${params.toString()}`,
@@ -2305,7 +2252,7 @@ export function RegisterApp({
         error instanceof Error ? error.message : "Өдрийн төлөв авч чадсангүй",
       );
     }
-  }, [businessDate]);
+  }, [businessDate, scopedCacheKey, isWaiter]);
 
   const loadDaySession = useCallback(async (options?: { fresh?: boolean }) => {
     if (dayStatus === "saving") return;
@@ -2339,7 +2286,8 @@ export function RegisterApp({
 
       if (changed) {
         setDayModalMode((current) => {
-          if (current === "open" && nextSession?.status === "open") return null;
+          if (current === "start-service" && nextSession?.status === "open") return null;
+          if (current === "open" && nextSession?.status === "open" && nextSession.cashOpened !== false) return null;
           if (current === "close" && nextSession?.status !== "open") return null;
           return current;
         });
@@ -2501,13 +2449,13 @@ export function RegisterApp({
 
   useEffect(() => {
     const requestedMode = new URLSearchParams(window.location.search).get("tab");
-    const storedMode = isRegisterMode(requestedMode) ? requestedMode : window.localStorage.getItem(REGISTER_MODE_STORAGE_KEY);
+    const storedMode = isRegisterMode(requestedMode) ? requestedMode : window.localStorage.getItem(modeStorageKey);
     const storedCategory = window.localStorage.getItem(
       REGISTER_CATEGORY_STORAGE_KEY,
     );
 
     const readyTimer = window.setTimeout(() => {
-      if (isRegisterMode(storedMode)) {
+      if (isRegisterMode(storedMode) && (!isWaiter || storedMode !== "day-close")) {
         setRegisterMode(storedMode);
       }
       if (storedCategory) {
@@ -2517,12 +2465,12 @@ export function RegisterApp({
     }, 0);
 
     return () => window.clearTimeout(readyTimer);
-  }, []);
+  }, [modeStorageKey, isWaiter]);
 
   useEffect(() => {
     if (!uiPreferencesLoadedRef.current) return;
-    window.localStorage.setItem(REGISTER_MODE_STORAGE_KEY, registerMode);
-  }, [registerMode]);
+    window.localStorage.setItem(modeStorageKey, registerMode);
+  }, [registerMode, modeStorageKey]);
 
   useEffect(() => {
     if (!uiPreferencesLoadedRef.current) return;
@@ -2530,22 +2478,26 @@ export function RegisterApp({
   }, [activeCategory]);
 
   useEffect(() => {
-    const cached = readOfflineCache<RegisterDraft>(REGISTER_DRAFT_CACHE_KEY);
+    const cached = readOfflineCache<RegisterDraft>(draftCacheKey);
     const draft = cached?.value;
     const restoreTimer = window.setTimeout(() => {
       if (draft && Array.isArray(draft.cart) && draft.cart.length > 0) {
         setCart(draft.cart);
+        setServiceTable(draft.serviceTable ?? "");
+        setPreparationNotes(draft.preparationNotes ?? "");
+        setEditingCharge(draft.editingCharge ?? null);
         if (isPaymentMethod(draft.paymentMethod)) {
           setPaymentMethod(draft.paymentMethod);
         }
         setCashReceived(Number(draft.cashReceived) || 0);
-        setCardTerminalApproved(Boolean(draft.cardTerminalApproved));
+        setCardTerminalApproved(false);
         if (isSettlementMethod(draft.partialPaymentMethod)) {
           setPartialPaymentMethod(draft.partialPaymentMethod);
         }
         if (isPartialPaymentOption(draft.partialPaymentOption)) {
           setPartialPaymentOption(draft.partialPaymentOption);
         }
+        setPaymentEvidence(draft.paymentEvidence ?? "");
         setPartialPaymentAmount(Number(draft.partialPaymentAmount) || 0);
         setPartialPaymentLines(
           Array.isArray(draft.partialPaymentLines) ? draft.partialPaymentLines : [],
@@ -2560,19 +2512,23 @@ export function RegisterApp({
     }, 0);
 
     return () => window.clearTimeout(restoreTimer);
-  }, []);
+  }, [draftCacheKey]);
 
   useEffect(() => {
     if (!draftLoadedRef.current) return;
 
-    if (editingCharge || cart.length === 0) {
-      removeOfflineCache(REGISTER_DRAFT_CACHE_KEY);
+    if (cart.length === 0) {
+      removeOfflineCache(draftCacheKey);
       return;
     }
 
-    writeOfflineCache<RegisterDraft>(REGISTER_DRAFT_CACHE_KEY, {
+    writeOfflineCache<RegisterDraft>(draftCacheKey, {
       cart,
       staffName,
+      paymentEvidence,
+      serviceTable,
+      preparationNotes,
+      editingCharge,
       paymentMethod,
       cashReceived,
       cardTerminalApproved,
@@ -2583,6 +2539,10 @@ export function RegisterApp({
       roomNumber,
     });
   }, [
+    draftCacheKey,
+    paymentEvidence,
+    serviceTable,
+    preparationNotes,
     cardTerminalApproved,
     cart,
     cashReceived,
@@ -2658,6 +2618,7 @@ export function RegisterApp({
   const cashShort = Math.max(cartTotal - cashReceived, 0);
   const changeDue = Math.max(cashReceived - cartTotal, 0);
   const roomRequired = paymentMethod === "room";
+  const chargeReferenceValue = roomNumber.trim() || (serviceTable.trim() ? `Ширээ ${serviceTable.trim()}` : "");
   const bankTransferRequired = paymentMethod === "bank";
   const partialRequired = paymentMethod === "partial";
   const bankTransferConfirmed = bankTransferStatus === "paid";
@@ -2681,6 +2642,8 @@ export function RegisterApp({
     !partialDraftOverRemaining;
   const dayOpen = daySession?.status === "open";
   const dayClosed = daySession?.status === "closed";
+  const cashOpeningPending = dayOpen && daySession?.cashOpened === false;
+  const dayModalTitle = dayModalMode === "start-service" ? "Үйлчилгээ эхлүүлэх" : dayModalMode === "open" ? "Кассын эхлэх мөнгө" : "Өдрийн хаалт";
   const dayNonCashPaymentTotal =
     dayTotals.cardPaymentTotal + dayTotals.qpayPaymentTotal;
   const dayCashDifference = dayCashAmount - dayTotals.expectedCash;
@@ -2707,9 +2670,10 @@ export function RegisterApp({
   const filteredHistorySales = useMemo(() => {
     const { generalTerms, roomTerms } = parseRegisterSearchQuery(historyQuery);
 
-    if (generalTerms.length === 0 && roomTerms.length === 0) return historySales;
+    const visibleHistory = isWaiter ? historySales.filter(sale => sale.staff === staffName) : historySales;
+    if (generalTerms.length === 0 && roomTerms.length === 0) return visibleHistory;
 
-    return historySales.filter((sale) => {
+    return visibleHistory.filter((sale) => {
       const searchableText = getHistorySearchText(sale);
       return (
         generalTerms.every((term) => searchableText.includes(term)) &&
@@ -2718,13 +2682,13 @@ export function RegisterApp({
         )
       );
     });
-  }, [historyQuery, historySales]);
+  }, [historyQuery, historySales, isWaiter, staffName]);
   const closeKey = (session: DaySession) => session.sessionId || `${session.businessDate}-${session.closedAt}`;
   const selectedClose = dayCloseHistory.find((session) => closeKey(session) === selectedCloseKey) ?? null;
   const activeCloseKey = selectedClose ? closeKey(selectedClose) : "current";
   function selectCloseDetails(key: string) {
     setSelectedCloseKey(key);
-    if (window.innerWidth < 1024) {
+    if (phoneLayout || window.innerWidth < 1024) {
       requestAnimationFrame(() => document.getElementById("register-cart")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }
   }
@@ -2758,18 +2722,18 @@ export function RegisterApp({
     (!isEditingCharge || roomRequired) &&
     (!cashRequired || cashShort === 0) &&
     (!cardRequired || cardTerminalApproved) &&
-    (!roomRequired || roomNumber.trim().length > 0) &&
+    (!roomRequired || chargeReferenceValue.length > 0) &&
     (!bankTransferRequired || bankTransferConfirmed) &&
     (!partialRequired ||
       (partialPaymentLines.length > 0 &&
         partialPaymentAmount === 0 &&
-        (partialRemaining === 0 || roomNumber.trim().length > 0)));
+        (partialRemaining === 0 || chargeReferenceValue.length > 0)));
   const completeSaleLabel = saleStatus === "saving"
     ? "Хадгалж байна"
     : isEditingCharge
       ? "Засвар хадгалах"
     : !dayOpen
-      ? "Өдрөө нээнэ үү"
+      ? isWaiter ? "Эхлээд үйлчилгээ эхлүүлнэ үү" : "Өдрөө нээнэ үү"
     : roomRequired
       ? "Байшин/зочинд бичих"
     : partialRequired
@@ -2779,7 +2743,7 @@ export function RegisterApp({
           ? "Мөр нэмэх эсвэл арилгах"
           : partialRemaining === 0
             ? "Төлбөр хаах"
-        : roomNumber.trim().length === 0
+        : chargeReferenceValue.length === 0
           ? "Үлдэгдэл бичих хүнээ оруулна уу"
           : "Хэсэгчилсэн хадгалах"
       : cardRequired
@@ -2792,8 +2756,8 @@ export function RegisterApp({
           : "Данс шалгаж баталгаажуулна уу"
         : "Төлбөр авах";
   const chargeGroups = useMemo(
-    () => buildChargeGroups(unpaidCharges),
-    [unpaidCharges],
+    () => buildChargeGroups(isWaiter ? unpaidCharges.filter(charge => charge.staff === staffName) : unpaidCharges),
+    [unpaidCharges, isWaiter, staffName],
   );
   const filteredChargeGroups = useMemo(
     () => filterChargeGroupsByQuery(chargeGroups, chargesQuery),
@@ -2933,6 +2897,9 @@ export function RegisterApp({
   }
 
   function clearCurrentSale() {
+    setPaymentEvidence("");
+    setServiceTable("");
+    setPreparationNotes("");
     setCart([]);
     setCashReceived(0);
     setRoomNumber("");
@@ -3099,6 +3066,9 @@ export function RegisterApp({
   }
 
   function openDayModal(mode: Exclude<DayModalMode, null>) {
+    if (isWaiter && mode === "open") mode = "start-service";
+    if (isWaiter && mode !== "start-service") return;
+    if (mode === "close" && cashOpeningPending) mode = "open";
     if (mode === "close" && !canManageOperations) {
       setDayStatus("error");
       setDayMessage("Өдрийн хаалтыг зөвхөн менежер эсвэл эзэмшигч хийнэ.");
@@ -3107,7 +3077,15 @@ export function RegisterApp({
     setDayModalMode(mode);
     setDayStatus("ready");
     setDayMessage("");
-    setDayNotes("");
+    setDayNotes(
+      mode === "start-service"
+        ? "Өдрийн үйлчилгээ эхлүүлэв."
+        : mode === "open"
+          ? cashOpeningPending
+            ? "Кассын эхлэх үлдэгдлийг тоолж баталгаажуулав."
+            : "Кассын эхлэх үлдэгдлийг тоолж, өдөр нээв."
+          : "",
+    );
     setDayCashAmount(mode === "open" ? daySession?.startingCash ?? 0 : 0);
   }
 
@@ -3226,8 +3204,8 @@ export function RegisterApp({
       setDayStatus("ready");
       pendingDayRequestRef.current = null;
       setDayMessage(
-        actionMode === "open"
-          ? "Өдөр нээгдлээ"
+        actionMode !== "close"
+          ? actionMode === "start-service" ? "Үйлчилгээ эхэллээ" : "Кассын эхлэх мөнгө баталгаажлаа"
           : [
               "Өдрийн хаалт хадгалагдлаа",
               closeReportPrinted
@@ -3393,8 +3371,9 @@ export function RegisterApp({
   }
 
   function selectRegisterMode(mode: RegisterMode) {
+    if (isWaiter && mode === "day-close") return;
     setMobileCartOpen(false);
-    if (mode !== "sale" && editingCharge) {
+    if (!isWaiter && mode !== "sale" && editingCharge) {
       setEditingCharge(null);
       setCart([]);
       setCashReceived(0);
@@ -3457,6 +3436,9 @@ export function RegisterApp({
   }
 
   function startAdditionalCharge(group: ChargeGroup) {
+    if (cart.length > 0 && !window.confirm("Одоогийн нооргийг орхиж нэмэлт захиалга эхлүүлэх үү?")) return;
+    setServiceTable(group.charges[0]?.serviceTable ?? "");
+    setPreparationNotes("");
     setRegisterMode("sale");
     setEditingCharge(null);
     setPaymentMethod("room");
@@ -3505,6 +3487,8 @@ export function RegisterApp({
   }
 
   async function startEditingCharge(charge: UnpaidCharge) {
+    if (isWaiter && charge.staff !== staffName) return;
+    if (cart.length > 0 && !window.confirm("Одоогийн нооргийг орхиж захиалга засах уу?")) return;
     if (charge.paidAmount > 0) {
       setSettlementStatus("error");
       setSettlementMessage(
@@ -3537,6 +3521,8 @@ export function RegisterApp({
       );
 
       setEditingCharge(detailedCharge);
+      setServiceTable(detailedCharge.serviceTable ?? "");
+      setPreparationNotes(detailedCharge.preparationNotes ?? "");
       setCart(editLines);
       setPaymentMethod("room");
       setRoomNumber(detailedCharge.roomOrGuest || charge.roomOrGuest);
@@ -3646,6 +3632,7 @@ export function RegisterApp({
   }
 
   function resetSettlementPaymentState() {
+    setSettlementEvidence("");
     setSettlementLines([]);
     setSettlementStatus("idle");
     setSettlementMessage("");
@@ -3779,9 +3766,14 @@ export function RegisterApp({
       settlementRequestInFlightRef.current
     ) return;
     if (settlementLines.length === 0) return;
+    if (isWaiter && settlementLines.some(line => line.method !== "cash") && !settlementEvidence.trim()) {
+      setSettlementStatus("error");
+      setSettlementMessage("Терминал / шилжүүлгийн баримтын дугаарыг бичнэ үү.");
+      return;
+    }
 
     settlementRequestInFlightRef.current = true;
-    const shouldAutoPrintSettlementReceipt = settlementLines.length > 0;
+    const shouldAutoPrintSettlementReceipt = !isWaiter && settlementLines.length > 0;
     const receiptWindow = shouldAutoPrintSettlementReceipt
       ? openPrintWindow()
       : false;
@@ -3802,6 +3794,7 @@ export function RegisterApp({
           cashReceived: number;
           changeDue: number;
           qpayInvoiceId: string;
+          notes?: string;
         }>
       >();
       const remainingByTransaction = selectedCharges.map((charge) => ({
@@ -3825,6 +3818,7 @@ export function RegisterApp({
             cashReceived: tenderDetailsRecorded ? 0 : line.cashReceived,
             changeDue: tenderDetailsRecorded ? 0 : line.changeDue,
             qpayInvoiceId: line.qpayInvoiceId,
+            notes: line.method !== "cash" ? settlementEvidence.trim() || undefined : undefined,
           });
           tenderDetailsRecorded = true;
           paymentsByTransaction.set(item.charge.transactionId, payments);
@@ -3940,6 +3934,7 @@ export function RegisterApp({
         ].filter(Boolean).join(" · "),
       );
       setSettlementLines([]);
+      setSettlementEvidence("");
       resetSettlementDraft();
       await loadSharedSalesData({ fresh: true });
     } catch (error) {
@@ -4000,7 +3995,7 @@ export function RegisterApp({
       includeBarOtherBill: true,
       paymentLabel: "Төлбөр хүлээгдэж байна",
       staffName,
-      roomNumber: roomNumber.trim(),
+      roomNumber: chargeReferenceValue,
       cashReceived: 0,
       changeDue: 0,
       qpayInvoiceId: "",
@@ -4060,7 +4055,7 @@ export function RegisterApp({
 
   async function saveEditedCharge() {
     if (!editingCharge || saleStatus === "saving") return;
-    const chargeReference = roomNumber.trim();
+    const chargeReference = chargeReferenceValue;
 
     if (!chargeReference) {
       setSaleStatus("error");
@@ -4081,6 +4076,8 @@ export function RegisterApp({
     const requestFingerprint = JSON.stringify({
       transactionId: editingCharge.transactionId,
       room: chargeReference,
+      serviceTable,
+      preparationNotes,
       total: cartTotal,
       items: editItems,
     });
@@ -4099,6 +4096,8 @@ export function RegisterApp({
           transactionId: editingCharge.transactionId,
           staffName,
           room: chargeReference,
+      serviceTable,
+      preparationNotes,
           total: cartTotal,
           items: editItems,
           clientRequestId: pendingEditRequest.requestId,
@@ -4116,7 +4115,11 @@ export function RegisterApp({
       pendingEditRequestRef.current = null;
       selectedChargeGroupKeyRef.current = getChargeReferenceKey(chargeReference);
       setEditingCharge(null);
+      setPaymentEvidence("");
       setCart([]);
+      setServiceTable("");
+      setPreparationNotes("");
+      setMobileCartOpen(false);
       setCashReceived(0);
       setCardTerminalApproved(false);
       setRoomNumber("");
@@ -4165,7 +4168,7 @@ export function RegisterApp({
       setSaleMessage("Картын терминал баталгаажсан эсэхийг тэмдэглэнэ үү");
       return;
     }
-    if (roomRequired && roomNumber.trim().length === 0) {
+    if (roomRequired && chargeReferenceValue.length === 0) {
       setSaleStatus("error");
       setSaleMessage("Байшин, нэр эсвэл утас оруулна уу");
       return;
@@ -4185,16 +4188,22 @@ export function RegisterApp({
       setSaleMessage("Бичсэн дүнгээ Мөр нэмэхээр баталгаажуулна уу");
       return;
     }
-    if (partialRequired && partialRemaining > 0 && roomNumber.trim().length === 0) {
+    if (partialRequired && partialRemaining > 0 && chargeReferenceValue.length === 0) {
       setSaleStatus("error");
       setSaleMessage("Үлдэгдэл бичих байшин, нэр эсвэл утас оруулна уу");
       return;
     }
 
+    if (isWaiter && (cardRequired || bankTransferRequired || (partialRequired && partialPaymentLines.some(line => line.method !== "cash"))) && !paymentEvidence.trim()) {
+      setSaleStatus("error");
+      setSaleMessage("Терминал / шилжүүлгийн баримтын дугаарыг бичнэ үү.");
+      return;
+    }
+
     const chargeReference =
       roomRequired || (partialRequired && partialRemaining > 0)
-        ? roomNumber.trim()
-        : "";
+        ? chargeReferenceValue
+        : roomNumber.trim();
     const willRecordPayment =
       (!roomRequired && !partialRequired) ||
       (partialRequired && partialPaymentLineTotal > 0);
@@ -4214,7 +4223,7 @@ export function RegisterApp({
       qpayInvoiceId: "",
     });
     const salePrintWindow =
-      shouldAutoPrintOrder || willRecordPayment ? openPrintWindow() : false;
+      !isWaiter && (shouldAutoPrintOrder || willRecordPayment) ? openPrintWindow() : false;
 
     setSaleStatus("saving");
     setSaleMessage("");
@@ -4241,7 +4250,7 @@ export function RegisterApp({
           cashReceived: line.cashReceived,
           changeDue: line.changeDue,
           qpayInvoiceId: line.qpayInvoiceId,
-          notes: `Initial partial sale payment; balance ${partialRemaining}`,
+          notes: line.method !== "cash" ? paymentEvidence.trim() || undefined : `Initial partial sale payment; balance ${partialRemaining}`,
         }))
       : undefined;
     const saleRequestPayload = {
@@ -4255,13 +4264,21 @@ export function RegisterApp({
       })),
       method: completedSale.paymentLabel,
       room: chargeReference,
+      serviceTable,
+      preparationNotes,
       staffName,
       paidStatus: roomRequired || partialSaleHasBalance ? "unpaid" : "paid",
       total: completedSale.total,
       cashReceived: completedSale.cashReceived,
       changeDue: completedSale.changeDue,
       qpayInvoiceId: completedSale.qpayInvoiceId,
-      payments: partialPayments,
+      payments: partialPayments ?? (isWaiter && !roomRequired ? [{
+        paymentMethod: selectedPayment.label,
+        amount: completedSale.total,
+        cashReceived: completedSale.cashReceived,
+        changeDue: completedSale.changeDue,
+        notes: cardRequired || bankTransferRequired ? paymentEvidence.trim() : undefined,
+      }] : undefined),
     };
     const requestFingerprint = JSON.stringify(saleRequestPayload);
     const pendingRequest =
@@ -4328,6 +4345,9 @@ export function RegisterApp({
       pendingSaleRequestRef.current = null;
 
       setCart([]);
+      setServiceTable("");
+      setPreparationNotes("");
+      setMobileCartOpen(false);
       setCashReceived(0);
       setCardTerminalApproved(false);
       setRoomNumber("");
@@ -4338,7 +4358,7 @@ export function RegisterApp({
       }
       setLastSale(completedSale);
       setSaleSequence(nextSaleSequence);
-      const documentsPrinted = printOrderDocuments(
+      const documentsPrinted = !isWaiter && printOrderDocuments(
         completedSale,
         Boolean(responseData?.receiptId),
         salePrintWindow,
@@ -4367,7 +4387,7 @@ export function RegisterApp({
           partialSaleHasBalance
             ? `${chargeReference} дээр ${formatMNT(partialRemaining)} үлдэгдэл бичигдлээ`
             : "",
-          documentsPrinted
+          isWaiter ? "Захиалга хадгалагдлаа." : documentsPrinted
             ? responseData?.receiptId
               ? "Захиалга болон төлбөрийн баримт хэвлэгдэж байна"
               : "Гал тогоо / бар захиалга хэвлэгдэж байна"
@@ -4388,11 +4408,12 @@ export function RegisterApp({
   }
 
   return (
-    <div className={`${styles.pos} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
+    <div data-register-mode={registerMode} data-cart-open={mobileCartOpen}
+      className={`${styles.pos} ${phoneLayout ? styles.phone : ""} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
       <div className={styles.topbar}><span>Dalai Eej</span><span>Operations / POS · {businessDate}</span></div>
       <header className="sticky top-0 z-30 flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-3 py-3 md:static md:px-4">
-        <div>
-          <h1 className="text-lg font-bold leading-tight">Касс</h1>
+        <div className={styles.pageHeading}>
+          <h1 className="text-lg font-bold leading-tight">{title}</h1>
           <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
         </div>
 
@@ -4438,6 +4459,7 @@ export function RegisterApp({
           <button
             type="button"
             onClick={() => selectRegisterMode("day-close")}
+            disabled={isWaiter}
             aria-pressed={registerMode === "day-close"}
             className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
               registerMode === "day-close"
@@ -4463,24 +4485,30 @@ export function RegisterApp({
             {dayStatus === "loading"
               ? "Өдөр..."
               : dayOpen
-                ? `Нээлттэй · ${formatMNT(daySession?.startingCash ?? 0)}`
+                ? isWaiter ? "Үйлчилгээ нээлттэй" : cashOpeningPending ? "Үйлчилгээ нээлттэй · Касс баталгаажаагүй" : `Нээлттэй · ${formatMNT(daySession?.startingCash ?? 0)}`
                 : dayClosed
                   ? "Хаалттай"
                   : "Өдөр нээгээгүй"}
           </div>
-          <button
+          {isWaiter && !dayOpen && <button
+            type="button"
+            onClick={() => openDayModal("start-service")}
+            disabled={dayClosed || dayStatus === "saving" || dayStatus === "loading"}
+            className="min-h-11 border px-3 text-sm font-bold disabled:opacity-50"
+          >Үйлчилгээ эхлүүлэх</button>}
+          {!isWaiter && <button
             type="button"
             onClick={() => openDayModal(dayOpen ? "close" : "open")}
-            disabled={dayOpen && !canManageOperations}
-            title={dayOpen && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
+            disabled={dayOpen && !cashOpeningPending && !canManageOperations}
+            title={dayOpen && !cashOpeningPending && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
             className={`h-10 rounded-md px-3 text-sm font-black text-white ${
               dayOpen
                 ? "bg-[#b91c1c] hover:bg-[#991b1b]"
                 : "bg-[#047857] hover:bg-[#065f46]"
             } disabled:bg-[#94a3b8]`}
           >
-            {dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
-          </button>
+            {cashOpeningPending ? "Касс нээх" : dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
+          </button>}
           {canManageOperations && (
             <button
               type="button"
@@ -4490,9 +4518,9 @@ export function RegisterApp({
               Буцаалт
             </button>
           )}
-          <span className="hidden h-10 items-center rounded-md border border-[#cbd5e1] bg-[#f8fafc] px-3 text-sm font-black text-[#334155] sm:flex">
+          {isWaiter || title === "Зөөгч" ? <StaffIdentity name={staffName} /> : <span className="hidden h-10 items-center rounded-md border border-[#cbd5e1] bg-[#f8fafc] px-3 text-sm font-black text-[#334155] sm:flex">
             {staffName}
-          </span>
+          </span>}
           <button
             type="button"
             onClick={() => {
@@ -4503,16 +4531,16 @@ export function RegisterApp({
             aria-label="Мэдээлэл шинэчлэх"
             className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
           >
-            <span className="md:hidden" aria-hidden="true">↻</span>
-            <span className="hidden md:inline">Шинэчлэх</span>
+            <span className={phoneLayout ? "" : "md:hidden"} aria-hidden="true">↻</span>
+            {!phoneLayout && <span className="hidden md:inline">Шинэчлэх</span>}
           </button>
-          <button
+          {!phoneLayout && <button
             type="button"
             onClick={toggleFullscreen}
             className="hidden h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc] sm:block"
           >
             {isFullscreen ? "Цонхтой" : "Бүтэн дэлгэц"}
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -4566,11 +4594,18 @@ export function RegisterApp({
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
                       type="search"
+                      inputMode={searchByCode ? "none" : "search"}
+                      enterKeyHint="search"
+                      onFocus={() => setNumberEntry(searchByCode ? "code" : null)}
+                      onKeyDown={event => { if (event.key === "Escape" || event.key === "Enter") setNumberEntry(null); }}
                       placeholder="Бараа эсвэл код хайх"
                       className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-base font-semibold text-[#111827] outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
                   </label>
-
+                  <button type="button" aria-pressed={searchByCode} className="h-11 border px-3"
+                    onClick={() => { setSearchByCode(!searchByCode); setNumberEntry(searchByCode ? null : "code"); }}>
+                    {searchByCode ? "Нэрээр хайх" : "Кодоор хайх"}
+                  </button>
                   <div className="flex max-w-full gap-2 overflow-x-auto">
                     {categories.map((category) => (
                       <button
@@ -4595,6 +4630,10 @@ export function RegisterApp({
                   </div>
                 </div>
 
+                {numberEntry === "code" && <NumberPad label="Барааны код оруулах тоон гар"
+                  value={query} onChange={setQuery} onDone={() => setNumberEntry(null)} />}
+
+                {!isWaiter && (
                 <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px_120px]">
                   <label>
                     <span className="sr-only">Гараар нэмэх нэр</span>
@@ -4602,6 +4641,9 @@ export function RegisterApp({
                       value={customItemName}
                       onChange={(event) => setCustomItemName(event.target.value)}
                       type="text"
+                      inputMode="text"
+                      enterKeyHint="next"
+                      onFocus={() => setNumberEntry(null)}
                       placeholder="Гараар нэмэх: нэр / тайлбар"
                       className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold text-[#111827] outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
@@ -4616,7 +4658,9 @@ export function RegisterApp({
                         setCustomAmountInput(event.target.value)
                       }
                       type="text"
-                      inputMode="numeric"
+                      inputMode="none"
+                      onFocus={() => setNumberEntry("amount")}
+                      onKeyDown={event => { if (event.key === "Escape" || event.key === "Enter") setNumberEntry(null); }}
                       placeholder="Дүн"
                       className="h-10 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-right text-sm font-semibold text-[#111827] tabular-nums outline-none placeholder:text-[#9ca3af] focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                     />
@@ -4630,6 +4674,10 @@ export function RegisterApp({
                     Нэмэх
                   </button>
                 </div>
+                )}
+                {!isWaiter && numberEntry === "amount" && <NumberPad label="Гараар нэмэх дүнгийн тоон гар"
+                  value={customItemAmount ? String(customItemAmount) : ""} onChange={setCustomAmountInput}
+                  maxLength={9} onDone={() => setNumberEntry(null)} />}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 md:pb-3">
@@ -4689,7 +4737,7 @@ export function RegisterApp({
                                 Амрагч {formatNumber(item.guestPrice ?? item.price)}
                               </button>
                             ) : null}
-                            {hasStaffPrice(item) ? (
+                            {!isWaiter && hasStaffPrice(item) ? (
                               <button
                                 type="button"
                                 onClick={() => addToCart(item, "staff")}
@@ -4851,7 +4899,7 @@ export function RegisterApp({
                   <div>
                     <h2 className="text-base font-black">Төлөгдсөн түүх</h2>
                     <p className="text-xs font-semibold text-[#6b7280]">
-                      Бүх өдрийн борлуулалт болон өр төлөлт, баримт дахин хэвлэх
+                      {isWaiter ? "Миний бүртгэсэн төлбөрүүд" : "Бүх өдрийн борлуулалт болон өр төлөлт, баримт дахин хэвлэх"}
                     </p>
                   </div>
                   <button
@@ -5064,7 +5112,7 @@ export function RegisterApp({
                       Эхлэх бэлэн мөнгө
                     </p>
                     <p className="mt-1 text-xl font-black">
-                      {formatMNT(daySession?.startingCash ?? 0)}
+                      {cashOpeningPending ? "Баталгаажаагүй" : formatMNT(daySession?.startingCash ?? 0)}
                     </p>
                   </div>
                   <div className="rounded-md border border-[#d1d5db] bg-white p-3">
@@ -5078,7 +5126,7 @@ export function RegisterApp({
                 </div>
 
                 <div className="mt-4 rounded-md border border-[#bfdbfe] bg-[#eff6ff] px-3 py-3 text-sm font-semibold text-[#1e40af]">
-                  {dayOpen
+                  {cashOpeningPending ? "Үйлчилгээ эхэлсэн. Хаалт хийхээс өмнө кассын эхлэх мөнгийг баталгаажуулна уу." : dayOpen
                     ? "Тоолсон бэлэн мөнгөө оруулж, зөрүү гарвал тайлбар бичээд хаалтыг хадгална."
                     : "Өдрийг нээсний дараа борлуулалт болон хаалтын дүн энд харагдана."}
                 </div>
@@ -5103,16 +5151,16 @@ export function RegisterApp({
                   disabled={
                     dayStatus === "loading" ||
                     dayStatus === "saving" ||
-                    (dayOpen && !canManageOperations)
+                    (dayOpen && !cashOpeningPending && !canManageOperations)
                   }
-                  title={dayOpen && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
+                  title={dayOpen && !cashOpeningPending && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
                   className={`h-14 w-full rounded-md text-base font-black text-white disabled:bg-[#9ca3af] ${
                     dayOpen
                       ? "bg-[#b91c1c] hover:bg-[#991b1b]"
                       : "bg-[#047857] hover:bg-[#065f46]"
                   }`}
                 >
-                  {dayOpen ? "Өдрийн хаалт хийх" : "Өдөр нээх"}
+                  {cashOpeningPending ? "Касс нээх" : dayOpen ? "Өдрийн хаалт хийх" : "Өдөр нээх"}
                 </button>
               </div>
               </>
@@ -5123,7 +5171,7 @@ export function RegisterApp({
           <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-[#d1d5db] px-4 py-2">
             <div className="min-w-0">
               <h2 className="truncate text-base font-bold">
-                {isEditingCharge ? "Өрийн захиалга засах" : "Одоогийн борлуулалт"}
+                {isEditingCharge ? "Захиалга засах" : "Одоогийн борлуулалт"}
               </h2>
               {editingCharge && (
                 <p className="truncate text-xs font-bold text-[#6b7280]">
@@ -5143,7 +5191,7 @@ export function RegisterApp({
               <button
                 type="button"
                 onClick={() => setMobileCartOpen(false)}
-                className="rounded-md bg-[#111827] px-3 py-2 text-sm font-black text-white md:hidden"
+                className={`rounded-md bg-[#111827] px-3 py-2 text-sm font-black text-white ${phoneLayout ? "" : "md:hidden"}`}
                 aria-label="Сагс хаах"
               >
                 Хаах
@@ -5152,6 +5200,7 @@ export function RegisterApp({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
+            <OrderServiceFields serviceTable={serviceTable} preparationNotes={preparationNotes} onTableChange={setServiceTable} onNotesChange={setPreparationNotes} />
             {cart.length === 0 ? (
               <div className="flex h-full items-center justify-center px-6 text-center text-sm font-medium text-[#6b7280]">
                 Бараа сонгоно уу
@@ -5253,6 +5302,10 @@ export function RegisterApp({
               ))}
             </div>
 
+            {(cardRequired || bankTransferRequired || (partialRequired && partialPaymentLines.some(line => line.method !== "cash"))) && (
+              <PaymentEvidenceField value={paymentEvidence} onChange={setPaymentEvidence} />
+            )}
+
             {cashRequired && (
               <div className="mb-2 rounded-md border border-[#cbd5e1] bg-[#f8fafc] p-2">
                 <div className="mb-1.5 grid grid-cols-2 gap-2">
@@ -5336,7 +5389,7 @@ export function RegisterApp({
                         : "bg-white text-[#6b7280]"
                     }`}
                   >
-                    {cardTerminalApproved ? "Баталгаажсан" : "Хүлээгдэж байна"}
+                    {cardTerminalApproved ? "Ажилтан тэмдэглэсэн" : "Хүлээгдэж байна"}
                   </span>
                 </div>
                 <button
@@ -5416,7 +5469,7 @@ export function RegisterApp({
                         : "bg-white text-[#6b7280]"
                     }`}
                   >
-                    {bankTransferConfirmed ? "Баталгаажсан" : "Мобайл банк шалгана"}
+                    {bankTransferConfirmed ? "Ажилтан шалгасан" : "Мобайл банк шалгана"}
                   </span>
                 </div>
                 <button
@@ -5789,7 +5842,7 @@ export function RegisterApp({
                                   >
                                     Засах
                                   </button>
-                                  <button
+                                  {!isWaiter && <button
                                     type="button"
                                     onClick={() => void deleteCharge(charge)}
                                     disabled={
@@ -5802,7 +5855,7 @@ export function RegisterApp({
                                     {deletingChargeId === charge.transactionId
                                       ? "Устгаж..."
                                       : "Устгах"}
-                                  </button>
+                                  </button>}
                                 </div>
                               </div>
                             </div>
@@ -6031,6 +6084,10 @@ export function RegisterApp({
                       </div>
                     )}
 
+                    {settlementLines.some(line => line.method !== "cash") && (
+                      <PaymentEvidenceField value={settlementEvidence} onChange={setSettlementEvidence} />
+                    )}
+
                     {settlementMessage && (
                       <div
                         className={`mb-3 rounded-md px-3 py-2 text-sm font-bold ${
@@ -6208,6 +6265,7 @@ export function RegisterApp({
               type="button"
               aria-pressed={registerMode === mode && !mobileCartOpen}
               onClick={() => selectRegisterMode(mode)}
+              disabled={isWaiter && mode === "day-close"}
               className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
                 registerMode === mode && !mobileCartOpen
                   ? "bg-[#f5a623] text-[#111111]"
@@ -6431,23 +6489,23 @@ export function RegisterApp({
       )}
 
       {dayModalMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-[560px] rounded-md border border-[#cbd5e1] bg-white shadow-xl">
-            <div className="flex h-12 items-center justify-between border-b border-[#e5e7eb] px-4">
-              <h3 className="text-sm font-black">
-                {dayModalMode === "open" ? "Өдөр нээх" : "Өдрийн хаалт"}
+        <div className={`${styles.dayModalOverlay} fixed inset-0 flex items-center justify-center bg-black/30 p-4`}>
+          <div role="dialog" aria-modal="true" aria-labelledby="day-modal-title" className={`${styles.dayModal} w-full max-w-[560px] rounded-md border border-[#cbd5e1] bg-white shadow-xl`}>
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-[#e5e7eb] px-4">
+              <h3 id="day-modal-title" className="text-sm font-black">
+                {dayModalTitle}
               </h3>
               <button
                 type="button"
                 onClick={() => setDayModalMode(null)}
-                className="h-8 w-8 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
+                className="h-11 w-11 shrink-0 rounded-md border border-[#cbd5e1] text-lg font-bold hover:bg-[#f8fafc]"
                 aria-label="Өдрийн цонх хаах"
               >
                 x
               </button>
             </div>
 
-            <div className="p-4">
+            <div className={`${styles.dayModalBody} p-4`}>
               <div className="mb-3 grid grid-cols-2 gap-3">
                 <div className="rounded-md border border-[#e5e7eb] bg-[#f8fafc] px-3 py-2">
                   <p className="text-xs font-bold text-[#6b7280]">Огноо</p>
@@ -6572,6 +6630,10 @@ export function RegisterApp({
                 </div>
               )}
 
+              {dayModalMode === "start-service" ? (
+                <p className="mb-4 text-sm">Өнөөдрийн захиалга, төлбөр авах үйлчилгээг эхлүүлнэ. Таны нэр, эхэлсэн цаг бүртгэгдэнэ. Кассын эхлэх мөнгийг кассчин тусад нь баталгаажуулна.</p>
+              ) : <>
+              {dayModalMode === "open" && <p className="mb-3 text-sm">Кассын эхлэх бэлэн мөнгийг тоолж оруулна уу. Өнөөдрийн борлуулалтаас цугларсан мөнгийг энэ дүнд оруулахгүй.</p>}
               <label className="mb-3 block">
                 <span className="mb-1 block text-xs font-bold text-[#6b7280]">
                   {dayModalMode === "open"
@@ -6608,6 +6670,7 @@ export function RegisterApp({
                 </button>
               </div>
 
+              </>}
               <label className="mb-3 block">
                 <span className="mb-1 block text-xs font-bold text-[#6b7280]">
                   Тайлбар {dayCloseHasVariance ? "(заавал)" : ""}
@@ -6617,9 +6680,9 @@ export function RegisterApp({
                   onChange={(event) => setDayNotes(event.target.value)}
                   type="text"
                   placeholder={
-                    dayModalMode === "open"
-                      ? "ж: Өглөөний касс"
-                      : "ж: Мөнгө дутсан / илүү гарсан шалтгаан"
+                    dayModalMode === "close"
+                      ? "ж: Мөнгө дутсан / илүү гарсан шалтгаан"
+                      : "Шаардлагатай бол тайлбарыг өөрчилнө үү"
                   }
                   className="h-11 w-full rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-bold outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-[#bfdbfe]"
                 />
@@ -6642,16 +6705,14 @@ export function RegisterApp({
                 onClick={submitDaySession}
                 disabled={!canSubmitDaySession}
                 className={`h-12 w-full rounded-md text-base font-black text-white disabled:bg-[#9ca3af] ${
-                  dayModalMode === "open"
+                  dayModalMode !== "close"
                     ? "bg-[#047857] hover:bg-[#065f46]"
                     : "bg-[#b91c1c] hover:bg-[#991b1b]"
                 }`}
               >
                 {dayStatus === "saving"
                   ? "Хадгалж байна"
-                  : dayModalMode === "open"
-                    ? "Өдөр нээх"
-                    : "Хаалт хадгалах"}
+                  : dayModalMode === "close" ? "Хаалт хадгалах" : dayModalTitle}
               </button>
             </div>
           </div>

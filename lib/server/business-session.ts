@@ -38,6 +38,13 @@ export const DAY_SESSION_HEADERS = [
   "operation_status",
   "operation_error",
   "operation_updated_at",
+  "opening_mode",
+  "opened_by_username",
+  "cash_opened_at",
+  "cash_opened_by",
+  "cash_opened_by_username",
+  "cash_open_request_id",
+  "cash_open_notes",
 ] as const;
 
 export type BusinessSessionRow = {

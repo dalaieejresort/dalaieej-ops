@@ -1,0 +1,6 @@
+.pad { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(100%, 280px); gap: 1px; padding: 1px; background: #8c8c8c; margin-top: 8px; }
+.pad button { min-height: 44px; border: 0; border-radius: 0; background: #fff; color: #111; font: inherit; font-size: 16px; touch-action: manipulation; cursor: pointer; }
+.pad button:hover { background: #f2f2f2; }
+.pad button:focus-visible { outline: 2px solid #d2042d; outline-offset: -3px; }
+.pad button:disabled { opacity: .5; cursor: default; }
+.pad .done { grid-column: 1 / -1; background: #111; color: #fff; }
