@@ -45,7 +45,7 @@ export function WaiterLoginForm({ waiters }: { waiters: { username: string; disp
         <input className={styles.input} type="password" inputMode="none" autoComplete="off"
           value={pin} maxLength={4} readOnly disabled={submitting} />
       </label>
-      <NumberPad label="ПИН оруулах тоон гар" value={pin} onChange={setPin} maxLength={4} disabled={submitting} />
+      <NumberPad label="ПИН оруулах тоон гар" clearLabel="C" value={pin} onChange={setPin} maxLength={4} disabled={submitting} />
     </div>}
     {error && <p role="alert" className={styles.error}>{error}</p>}
     <button className={styles.primaryButton} disabled={!username || pin.length !== 4 || submitting}>

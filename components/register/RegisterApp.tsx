@@ -1807,6 +1807,7 @@ export function RegisterApp({
 }: RegisterAppProps) {
   const phoneLayout = layout === "phone";
   const isWaiter = role === "waiter";
+  const canPrint = !phoneLayout && !isWaiter;
   const modeStorageKey = isWaiter ? `waiter:mode:${authenticatedStaffName}` : REGISTER_MODE_STORAGE_KEY;
   const draftCacheKey = isWaiter ? `waiter:draft:${authenticatedStaffName}` : REGISTER_DRAFT_CACHE_KEY;
   const scopedCacheKey = useCallback((section: string, date?: string) =>
@@ -5267,21 +5268,21 @@ export function RegisterApp({
           </div>
 
           <div className="shrink-0 border-t border-[#d1d5db] p-3">
-            <div className="mb-2 grid grid-cols-[minmax(0,1fr)_156px] items-center gap-2">
+            <div className={`mb-2 grid ${canPrint ? "grid-cols-[minmax(0,1fr)_156px]" : "grid-cols-1"} items-center gap-2`}>
               <div className="min-w-0">
                 <span className="text-xs font-semibold text-[#6b7280]">Нийт</span>
                 <div className="truncate text-2xl font-black tracking-normal">
                   {formatMNT(cartTotal)}
                 </div>
               </div>
-              <button
+              {canPrint && <button
                 type="button"
                 onClick={printCurrentBill}
                 disabled={cart.length === 0}
                 className="h-11 rounded-md border border-[#cbd5e1] bg-white px-2 text-[11px] font-extrabold leading-tight text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
               >
                 {PRINT_BILL_BUTTON_LABEL}
-              </button>
+              </button>}
             </div>
 
             <div className="mb-2 grid grid-cols-3 gap-1.5">
@@ -5696,7 +5697,7 @@ export function RegisterApp({
               </div>
             )}
 
-            {lastSale && (
+            {canPrint && lastSale && (
               <div className="mb-2 grid gap-2">
                 {hasPrintableBill(lastSale) && (
                   <button
@@ -5928,14 +5929,14 @@ export function RegisterApp({
                       </div>
                     </div>
 
-                    <button
+                    {canPrint && <button
                       type="button"
                       onClick={() => void printSelectedChargeBill()}
                       disabled={settlementStatus === "saving"}
                       className="mb-3 h-11 w-full rounded-md border border-[#cbd5e1] bg-white text-sm font-black leading-tight text-[#111827] hover:bg-[#f8fafc] disabled:opacity-40"
                     >
                       {PRINT_BILL_BUTTON_LABEL}
-                    </button>
+                    </button>}
 
                     {settlementLines.length > 0 && (
                       <div className="mb-3 rounded-md border border-[#d1d5db] bg-white">
@@ -6226,7 +6227,7 @@ export function RegisterApp({
                 )}
               </div>
 
-              <div className="shrink-0 border-t border-[#d1d5db] p-4">
+              {canPrint && <div className="shrink-0 border-t border-[#d1d5db] p-4">
                 <button
                   type="button"
                   onClick={() => {
@@ -6243,7 +6244,7 @@ export function RegisterApp({
                 >
                   Баримт дахин хэвлэх
                 </button>
-              </div>
+              </div>}
             </>
           )}
         </aside>
