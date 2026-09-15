@@ -6,7 +6,8 @@ import { NumberPad } from "@/components/input/NumberPad";
 
 import Link from "next/link";
 import { isKitchenTicketItem } from "@/lib/pos/preparation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { cartReducer } from "@/lib/pos/cart";
 import {
   readOfflineCache,
   removeOfflineCache,
@@ -1830,7 +1831,11 @@ export function RegisterApp({
   );
   const staffName = authenticatedStaffName;
   const canManageOperations = !isWaiter && (role === "manager" || role === "owner");
-  const [cart, setCart] = useState<RegisterCartLine[]>([]);
+  const [cartState, dispatchCart] = useReducer(cartReducer, { items: [], lastAddition: null });
+  const cart = cartState.items;
+  const setCart = useCallback((items: RegisterCartLine[] | ((items: RegisterCartLine[]) => RegisterCartLine[])) => {
+    dispatchCart({ type: "replace", items });
+  }, []);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId | null>(
     defaultPaymentMethod,
   );
@@ -2518,7 +2523,7 @@ export function RegisterApp({
     }, 0);
 
     return () => window.clearTimeout(restoreTimer);
-  }, [draftCacheKey, simplePaymentFlow, defaultPaymentMethod]);
+  }, [draftCacheKey, simplePaymentFlow, defaultPaymentMethod, setCart]);
 
   useEffect(() => {
     if (!draftLoadedRef.current) return;
@@ -2822,6 +2827,7 @@ export function RegisterApp({
       ? "Төлбөр хаах"
       : "Үлдэгдэлтэй хадгалах";
   function addToCart(item: CatalogItem, priceMode: PriceMode = getDefaultPriceMode(item)) {
+    if (saleStatus === "saving") return;
     setSaleStatus("idle");
     setSaleMessage("");
     setLastSale(null);
@@ -2834,30 +2840,30 @@ export function RegisterApp({
         : priceMode;
     const lineId = getCartLineId(item, resolvedPriceMode);
     const linePrice = getPriceForMode(item, resolvedPriceMode);
-    setCart((current) => {
-      const existing = current.find((line) => line.id === lineId);
-      if (existing) {
-        return current.map((line) =>
-          line.id === lineId
-            ? { ...line, quantity: line.quantity + 1 }
-            : line,
-        );
-      }
-
-      return [
-        ...current,
-        {
-          id: lineId,
-          sku: item.sku,
-          name: item.name,
-          price: linePrice,
-          priceMode: resolvedPriceMode,
-          category: item.category,
-          quantity: 1,
-          staff: staffName,
-        },
-      ];
+    dispatchCart({
+      type: "add",
+      item: {
+        id: lineId,
+        sku: item.sku,
+        name: item.name,
+        price: linePrice,
+        priceMode: resolvedPriceMode,
+        category: item.category,
+        quantity: 1,
+        staff: staffName,
+      },
     });
+  }
+
+  function undoLastItemAddition() {
+    if (!cartState.lastAddition || saleStatus === "saving") return;
+    dispatchCart({ type: "undo-addition" });
+    setSaleStatus("idle");
+    setSaleMessage(`${cartState.lastAddition.name}: сүүлийн нэмэлтийг буцаалаа.`);
+    setLastSale(null);
+    setCardTerminalApproved(false);
+    resetBankTransferPayment();
+    resetPartialPaymentState();
   }
 
   function updateQuantity(id: string, quantity: number) {
@@ -2877,6 +2883,7 @@ export function RegisterApp({
   }
 
   function addCustomAmountToCart() {
+    if (saleStatus === "saving") return;
     const amount = Math.round(customItemAmount);
     if (amount <= 0) {
       setSaleStatus("error");
@@ -2893,9 +2900,9 @@ export function RegisterApp({
 
     const name = customItemName.trim() || "Гараар нэмсэн төлбөр";
     const id = getNextLocalId("custom");
-    setCart((current) => [
-      ...current,
-      {
+    dispatchCart({
+      type: "add",
+      item: {
         id,
         name,
         price: amount,
@@ -2903,7 +2910,7 @@ export function RegisterApp({
         quantity: 1,
         staff: staffName,
       },
-    ]);
+    });
     setCustomItemName("");
     setCustomItemAmount(0);
   }
@@ -5177,7 +5184,7 @@ export function RegisterApp({
             </>
           ) : registerMode === "sale" ? (
             <>
-          <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-[#d1d5db] px-4 py-2">
+          <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#d1d5db] px-4 py-2">
             <div className="min-w-0">
               <h2 className="truncate text-base font-bold">
                 {isEditingCharge ? "Захиалга засах" : "Одоогийн борлуулалт"}
@@ -5189,6 +5196,16 @@ export function RegisterApp({
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={undoLastItemAddition}
+                disabled={!cartState.lastAddition || saleStatus === "saving"}
+                aria-label="Сүүлд нэмсэн барааг буцаах"
+                title={cartState.lastAddition ? `${cartState.lastAddition.name}: сүүлийн нэмэлтийг буцаах` : "Буцаах нэмэлт алга"}
+                className="rounded-md border border-[#cbd5e1] px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-[#f8fafc] disabled:opacity-40"
+              >
+                ↶ Буцаах
+              </button>
               <button
                 type="button"
                 onClick={clearCurrentSale}
