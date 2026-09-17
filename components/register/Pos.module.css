@@ -76,10 +76,6 @@
 .pos > nav[aria-label="Гар утасны үндсэн цэс"] { background: #fff; gap: 0; padding-top: 0; padding-left: 0; padding-right: 0; }
 .pos > nav[aria-label="Гар утасны үндсэн цэс"] button { background: #fff; color: #111; border-right: .5px solid #8c8c8c; min-height: 56px; }
 .pos > nav[aria-label="Гар утасны үндсэн цэс"] button[aria-expanded="true"] { background: #f0f0f0; }
-.reconciliationTab { display: flex; align-items: center; min-height: 36px; padding: 8px 12px; font-size: 12px; color: #111; }
-.reconciliationTab:hover, .mobileReconciliationTab:hover { background: #f5f5f5; }
-.mobileReconciliationTab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 56px; border-right: .5px solid #8c8c8c; background: #fff; color: #111; font-size: 10px; }
-@media (min-width: 1280px) { .modeNav .reconciliationTab { gap: 8px; padding: 8px; font-size: 10px; } .reconciliationTab::before { content: "05"; font-size: 10px; color: #666; } }
 
 /* Compact mobile navigation shares the desktop rail's typographic hierarchy. */
 .pos > nav[aria-label="Гар утасны үндсэн цэс"] { padding-bottom: env(safe-area-inset-bottom); }

@@ -4,18 +4,25 @@ import type { NextRequest } from "next/server";
 const SESSION_COOKIE = "dalaieej_ops_session";
 const PUBLIC_PATHS = new Set([
   "/login",
-  "/receipt-payments",
-  "/receipt-payments/privacy",
   "/api/auth/login",
   "/api/health",
   "/api/telegram-webhook",
-  "/api/reconciliation/cron/sync",
-  "/api/reconciliation/paid-via",
-  "/api/receipt-payments/paid-via",
 ]);
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  // Service clients must use the new origin directly: redirects may drop bearer headers.
+  if (["/api/reconciliation", "/api/receipt-payments"].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  )) {
+    const targetPath = pathname === "/api/reconciliation/paid-via"
+      ? "/api/receipt-payments/paid-via" : pathname;
+    return NextResponse.json(
+      { error: "Receipts API moved. Update the client URL and credentials.",
+        code: "RECEIPTS_MOVED", endpoint: `https://receipts.dalaieej.mn${targetPath}` },
+      { status: 410, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
   if (!request.cookies.has(SESSION_COOKIE)) {

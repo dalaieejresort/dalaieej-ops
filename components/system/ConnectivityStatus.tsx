@@ -25,9 +25,7 @@ function statusMessage(state: ConnectionState) {
 
 export function ConnectivityStatus({ role }: { role?: OpsRole }) {
   const pathname = usePathname();
-  const reconciliationOnlyRoute =
-    pathname.startsWith("/reconciliation") || pathname === "/login" ||
-    pathname === "/receipt-payments" || pathname === "/receipt-payments/privacy";
+  const loginRoute = pathname === "/login";
   const [state, setState] = useState<ConnectionState>("checking");
   const [lastHealthyAt, setLastHealthyAt] = useState<Date | null>(null);
 
@@ -60,7 +58,7 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
   }, []);
 
   useEffect(() => {
-    if (reconciliationOnlyRoute) return;
+    if (loginRoute) return;
     const syncStatus = () => void checkHealth();
 
     const initialCheck = window.setTimeout(checkHealth, 0);
@@ -79,9 +77,9 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
       window.removeEventListener("online", syncStatus);
       window.removeEventListener("offline", syncStatus);
     };
-  }, [checkHealth, reconciliationOnlyRoute]);
+  }, [checkHealth, loginRoute]);
 
-  if (reconciliationOnlyRoute) return null;
+  if (loginRoute) return null;
 
   if (state === "healthy") {
     if (role === "kitchen") return null;

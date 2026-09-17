@@ -45,3 +45,13 @@ The app reads live data from Google Sheets through the existing API routes. If t
 - Register writes are blocked when the browser reports that it is offline. A failed write keeps the form intact and asks the cashier to check History before retrying, avoiding an accidental duplicate.
 - The installed app caches its main navigation routes so a previously loaded route can reopen during an outage.
 - Reconnecting triggers an immediate refresh. The current safeguards do not queue sales, payments, voids, or day-close actions for automatic replay.
+
+## Receipts extraction
+
+Receipt reconciliation and Telegram payment matching are maintained in
+[dalaieej-receipts](https://github.com/dalaieejresort/dalaieej-receipts) and run at
+https://receipts.dalaieej.mn. The Ops navigation tabs and duplicated implementation
+were removed on 2026-09-17. Legacy receipt pages redirect to the standalone site;
+retired receipt APIs return HTTP 410 so service clients must use the new origin
+and matching credentials directly. Ops staff, POS, kitchen and sales APIs remain
+in this project. See the receipts repository README for deployment and rollback IDs.

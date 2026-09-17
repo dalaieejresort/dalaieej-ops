@@ -9,14 +9,14 @@ function loader(mocks) {
   function load(path) {
     if(cache.has(path))return cache.get(path);
     const compiled=ts.transpileModule(readFileSync(new URL(`../${path}`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-    const module={exports:{}}; cache.set(path,module.exports);
+    const loaded={exports:{}}; cache.set(path,loaded.exports);
     new Function('require','module','exports',compiled)(name=>{
       if(name==='server-only')return {};
       if(name in mocks)return mocks[name];
       if(name.startsWith('@/'))return load(name.slice(2)+'.ts');
       return nativeRequire(name);
-    },module,module.exports);
-    cache.set(path,module.exports);return module.exports;
+    },loaded,loaded.exports);
+    cache.set(path,loaded.exports);return loaded.exports;
   }
   return load;
 }

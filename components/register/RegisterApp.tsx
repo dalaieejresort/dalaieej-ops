@@ -4,7 +4,6 @@ import { PaymentEvidenceField } from "./PaymentEvidenceField";
 import { StaffIdentity } from "@/components/auth/StaffIdentity";
 import { NumberPad } from "@/components/input/NumberPad";
 
-import Link from "next/link";
 import { isKitchenTicketItem } from "@/lib/pos/preparation";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cartReducer } from "@/lib/pos/cart";
@@ -4485,7 +4484,6 @@ export function RegisterApp({
           >
             Өдрийн хаалт
           </button>
-          {role === "owner" && <Link href="/reconciliation" className={styles.reconciliationTab}>Тулгалт</Link>}
         </nav>
 
         <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-2 md:order-none">
@@ -6305,7 +6303,6 @@ export function RegisterApp({
               <span>{label}</span>
             </button>
           ))}
-          {role === "owner" && <Link href="/reconciliation" className={styles.mobileReconciliationTab}><span className={styles.mobileTabIndex} aria-hidden="true">05</span><span>Тулгалт</span></Link>}
           <button
             type="button"
             aria-controls="register-cart"

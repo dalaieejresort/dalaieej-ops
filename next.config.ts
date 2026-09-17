@@ -6,6 +6,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  async redirects() {
+    return [
+      { source: "/reconciliation/:path*", destination: "https://receipts.dalaieej.mn/reconciliation/:path*", permanent: true },
+      { source: "/receipt-payments/:path*", destination: "https://receipts.dalaieej.mn/receipt-payments/:path*", permanent: true },
+    ];
+  },
   async headers() {
     return [
       {
