@@ -19,7 +19,7 @@
 .loginWorkspace { display: grid; grid-template-columns: 123px minmax(0, 1fr); min-height: calc(100dvh - 40px); }
 .index { border-right: .5px solid #8c8c8c; padding: 28px 16px; }
 .loginPanel { width: 100%; max-width: 480px; border-right: .5px solid #8c8c8c; }
-.titleBand { min-height: 96px; padding: 20px 24px; border-bottom: .5px solid #8c8c8c; }
+.titleBand { min-height: 72px; padding: 20px 24px; border-bottom: .5px solid #8c8c8c; }
 .titleBand h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 400; }
 .titleBand p { margin: 6px 0 0; color: #666; font-size: 12px; }
 .formBody { padding: 32px 24px; border-bottom: .5px solid #8c8c8c; }
@@ -27,7 +27,7 @@
 .staffList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0; border: 0; }
 .staffList legend { margin-bottom: 12px; }
 .staffOption { display: flex; align-items: center; gap: 10px; min-height: 48px; border: .5px solid #8c8c8c; padding: 8px 12px; font-size: 16px; cursor: pointer; }
-.staffOption:has(input:checked) { border-color: #d2042d; background: #fff3f5; }
+.staffOption:has(input:checked) { border-color: #d2042d; background: #f0f0f0; }
 .staffOption input { accent-color: #d2042d; }
 .waiterLink { display: block; margin-top: 24px; }
 .label { display: grid; gap: 8px; font-size: 12px; font-weight: 400; }
@@ -50,3 +50,5 @@
 .staffIdentity button { min-height: 44px; border: .5px solid #8c8c8c; padding: 8px 12px; background: #fff; cursor: pointer; }
 .staffIdentity button:focus-visible { outline: 2px solid #d2042d; }
 .staffIdentity [role=alert] { color: #d2042d; }
+
+@media (min-width: 768px) { .titleBand { height:72px; padding:12px 24px; } .input { font-size:12px; } .session { bottom:12px; right:12px; } }

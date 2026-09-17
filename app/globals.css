@@ -1,8 +1,9 @@
 @import "tailwindcss";
+@import "./design-tokens.css";
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #000;
 }
 
 @theme inline {
@@ -12,8 +13,8 @@
 }
 
 body {
-  background: #e8e8e8;
-  color: #222;
+  background: var(--ui-paper);
+  color: var(--ui-ink);
   font-family: Arial, "Helvetica Neue", Helvetica, ui-sans-serif, system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;

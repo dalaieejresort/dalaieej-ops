@@ -58,11 +58,11 @@
   .modeNav { display: flex; gap: 0; border: .5px solid #8c8c8c; }
   .modeNav button { border-right: .5px solid #8c8c8c; }
 }
-@media (min-width: 1280px) {
+@media (min-width: 1024px) {
   .pos { height: 100dvh; overflow: hidden; }
   .pos > header, .pos > main { margin-left: 123px; }
   .modeNav { position: fixed; top: 40px; bottom: 0; left: 0; width: 123px; z-index: 35; flex-direction: column; border: 0; border-right: .5px solid #8c8c8c; background: #fff; padding-top: 16px; counter-reset: pos-nav; }
-  .modeNav button { display: flex; align-items: center; gap: 8px; min-height: 36px !important; height: auto !important; padding: 8px; font-size: 10px !important; text-align: left; border: 0; }
+  .modeNav button { display: flex; align-items: center; gap: 8px; min-height: 24px !important; height: 24px !important; padding: 0 8px; font-size: 10px !important; text-align: left; border: 0; }
   .modeNav button::before { counter-increment: pos-nav; content: "0" counter(pos-nav); color: #666; font-size: 10px; }
   .pos > main > section { min-height: 0; }
   .pos > main > aside { min-height: 0; padding-bottom: 56px; }
@@ -166,3 +166,5 @@
 .phone input, .phone select, .phone textarea { font-size: 16px !important; }
 .phone :global([data-testid="product-tile"]) { padding: 10px; }
 .phone :global([data-testid="product-tile"] div button) { min-height: 36px; }
+
+@media(min-width:1024px) { .pos { padding-top:40px; } .topbar { position:fixed; inset:0 0 auto; z-index:50; } .pos > header { height:72px; padding:8px 16px; } .modeNav { padding-top:72px; } }

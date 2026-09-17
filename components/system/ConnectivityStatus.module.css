@@ -19,11 +19,13 @@
 .connected > span { padding: 4px 8px; }
 .timestamp { padding: 4px 8px; border-left: 0.5px solid #8c8c8c; color: #666; font-variant-numeric: tabular-nums; }
 .warning {
-  position: sticky;
-  top: 0;
+  position: fixed;
+  bottom: 12px;
+  left: 135px;
+  right: 160px;
   z-index: 100;
   padding: 8px 16px;
-  border-bottom: 0.5px solid #8c8c8c;
+  border: 0.5px solid #8c8c8c;
   background: #fff;
   color: #92400e;
   color-scheme: light;
@@ -34,3 +36,5 @@
 }
 @media (min-width: 768px) { .connected { display: flex; } }
 @media print { .connected, .warning { display: none; } }
+
+@media (max-width: 767px) { .warning { left: 12px; right: 12px; bottom: 64px; font-size: 10px; } }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
+import styles from "./OpsDashboard.module.css";
 import {
   readOfflineCache,
   writeOfflineCache,
@@ -293,7 +293,7 @@ function MetricCard({
   }[tone];
 
   return (
-    <div className={`min-h-28 rounded-lg border p-4 ${toneClass}`}>
+    <div className={`${styles.metric} min-h-28 rounded-lg border p-4 ${toneClass}`}>
       <p className="text-xs font-black uppercase tracking-normal text-[#64748b]">
         {label}
       </p>
@@ -669,16 +669,17 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
   const isInitialLoading = loadState === "loading" && !lastUpdatedAt;
 
   return (
-    <div className="min-h-dvh bg-[#f4f6f8] text-[#111827]">
+    <div className={styles.workspace}>
+      <div className={styles.topbar}><a href="/ops">Dalai Eej / Operations</a><span>{businessDate}</span></div>
+      <nav className={styles.rail} aria-label="Operations navigation">
+        <a href="/register"><span>01</span> Касс</a>
+        <a href="/ops" aria-current="page"><span>02</span> Удирдлага</a>
+        <a href="/kitchen"><span>03</span> Гал тогоо</a>
+        <a href="/waiter"><span>04</span> Үйлчилгээ</a>
+        <a href="https://receipts.dalaieej.mn/finance"><span>05</span> Санхүү ↗</a>
+      </nav>
       <header className="border-b border-[#d7dde7] bg-white">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-4 px-4 py-4 sm:px-6">
-          <Image
-            src="/app-icon.svg"
-            alt=""
-            width={44}
-            height={44}
-            className="h-11 w-11 shrink-0 rounded-lg border border-[#e5eaf1] bg-[#f8fafc] p-2"
-          />
           <div className="min-w-0">
             <h1 className="truncate text-xl font-black">Dalai Eej Ops</h1>
             <p className="text-sm font-bold text-[#64748b]">{businessDate}</p>

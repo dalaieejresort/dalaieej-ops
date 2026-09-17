@@ -1,0 +1,22 @@
+/* Shared with dalaieej-receipts. Source: DESIGN.md. */
+:root {
+  color-scheme: light;
+  --ui-paper: #fff;
+  --ui-ink: #000;
+  --ui-muted: #666;
+  --ui-rule-color: #8c8c8c;
+  --ui-rule: .5px solid var(--ui-rule-color);
+  --ui-selected: #f0f0f0;
+  --ui-hover: #f5f5f5;
+  --ui-disabled: #d9d9d9;
+  --ui-accent: #D2042D;
+  --ui-accent-hover: #B80327;
+  --ui-topbar: 40px;
+  --ui-rail: 123px;
+  --ui-title-band: 72px;
+}
+::selection { background: var(--ui-accent); color: var(--ui-paper); }
+:where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
