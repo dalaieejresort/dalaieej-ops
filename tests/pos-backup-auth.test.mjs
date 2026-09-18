@@ -36,3 +36,9 @@ test('deployed backup checksum survives JSON serialization of database timestamp
   assert.equal(data.tables.records[0].updated_at,'2026-09-18T00:00:00.000Z');
  }finally{for(const [k,v] of [['POS_DATABASE_URL',oldUrl],['POS_BACKUP_BLOB_TOKEN',oldToken]]){if(v===undefined)delete process.env[k];else process.env[k]=v;}}
 });
+
+test('CLI backup checksum has the same meaning before and after saving a file',async()=>{
+ const {hash}=await import('../scripts/pos-storage.mjs');
+ const record={updated_at:new Date('2026-09-18T00:00:00.123Z'),version:'1',cells:['example',1]};
+ assert.equal(hash(record),hash(JSON.parse(JSON.stringify(record))));
+});
