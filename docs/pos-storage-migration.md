@@ -55,3 +55,6 @@ The import tool verifies all source row hashes, headers, counters, and every cat
 ## Owner login
 
 `OPS_OWNER_ACCOUNT` contains the same owner credential hash and salt as the receipts owner's account. When configured, it replaces only owner entries from `OPS_AUTH_ACCOUNTS`; manager, cashier, waiter and kitchen accounts retain their credentials. Use username `owner` and the existing receipts password on either site. Each site keeps its own signed session cookie. Password changes must update both owner configurations; this is a shared credential, not a centralized identity provider.
+
+
+Production cutover was completed on 2026-09-18. The detailed import manifest, archive locations and recovery evidence are kept in the private migration report, outside the public repository.
