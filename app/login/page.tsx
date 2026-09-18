@@ -6,6 +6,7 @@ import { WaiterLoginForm } from "@/components/auth/WaiterLoginForm";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Sign in" };
 
 function safeNextPath(value: string | undefined) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";

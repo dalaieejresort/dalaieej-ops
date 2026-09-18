@@ -681,7 +681,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
       <header className="border-b border-[#d7dde7] bg-white">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-4 px-4 py-4 sm:px-6">
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-black">Dalai Eej Ops</h1>
+            <h1 className="truncate text-xl font-black">Dalai Eej Operations</h1>
             <p className="text-sm font-bold text-[#64748b]">{businessDate}</p>
           </div>
 
@@ -1025,7 +1025,7 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
                   </p>
                 )}
                 <p className="mt-3 text-[11px] font-bold leading-4 text-[#94a3b8]">
-                  Dalai Eej Ops-ын бүх түүхэн өгөгдлийг шалгана. Дутуу захиалгыг нөхөхдөө зөвхөн Order_Items-д мөр нэмэх ба Master Ledger-ийн өгөгдөлд хүрэхгүй.
+                  Dalai Eej Operations-ын бүх түүхэн өгөгдлийг шалгана. Дутуу захиалгыг нөхөхдөө зөвхөн Order_Items-д мөр нэмэх ба Master Ledger-ийн өгөгдөлд хүрэхгүй.
                 </p>
               </div>
             )}

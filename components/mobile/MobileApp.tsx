@@ -416,7 +416,7 @@ export function MobileApp({ businessDate }: MobileAppProps) {
             className="h-[42px] w-[42px] rounded-2xl border border-[#e2e8f0] bg-[#f8fafc] p-2"
           />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-black">Dalai Eej Mobile</h1>
+            <h1 className="truncate text-base font-black">Dalai Eej Operations</h1>
             <p className="truncate text-xs font-bold text-[#64748b]">
               {businessDate} · {timeLabel(lastUpdatedAt)}
             </p>

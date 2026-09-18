@@ -1,5 +1,5 @@
 const NAVIGATION_CACHE = "dalaieej-navigation-v3";
-const ASSET_CACHE = "dalaieej-assets-v2";
+const ASSET_CACHE = "dalaieej-assets-v3";
 const OFFLINE_ROUTES = ["/", "/register", "/ops"];
 const STATIC_ASSETS = new Set([
   "/branding/favicons/favicon.svg",
