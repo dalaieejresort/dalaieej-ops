@@ -18,9 +18,10 @@ export const siteMetadata: Metadata = {
   description: site.description,
   manifest: "/manifest.webmanifest",
   icons: {
-    // Next.js serves app/icon.png at a fresh, content-versioned URL.
-    // A single raster tab icon also avoids browser-specific SVG selection.
-    shortcut: "/icon.png",
+    // One explicit raster icon avoids competing auto-generated favicon links.
+    // Keep /favicon.ico available only as the fallback for older browsers.
+    icon: [{ url: "/icon.png?v=20260918-2", sizes: "96x96", type: "image/png" }],
+    shortcut: "/icon.png?v=20260918-2",
     apple: [{ url: icon("apple-touch-icon.png"), sizes: "180x180", type: "image/png" }],
   },
   appleWebApp: { capable: true, title: site.shortName, statusBarStyle: "default" },
