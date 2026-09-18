@@ -5,6 +5,9 @@ import { get, put } from '@vercel/blob';
 import { posSchema } from './transaction';
 
 function canonical(value: unknown): string {
+  // The HTTP driver may share timestamp parsers with Pool in a warm function.
+  // Hash dates exactly as they are serialized in the downloaded JSON archive.
+  if (value instanceof Date) return JSON.stringify(value.toJSON());
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
   if (value && typeof value === 'object') {
     const object = value as Record<string, unknown>;

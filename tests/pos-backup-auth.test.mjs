@@ -20,3 +20,19 @@ test('scheduled backup uses bearer authentication without opening other POS rout
   assert.equal((await GET(request(process.env.CRON_SECRET))).status,200);assert.equal(backups,1);
  }finally{if(previous===undefined)delete process.env.CRON_SECRET;else process.env.CRON_SECRET=previous;}
 });
+
+test('deployed backup checksum survives JSON serialization of database timestamps',async()=>{
+ const {createHash}=await import('node:crypto');const {hash}=await import('../scripts/pos-storage.mjs');
+ const oldUrl=process.env.POS_DATABASE_URL,oldToken=process.env.POS_BACKUP_BLOB_TOKEN;
+ let stored='';
+ const sql={query:()=>({}),transaction:async()=>[[{id:1}],[{updated_at:new Date('2026-09-18T00:00:00Z')}],[],[]]};
+ const {archivePosDatabase}=load('lib/server/pos-storage/backup.ts',{
+  'server-only':{},'node:crypto':{createHash},'@neondatabase/serverless':{neon:()=>sql},'./transaction':{posSchema:()=> '"pos"'},
+  '@vercel/blob':{put:async(_name,body)=>{stored=body;return {url:'private-test',pathname:'pos/test.json'};},get:async()=>({stream:new Response(stored).body})},
+ });
+ try {
+  process.env.POS_DATABASE_URL='test-only';process.env.POS_BACKUP_BLOB_TOKEN='test-only';
+  await archivePosDatabase();const {sha256,...data}=JSON.parse(stored);assert.equal(sha256,hash(data));
+  assert.equal(data.tables.records[0].updated_at,'2026-09-18T00:00:00.000Z');
+ }finally{for(const [k,v] of [['POS_DATABASE_URL',oldUrl],['POS_BACKUP_BLOB_TOKEN',oldToken]]){if(v===undefined)delete process.env[k];else process.env[k]=v;}}
+});
