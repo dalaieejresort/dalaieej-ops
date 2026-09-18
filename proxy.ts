@@ -6,6 +6,8 @@ const PUBLIC_PATHS = new Set([
   "/login",
   "/api/auth/login",
   "/api/health",
+  // This route verifies CRON_SECRET itself; scheduled requests have no login cookie.
+  "/api/cron/pos-backup",
   "/api/telegram-webhook",
 ]);
 
