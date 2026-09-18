@@ -51,3 +51,19 @@ test('staff selection exposes names only, verifies PINs and revokes inactive wai
     for (const key of keys) { if(old[key] === undefined) delete process.env[key]; else process.env[key] = old[key]; }
   }
 });
+
+test('shared owner password replaces owner credentials and preserves staff accounts',()=>{
+ const keys=['OPS_AUTH_ACCOUNTS','OPS_OWNER_ACCOUNT','OPS_WAITER_ACCOUNTS','OPS_KITCHEN_ACCOUNT'];
+ const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ const make=(username,role,password)=>{const salt=crypto.randomBytes(16);return {username,displayName:username,role,salt:salt.toString('base64url'),passwordHash:crypto.scryptSync(password,salt,32).toString('base64url')};};
+ try {
+  process.env.OPS_AUTH_ACCOUNTS=JSON.stringify([make('owner','owner','old-password'),make('cashier','cashier','staff-password')]);
+  process.env.OPS_OWNER_ACCOUNT=JSON.stringify(make('owner','owner','receipts-password'));
+  delete process.env.OPS_WAITER_ACCOUNTS;delete process.env.OPS_KITCHEN_ACCOUNT;
+  assert.equal(auth.authenticateAccount('owner','old-password'),null);
+  assert.equal(auth.authenticateAccount('owner','receipts-password').role,'owner');
+  assert.equal(auth.authenticateAccount('cashier','staff-password').role,'cashier');
+  process.env.OPS_OWNER_ACCOUNT=JSON.stringify(make('owner','waiter','bad-role'));
+  assert.throws(()=>auth.authenticateAccount('owner','bad-role'),/owner account/);
+ }finally{for(const k of keys){if(old[k]===undefined)delete process.env[k];else process.env[k]=old[k];}}
+});

@@ -1,8 +1,4 @@
-import {
-  GoogleSpreadsheet,
-  type GoogleSpreadsheetWorksheet,
-} from "google-spreadsheet";
-import { JWT } from "google-auth-library";
+import { createPosDocument, type PosWorksheet } from "@/lib/server/pos-storage";
 import { NextResponse } from "next/server";
 import { requireApiSession } from "@/lib/server/auth";
 import { withProtectedApiRoute } from "@/lib/server/api-route";
@@ -47,23 +43,10 @@ type AdjustmentBody = {
   }>;
 };
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is missing`);
-  return value.replace(/^"|"$/g, "");
-}
-
-function createDoc() {
-  const auth = new JWT({
-    email: requiredEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-    key: requiredEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n").trim(),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  return new GoogleSpreadsheet(requiredEnv("GOOGLE_SHEET_ID"), auth);
-}
+function createDoc() { return createPosDocument(); }
 
 async function ensureHeaders(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   headers: readonly string[],
 ) {
   await sheet.loadHeaderRow();

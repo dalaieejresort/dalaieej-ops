@@ -1,10 +1,15 @@
 import "server-only";
+import { inPosTransaction, posBackend } from "./pos-storage/transaction";
 import { randomUUID } from "node:crypto";
 import { Redis } from "@upstash/redis";
 
 // One shared lock for all day transitions, including requests from different phones.
 // Fail closed if coordination is unavailable; never fall back to a process-local lock.
 export async function acquireDayWriteLock() {
+  if (posBackend() === "postgres") {
+    if (!inPosTransaction()) throw new Error("POS day writes require a transaction");
+    return { async assertOwned() { if (!inPosTransaction()) throw new Error("POS transaction ended"); }, async release() {} };
+  }
   const redis = Redis.fromEnv();
   const key = `dalaieej:day-write:${process.env.GOOGLE_SHEET_ID}`;
   const token = randomUUID();

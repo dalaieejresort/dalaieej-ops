@@ -21,6 +21,8 @@ export async function getCachedRead<T>(
   ttlMs: number,
   loader: () => Promise<T>,
 ) {
+  // PostgreSQL reads must not reuse another transaction or server instance's snapshot.
+  if (process.env.POS_STORAGE_BACKEND === "postgres") return loader();
   const cache = getReadCache();
   const now = Date.now();
   const existing = cache.get(key) as ReadCacheEntry<T> | undefined;

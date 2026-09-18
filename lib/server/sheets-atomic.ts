@@ -1,9 +1,6 @@
 import "server-only";
 
-import type {
-  GoogleSpreadsheet,
-  GoogleSpreadsheetWorksheet,
-} from "google-spreadsheet";
+import type { PosDocument, PosWorksheet } from "./pos-storage/types";
 
 export function userEnteredCell(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -20,7 +17,7 @@ export function rowData(values: unknown[]) {
 }
 
 export function updateRowRequest(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   rowNumber: number,
   values: unknown[],
 ) {
@@ -40,7 +37,7 @@ export function updateRowRequest(
 }
 
 export function appendRowsRequest(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   rows: unknown[][],
 ) {
   return {
@@ -53,8 +50,8 @@ export function appendRowsRequest(
 }
 
 export async function appendClaimRow(
-  doc: GoogleSpreadsheet,
-  sheet: GoogleSpreadsheetWorksheet,
+  doc: PosDocument,
+  sheet: PosWorksheet,
   values: unknown[],
 ) {
   const response = await doc.sheetsApi.post(
@@ -81,7 +78,7 @@ export async function appendClaimRow(
 }
 
 export async function executeAtomicBatch(
-  doc: GoogleSpreadsheet,
+  doc: PosDocument,
   requests: unknown[],
 ) {
   if (requests.length === 0) return;

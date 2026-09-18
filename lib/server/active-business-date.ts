@@ -1,7 +1,7 @@
+import { withPosTransaction } from "./pos-storage/transaction";
+import { createPosDocument, posBackend, type PosDocument } from "@/lib/server/pos-storage";
 import "server-only";
 
-import { JWT } from "google-auth-library";
-import { GoogleSpreadsheet } from "google-spreadsheet";
 import { getUlaanbaatarBusinessDate } from "@/lib/pos/business-date";
 import {
   DAY_SESSION_HEADERS,
@@ -9,7 +9,7 @@ import {
 } from "@/lib/server/business-session";
 import { getCachedRead } from "@/lib/server/read-cache";
 
-type SheetDoc = GoogleSpreadsheet;
+type SheetDoc = PosDocument;
 
 type SheetRow = {
   get: (columnName: string) => unknown;
@@ -24,41 +24,10 @@ const DAY_SESSION_SHEET_TITLES = [
   "day_sessions",
 ].filter(Boolean) as string[];
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is missing`);
-  }
-  return value.replace(/^"|"$/g, "");
-}
-
-function getPrivateKey() {
-  const key = requiredEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n").trim();
-  const keyLines = key.split("\n");
-  const keyBody = keyLines.slice(1, -1).join("");
-
-  if (
-    !key.startsWith("-----BEGIN PRIVATE KEY-----") ||
-    !key.endsWith("-----END PRIVATE KEY-----") ||
-    /[^A-Za-z0-9+/=]/.test(keyBody)
-  ) {
-    throw new Error("GOOGLE_PRIVATE_KEY is not a valid service-account private key");
-  }
-
-  return key;
-}
-
-function createDoc(): SheetDoc {
-  const serviceAccountAuth = new JWT({
-    email: requiredEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-    key: getPrivateKey(),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-
-  return new GoogleSpreadsheet(requiredEnv("GOOGLE_SHEET_ID"), serviceAccountAuth);
-}
+function createDoc() { return createPosDocument(); }
 
 async function loadSpreadsheet() {
+  if (posBackend() === "postgres") { const doc = createDoc(); await doc.loadInfo(); return doc; }
   const doc = createDoc();
   await doc.loadInfo();
   return doc;
@@ -112,7 +81,7 @@ export async function getActiveBusinessDate() {
     ACTIVE_BUSINESS_DATE_CACHE_TTL_MS,
     async () => {
       try {
-        return await loadActiveBusinessDate();
+        return await withPosTransaction(loadActiveBusinessDate);
       } catch (error) {
         console.warn(
           `Active business date fallback: ${

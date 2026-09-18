@@ -31,6 +31,8 @@ function fixture() {
   const lock={acquireDayWriteLock:async()=>{if(unavailable)throw Error('offline');if(held)return null;held=true;return {assertOwned:async()=>{},release:async()=>{held=false;}};}};
   const auth={requireApiSession(request,minimum){const role=request.headers.get('test-role');const rank={kitchen:0,waiter:0,cashier:1,manager:2,owner:3};return role && rank[role]>=rank[minimum]?{role,displayName:`Name ${role}`,username:`id-${role}`} : JsonResponse.json({error:'forbidden'},{status:role?403:401});}};
   const load=loader({
+    '@/lib/server/pos-storage':{createPosDocument:()=>doc,posBackend:()=> 'sheets'},
+    './pos-storage/transaction':{withPosTransaction:fn=>fn(),posBackend:()=> 'sheets'},
     'google-spreadsheet':{GoogleSpreadsheet:class{constructor(){return doc;}}},
     'google-auth-library':{JWT:class{}},
     'next/server':{NextResponse:JsonResponse,after:()=>{}},
@@ -93,7 +95,9 @@ test('existing cashier workflow still opens with cash and closes; legacy rows re
 test('distributed lock rejects concurrent holders and old owners cannot release a newer lock',async()=>{
   let value;
   const redis={set:async(_k,next)=>{if(value)return null;value=next;return 'OK';},get:async()=>value,eval:async(_script,_keys,[token])=>{if(value===token)value=undefined;}};
-  const load=loader({'@upstash/redis':{Redis:{fromEnv:()=>redis}}});
+  const load=loader({
+    '@/lib/server/pos-storage':{createPosDocument:()=>doc,posBackend:()=> 'sheets'},
+    './pos-storage/transaction':{withPosTransaction:fn=>fn(),posBackend:()=> 'sheets'},'@upstash/redis':{Redis:{fromEnv:()=>redis}}});
   const {acquireDayWriteLock}=load('lib/server/day-write-lock.ts');
   const first=await acquireDayWriteLock();assert.ok(first);assert.equal(await acquireDayWriteLock(),null);
   value=undefined;const second=await acquireDayWriteLock();assert.ok(second);

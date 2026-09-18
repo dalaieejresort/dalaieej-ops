@@ -1,8 +1,4 @@
-import {
-  GoogleSpreadsheet,
-  type GoogleSpreadsheetWorksheet,
-} from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
+import { createPosDocument, posBackend, type PosDocument, type PosWorksheet } from "@/lib/server/pos-storage";
 import { after, NextResponse } from 'next/server';
 import { withProtectedApiRoute } from '@/lib/server/api-route';
 import { requireApiSession } from '@/lib/server/auth';
@@ -37,7 +33,7 @@ type VoidSaleBody = {
   clientRequestId?: string;
 };
 
-type SheetDoc = GoogleSpreadsheet;
+type SheetDoc = PosDocument;
 
 type SheetRow = {
   get: (columnName: string) => unknown;
@@ -152,7 +148,7 @@ const VOIDS_LOG_HEADERS = [
 ];
 
 function valuesFor(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   record: Record<string, unknown>,
 ) {
   return sheet.headerValues.map(header => record[header] ?? '');
@@ -167,41 +163,10 @@ const INVENTORY_COLUMNS = {
   location: ['Location (Байршил)', 'location'],
 };
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is missing`);
-  }
-  return value.replace(/^"|"$/g, '');
-}
-
-function getPrivateKey() {
-  const key = requiredEnv('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n').trim();
-  const keyLines = key.split('\n');
-  const keyBody = keyLines.slice(1, -1).join('');
-
-  if (
-    !key.startsWith('-----BEGIN PRIVATE KEY-----') ||
-    !key.endsWith('-----END PRIVATE KEY-----') ||
-    /[^A-Za-z0-9+/=]/.test(keyBody)
-  ) {
-    throw new Error('GOOGLE_PRIVATE_KEY is not a valid service-account private key');
-  }
-
-  return key;
-}
-
-function createDoc(): SheetDoc {
-  const serviceAccountAuth = new JWT({
-    email: requiredEnv('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
-    key: getPrivateKey(),
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  return new GoogleSpreadsheet(requiredEnv('GOOGLE_SHEET_ID'), serviceAccountAuth);
-}
+function createDoc() { return createPosDocument(); }
 
 async function loadSpreadsheet() {
+  if (posBackend() === "postgres") { const doc = createDoc(); await doc.loadInfo(); return doc; }
   const doc = createDoc();
   await doc.loadInfo();
   return doc;
@@ -224,7 +189,7 @@ async function getOrCreateSheet(
 }
 
 async function ensureSheetHeaders(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   headers: readonly string[],
 ) {
   await sheet.loadHeaderRow();

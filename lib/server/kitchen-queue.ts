@@ -1,4 +1,5 @@
 import "server-only";
+import { deferPosEffect } from "./pos-storage/transaction";
 import { isKitchenTicketItem } from "@/lib/pos/preparation";
 
 import { Redis } from "@upstash/redis";
@@ -146,6 +147,7 @@ export async function syncKitchenOrder(input: KitchenOrderInput) {
 }
 
 export async function syncKitchenOrderSafely(input: KitchenOrderInput) {
+  if (deferPosEffect(() => syncKitchenOrderSafely(input))) return;
   try {
     return await withOrderSaveTimeout(syncKitchenOrder(input));
   } catch (error) {
@@ -205,6 +207,7 @@ export async function removeKitchenOrder(orderId: string) {
 }
 
 export async function removeKitchenOrderSafely(orderId: string) {
+  if (deferPosEffect(() => removeKitchenOrderSafely(orderId))) return;
   try {
     await withOrderSaveTimeout(removeKitchenOrder(orderId));
   } catch (error) {

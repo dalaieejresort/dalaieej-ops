@@ -1,5 +1,4 @@
-import { GoogleSpreadsheet } from "google-spreadsheet";
-import { JWT } from "google-auth-library";
+import { createPosDocument, posBackend, type PosDocument } from "@/lib/server/pos-storage";
 import { after, NextResponse } from "next/server";
 import { isValidBusinessDate } from "@/lib/pos/business-date";
 import { requireApiSession } from "@/lib/server/auth";
@@ -10,7 +9,7 @@ import { mergeManagementBoardSectionSafely } from "@/lib/server/management-board
 const OPERATIONS_CACHE_TTL_MS = 60_000;
 const SHEET_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedSpreadsheet:
-  | { expiresAt: number; promise: Promise<GoogleSpreadsheet> }
+  | { expiresAt: number; promise: Promise<PosDocument> }
   | undefined;
 
 const OPERATION_SHEETS = [
@@ -44,22 +43,10 @@ const OPERATION_SHEETS = [
   },
 ] as const;
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is missing`);
-  return value.replace(/^"|"$/g, "");
-}
-
-function createDoc() {
-  const auth = new JWT({
-    email: requiredEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-    key: requiredEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n").trim(),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  return new GoogleSpreadsheet(requiredEnv("GOOGLE_SHEET_ID"), auth);
-}
+function createDoc() { return createPosDocument(); }
 
 async function loadSpreadsheet() {
+  if (posBackend() === "postgres") { const doc = createDoc(); await doc.loadInfo(); return doc; }
   const now = Date.now();
   if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
     return cachedSpreadsheet.promise;

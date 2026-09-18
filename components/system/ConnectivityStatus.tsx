@@ -10,11 +10,15 @@ type ConnectionState =
   | "healthy"
   | "offline"
   | "api-error"
+  | "database-error"
+  | "maintenance"
   | "sheets-auth"
   | "sheets-rate-limit"
   | "sheets-error";
 
 function statusMessage(state: ConnectionState) {
+  if (state === "database-error") return "POS өгөгдлийн сантай холбогдож чадсангүй";
+  if (state === "maintenance") return "POS хадгалалтын шилжилт явагдаж байна · Түр хүлээнэ үү";
   if (state === "offline") return "Интернэт холболтгүй · Хуучин мэдээлэл харагдаж болно · Хадгалах үйлдэл түр хаалттай";
   if (state === "api-error") return "Dalai Eej сервертэй холбогдож чадсангүй";
   if (state === "sheets-auth") return "Google Sheets нэвтрэх эрхийн тохиргоо алдаатай байна";
@@ -38,14 +42,16 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
     try {
       const response = await fetch("/api/health", { cache: "no-store" });
       const payload = (await response.json().catch(() => null)) as
-        | { code?: string }
+        | { code?: string; writesPaused?: boolean }
         | null;
       if (response.ok) {
-        setState("healthy");
+        setState(payload?.writesPaused ? "maintenance" : "healthy");
         setLastHealthyAt(new Date());
         return;
       }
-      if (payload?.code === "SHEETS_AUTH_FAILED" || payload?.code === "SHEETS_CONFIG_MISSING") {
+      if (payload?.code === "POS_DATABASE_UNAVAILABLE") {
+        setState("database-error");
+      } else if (payload?.code === "SHEETS_AUTH_FAILED" || payload?.code === "SHEETS_CONFIG_MISSING") {
         setState("sheets-auth");
       } else if (payload?.code === "SHEETS_RATE_LIMITED") {
         setState("sheets-rate-limit");
@@ -85,7 +91,7 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
     if (role === "kitchen") return null;
     return (
       <div role="status" className={styles.connected}>
-        <span>Sheets холбогдсон</span>
+        <span>Өгөгдөл холбогдсон</span>
         <time className={styles.timestamp} dateTime={lastHealthyAt?.toISOString()}>
           {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit", hour12: false })}
         </time>

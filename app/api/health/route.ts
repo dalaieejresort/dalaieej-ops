@@ -1,3 +1,4 @@
+import { posBackend, posQuery, posSchema } from "@/lib/server/pos-storage/transaction";
 import { performance } from "node:perf_hooks";
 import { GoogleSpreadsheet } from "google-spreadsheet";
 import { JWT } from "google-auth-library";
@@ -23,6 +24,15 @@ function sheetsErrorCode(error: unknown) {
 }
 
 export async function GET() {
+  if (posBackend() === "postgres") {
+    try {
+      const result = await posQuery(`SELECT count(*)::int AS datasets FROM ${posSchema()}.datasets`);
+      if (Number(result.rows[0].datasets) < 8) throw new Error("POS import incomplete");
+      return NextResponse.json({status:"healthy",storage:"postgres",database:"connected",writesPaused:process.env.POS_WRITES_PAUSED === "true",checkedAt:new Date().toISOString()}, {headers:{"Cache-Control":"no-store"}});
+    } catch {
+      return NextResponse.json({status:"degraded",storage:"postgres",code:"POS_DATABASE_UNAVAILABLE"}, {status:503,headers:{"Cache-Control":"no-store"}});
+    }
+  }
   const result = await getCachedRead(
     "health:google-sheets",
     HEALTH_CACHE_TTL_MS,
@@ -68,10 +78,10 @@ export async function GET() {
     },
   );
 
-  return NextResponse.json(result.body, {
+  return NextResponse.json({...result.body,storage:"sheets",writesPaused:process.env.POS_WRITES_PAUSED === "true"}, {
     status: result.httpStatus,
     headers: {
-      "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+      "Cache-Control": "no-store",
     },
   });
 }

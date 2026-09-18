@@ -1,9 +1,5 @@
+import { createPosDocument, posBackend, type PosDocument, type PosWorksheet } from "@/lib/server/pos-storage";
 import { waiterPaymentError } from "@/lib/pos/waiter-payment";
-import {
-  GoogleSpreadsheet,
-  type GoogleSpreadsheetWorksheet,
-} from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
 import { after, NextResponse } from 'next/server';
 import { isUnlimitedInventoryItem } from '@/lib/pos/inventory';
 import { isValidBusinessDate } from '@/lib/pos/business-date';
@@ -90,7 +86,7 @@ type SettleSaleBody = {
   clientRequestId?: string;
 };
 
-type SheetDoc = GoogleSpreadsheet;
+type SheetDoc = PosDocument;
 
 type SheetRow = {
   get: (columnName: string) => unknown;
@@ -255,41 +251,10 @@ const CATALOG_COLUMNS = {
   ],
 };
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is missing`);
-  }
-  return value.replace(/^"|"$/g, '');
-}
-
-function getPrivateKey() {
-  const key = requiredEnv('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n').trim();
-  const keyLines = key.split('\n');
-  const keyBody = keyLines.slice(1, -1).join('');
-
-  if (
-    !key.startsWith('-----BEGIN PRIVATE KEY-----') ||
-    !key.endsWith('-----END PRIVATE KEY-----') ||
-    /[^A-Za-z0-9+/=]/.test(keyBody)
-  ) {
-    throw new Error('GOOGLE_PRIVATE_KEY is not a valid service-account private key');
-  }
-
-  return key;
-}
-
-function createDoc(): SheetDoc {
-  const serviceAccountAuth = new JWT({
-    email: requiredEnv('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
-    key: getPrivateKey(),
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  return new GoogleSpreadsheet(requiredEnv('GOOGLE_SHEET_ID'), serviceAccountAuth);
-}
+function createDoc() { return createPosDocument(); }
 
 async function loadSpreadsheet() {
+  if (posBackend() === "postgres") { const doc = createDoc(); await doc.loadInfo(); return doc; }
   const now = Date.now();
   if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
     return cachedSpreadsheet.promise;
@@ -314,7 +279,7 @@ async function loadSpreadsheet() {
 }
 
 async function ensureSheetHeaders(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   headers: readonly string[],
 ) {
   await sheet.loadHeaderRow();
@@ -435,7 +400,7 @@ function makeRawSheetTable(
 async function batchReadSheetTables(
   doc: SheetDoc,
   sheets: Array<{
-    sheet: GoogleSpreadsheetWorksheet;
+    sheet: PosWorksheet;
     requiredHeaders: readonly string[];
   }>,
 ) {
@@ -468,10 +433,10 @@ async function batchReadSheetTables(
 
 async function completeReceiptAndAppendPayments(
   doc: SheetDoc,
-  receiptsLogSheet: GoogleSpreadsheetWorksheet,
+  receiptsLogSheet: PosWorksheet,
   receiptRowNumber: number,
   receiptValues: unknown[],
-  paymentsLogSheet: GoogleSpreadsheetWorksheet,
+  paymentsLogSheet: PosWorksheet,
   paymentValues: unknown[][],
 ) {
   await executeAtomicBatch(doc, [

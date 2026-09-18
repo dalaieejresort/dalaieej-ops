@@ -5,7 +5,7 @@ import ts from 'typescript';
 function load(path, mocks = {}) {
   const compiled = ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const loaded={exports:{}};
-  new Function('require','module','exports',compiled)(name=>{if(name==='server-only')return {};if(name in mocks)return mocks[name];throw new Error(`Unmocked dependency: ${name}`);},loaded,loaded.exports);
+  new Function('require','module','exports',compiled)(name=>{if(name==='server-only')return {};if(name==='./pos-storage/transaction')return {deferPosEffect:()=>false};if(name in mocks)return mocks[name];throw new Error(`Unmocked dependency: ${name}`);},loaded,loaded.exports);
   return loaded.exports;
 }
 const preparation=load('lib/pos/preparation.ts');

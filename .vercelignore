@@ -5,3 +5,6 @@ finance/
 outputs/
 tmp/
 tsconfig.tsbuildinfo
+
+.private/
+.env*

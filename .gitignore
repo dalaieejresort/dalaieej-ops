@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Safe, blank configuration template
 !/reconciliation/.env.example
+
+# Private migration snapshots and recovery evidence
+/.private/

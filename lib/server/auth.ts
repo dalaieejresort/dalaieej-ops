@@ -73,12 +73,26 @@ function getAccounts(): StoredAccount[] {
     throw new Error("OPS_AUTH_ACCOUNTS must be an array");
   }
 
+  // Use the receipts owner credential without replacing cashier/manager accounts.
+  const ownerRaw = process.env.OPS_OWNER_ACCOUNT?.trim();
+  let sharedOwner: unknown;
+  if (ownerRaw) {
+    sharedOwner = JSON.parse(ownerRaw);
+    if (!sharedOwner || typeof sharedOwner !== "object" ||
+      (sharedOwner as Partial<StoredAccount>).role !== "owner") {
+      throw new Error("OPS_OWNER_ACCOUNT must contain an owner account");
+    }
+  }
+  const primaryAccounts = sharedOwner
+    ? [...parsed.filter(account => account?.role !== "owner"), sharedOwner]
+    : parsed;
+
   const waiterRaw = process.env.OPS_WAITER_ACCOUNTS?.trim();
   const waiters: unknown = waiterRaw ? JSON.parse(waiterRaw) : [];
   if (!Array.isArray(waiters) || waiters.some(value => !value || value.role !== "waiter")) {
     throw new Error("OPS_WAITER_ACCOUNTS must contain only waiter accounts");
   }
-  const accounts = [...parsed, ...waiters].map((value, index) => {
+  const accounts = [...primaryAccounts, ...waiters].map((value, index) => {
     if (!value || typeof value !== "object") {
       throw new Error(`OPS_AUTH_ACCOUNTS[${index}] is invalid`);
     }

@@ -7,6 +7,8 @@ import {
   type OpsRole,
 } from "@/lib/server/auth";
 
+import { withPosTransaction } from "./pos-storage/transaction";
+
 type RouteHandler = (request: Request) => Promise<Response>;
 
 function sameOrigin(request: Request) {
@@ -57,8 +59,11 @@ export function withProtectedApiRoute(
       return response;
     }
 
+    if (process.env.POS_WRITES_PAUSED === "true" && method !== "GET" && method !== "HEAD") {
+      return NextResponse.json({ error: "POS storage migration in progress. Please retry shortly.", code: "POS_MAINTENANCE" }, { status: 503, headers: { "Retry-After": "60" } });
+    }
     try {
-      const response = await handler(request);
+      const response = await withPosTransaction(() => handler(request), response => response.ok);
       response.headers.set("x-request-id", requestId);
       console.info(JSON.stringify({
         level: response.status >= 500 ? "error" : "info",

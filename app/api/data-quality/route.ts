@@ -1,8 +1,4 @@
-import {
-  GoogleSpreadsheet,
-  type GoogleSpreadsheetWorksheet,
-} from "google-spreadsheet";
-import { JWT } from "google-auth-library";
+import { createPosDocument, posBackend, type PosDocument, type PosWorksheet } from "@/lib/server/pos-storage";
 import { after, NextResponse } from "next/server";
 import type {
   DataQualityCheck,
@@ -27,7 +23,7 @@ import {
   executeAtomicBatch,
 } from "@/lib/server/sheets-atomic";
 
-type SheetDoc = GoogleSpreadsheet;
+type SheetDoc = PosDocument;
 
 type RawRow = {
   get: (column: string) => unknown;
@@ -75,22 +71,10 @@ const CATALOG_TITLES = [
   "Inventory_Catalogue",
 ].filter(Boolean) as string[];
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is missing`);
-  return value.replace(/^"|"$/g, "");
-}
-
-function createDoc() {
-  const auth = new JWT({
-    email: requiredEnv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-    key: requiredEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n").trim(),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  return new GoogleSpreadsheet(requiredEnv("GOOGLE_SHEET_ID"), auth);
-}
+function createDoc() { return createPosDocument(); }
 
 async function loadSpreadsheet() {
+  if (posBackend() === "postgres") { const doc = createDoc(); await doc.loadInfo(); return doc; }
   const now = Date.now();
   if (cachedSpreadsheet && cachedSpreadsheet.expiresAt > now) {
     return cachedSpreadsheet.promise;
@@ -117,7 +101,7 @@ function findSheet(doc: SheetDoc, titles: string[]) {
 }
 
 async function ensureSheetHeaders(
-  sheet: GoogleSpreadsheetWorksheet,
+  sheet: PosWorksheet,
   headers: readonly string[],
 ) {
   await sheet.loadHeaderRow();
@@ -159,7 +143,7 @@ function rawTable(values: unknown[][]): RawTable {
 
 async function readTables(
   doc: SheetDoc,
-  sheets: GoogleSpreadsheetWorksheet[],
+  sheets: PosWorksheet[],
 ) {
   if (sheets.length === 0) return [];
   const ranges = sheets
@@ -415,9 +399,9 @@ async function loadQualityReport(businessDate: string | null) {
     paymentsSheet,
     receiptsSheet,
     sessionsSheet,
-  ].filter((sheet): sheet is GoogleSpreadsheetWorksheet => Boolean(sheet));
+  ].filter((sheet): sheet is PosWorksheet => Boolean(sheet));
   const tables = await readTables(doc, available);
-  const tableFor = (sheet: GoogleSpreadsheetWorksheet | null) => {
+  const tableFor = (sheet: PosWorksheet | null) => {
     if (!sheet) return rawTable([]);
     return tables[available.indexOf(sheet)] ?? rawTable([]);
   };
@@ -486,10 +470,10 @@ async function backfillOrderItems() {
   const orderItemsSheet = await getOrCreateOrderItemsSheet(doc);
   const catalogSheet = findSheet(doc, CATALOG_TITLES);
   const available = [salesSheet, orderItemsSheet, catalogSheet].filter(
-    (sheet): sheet is GoogleSpreadsheetWorksheet => Boolean(sheet),
+    (sheet): sheet is PosWorksheet => Boolean(sheet),
   );
   const tables = await readTables(doc, available);
-  const tableFor = (sheet: GoogleSpreadsheetWorksheet | null) => {
+  const tableFor = (sheet: PosWorksheet | null) => {
     if (!sheet) return rawTable([]);
     return tables[available.indexOf(sheet)] ?? rawTable([]);
   };
