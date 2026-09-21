@@ -334,7 +334,7 @@ function SectionShell({
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-36 items-center justify-center px-4 py-8 text-center text-sm font-bold text-[#64748b]">
+    <div className={styles.emptyState}>
       {children}
     </div>
   );
@@ -694,10 +694,10 @@ export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1440px] gap-4 px-4 py-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="grid min-w-0 gap-4">
+      <main className={styles.content}>
+        <div className={styles.dailySummary}>
           {isInitialLoading ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Мэдээлэл ачаалж байна" aria-busy="true">
+            <div className={styles.metrics} aria-label="Мэдээлэл ачаалж байна" aria-busy="true">
               {Array.from({ length: 4 }).map((_, index) => (
                 <div key={index} className="h-32 animate-pulse rounded-xl border border-[#e2e8f0] bg-white p-4">
                   <div className="h-3 w-28 rounded bg-[#e2e8f0]" />
@@ -707,7 +707,7 @@ export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className={styles.metrics}>
               <MetricCard
                 label="Өдрийн борлуулалт"
                 value={formatMNT(data.totals.salesTotal)}
@@ -754,7 +754,7 @@ export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
             </div>
           )}
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <div className={styles.sectionRow}>
             <SectionShell
               title="Өдрийн төлөв"
               action={
@@ -822,7 +822,7 @@ export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
               title="Төлөгдөөгүй өр"
               action={
                 <a
-                  href="/register"
+                  href="/register?tab=charges"
                   className="rounded-lg border border-[#cbd5e1] px-3 py-2 text-xs font-black text-[#111827] hover:bg-[#f8fafc]"
                 >
                   Өр хаах
@@ -916,7 +916,177 @@ export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
           </SectionShell>
         </div>
 
-        <aside className="grid min-w-0 content-start gap-4">
+        <div className={styles.sectionRow}>
+          <SectionShell title="Бараа материал">
+            <div className="p-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-[#e5eaf1] px-3 py-3">
+                  <p className="text-xs font-black uppercase tracking-normal text-[#64748b]">
+                    Нийт бараа
+                  </p>
+                  <p className="mt-2 text-2xl font-black">
+                    {formatNumber(data.catalog.length)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#fecaca] bg-[#fff7f7] px-3 py-3">
+                  <p className="text-xs font-black uppercase tracking-normal text-[#991b1b]">
+                    Бага үлдэгдэл
+                  </p>
+                  <p className="mt-2 text-2xl font-black text-[#991b1b]">
+                    {formatNumber(lowStockItems.length)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 divide-y divide-[#e5eaf1] rounded-lg border border-[#e5eaf1]">
+                {lowStockItems.length === 0 ? (
+                  <div className="px-3 py-5 text-center text-sm font-bold text-[#64748b]">
+                    Үлдэгдэл багассан бараа байхгүй байна.
+                  </div>
+                ) : (
+                  lowStockItems.map((item) => (
+                    <div
+                      key={item.sku}
+                      className="grid min-h-12 grid-cols-[minmax(0,1fr)_52px] items-center gap-3 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black">
+                          {item.name}
+                        </p>
+                        <p className="truncate text-xs font-bold text-[#64748b]">
+                          {item.sku} · {item.category || "Ангилалгүй"}
+                        </p>
+                      </div>
+                      <span className="text-right text-sm font-black text-[#b91c1c]">
+                        {formatNumber(item.stock ?? 0)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </SectionShell>
+          <SectionShell title="Барааны тооллогын тохируулга">
+            <div className={styles.adjustmentForm}>
+              <label className="grid gap-1 text-xs font-black text-[#475569]">
+                Бараа
+                <select
+                  value={adjustmentSku}
+                  onChange={event => setAdjustmentSku(event.target.value)}
+                  className="h-11 rounded-lg border border-[#cbd5e1] bg-white px-3 text-sm font-bold text-[#111827]"
+                >
+                  <option value="">Бараа сонгох</option>
+                  {data.catalog.map(item => (
+                    <option key={item.sku} value={item.sku}>
+                      {item.name} ({item.sku}) · {formatNumber(item.stock ?? 0)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-black text-[#475569]">
+                Зөрүү (+ нэмэх, − хасах)
+                <input
+                  type="number"
+                  step="1"
+                  value={adjustmentDelta}
+                  onChange={event => setAdjustmentDelta(event.target.value)}
+                  className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-black text-[#475569]">
+                Тооллогын тайлбар
+                <input
+                  value={adjustmentReason}
+                  onChange={event => setAdjustmentReason(event.target.value)}
+                  placeholder="Жишээ: 2026.08.17 тооллогоор зөрсөн"
+                  className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={adjustmentSaving}
+                onClick={() => void submitInventoryAdjustment()}
+                className="h-11 rounded-lg bg-[#111827] px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {adjustmentSaving ? "Хадгалж байна…" : "Тохируулга хадгалах"}
+              </button>
+              {adjustmentMessage && (
+                <p className="break-words text-xs font-bold text-[#64748b]">
+                  {adjustmentMessage}
+                </p>
+              )}
+              <p className="text-xs font-bold leading-5 text-[#94a3b8]">
+                Барааны үлдэгдлийг шууд дарж өөрчлөхгүй бөгөөд засвар бүр Inventory_Log-д ажилтны нэр, шалтгаан, хүсэлтийн дугаартай бүртгэгдэнэ.
+              </p>
+            </div>
+          </SectionShell>
+        </div>
+        <div className={styles.sectionRow}>
+          <SectionShell
+            title="Дуусаагүй ажиллагаа"
+            action={
+              <span className={`text-xs font-black ${data.pendingOperations.length > 0 ? "text-[#b45309]" : "text-[#047857]"}`}>
+                {formatNumber(data.pendingOperations.length)}
+              </span>
+            }
+          >
+            {data.pendingOperations.length === 0 ? (
+              <EmptyState>Хүлээгдэж буй эсвэл гацсан ажиллагаа алга.</EmptyState>
+            ) : (
+              <div className="divide-y divide-[#e5eaf1]">
+                {data.pendingOperations.slice(0, 10).map(operation => (
+                  <div key={`${operation.type}-${operation.requestId}-${operation.resourceId}`} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm font-black">
+                        {operation.resourceId || operation.requestId || operation.type}
+                      </p>
+                      <span className="rounded bg-[#fff7ed] px-2 py-1 text-[11px] font-black text-[#b45309]">
+                        {operation.type}
+                      </span>
+                    </div>
+                    <p className="mt-1 break-words text-xs font-bold text-[#64748b]">
+                      {operation.businessDate || "Огноогүй"} · {operation.actor || "Ажилтан тодорхойгүй"}
+                    </p>
+                    <p className="mt-1 text-xs font-bold text-[#94a3b8]">
+                      {operation.recoverable
+                        ? "Дахин хадгалах үед автоматаар үргэлжлүүлнэ"
+                        : "Менежер гараар шалгах шаардлагатай"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionShell>
+          <SectionShell title="Их зарагдсан бараа">
+            {topItems.length === 0 ? (
+              <EmptyState>Өнөөдөр зарагдсан бараа бүртгэгдээгүй байна.</EmptyState>
+            ) : (
+              <div className="divide-y divide-[#e5eaf1]">
+                {topItems.map((item, index) => (
+                  <div
+                    key={item.name}
+                    className="grid min-h-14 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-3 px-4 py-2"
+                  >
+                    <span className="text-sm font-black text-[#94a3b8]">
+                      {index + 1}
+                    </span>
+                    <span className="truncate text-sm font-black">
+                      {item.name}
+                    </span>
+                    <span className="text-right text-sm font-black">
+                      {formatNumber(item.quantity)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionShell>
+        </div>
+        <details className={styles.diagnostics}>
+          <summary>
+            <span>Өгөгдлийн шалгалт</span>
+            <span>{!data.quality ? "Шалгаагүй" : data.quality.status === "healthy" ? "Бүх шалгалт хэвийн" : `${formatNumber(data.quality.summary.issueCount)} зөрчил илэрсэн`}</span>
+          </summary>
           <SectionShell
             title="Өгөгдлийн чанар"
             action={
@@ -1009,199 +1179,7 @@ export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
               </div>
             )}
           </SectionShell>
-
-          <SectionShell title="Бараа материал">
-            <div className="p-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-[#e5eaf1] px-3 py-3">
-                  <p className="text-xs font-black uppercase tracking-normal text-[#64748b]">
-                    Нийт бараа
-                  </p>
-                  <p className="mt-2 text-2xl font-black">
-                    {formatNumber(data.catalog.length)}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-[#fecaca] bg-[#fff7f7] px-3 py-3">
-                  <p className="text-xs font-black uppercase tracking-normal text-[#991b1b]">
-                    Бага үлдэгдэл
-                  </p>
-                  <p className="mt-2 text-2xl font-black text-[#991b1b]">
-                    {formatNumber(lowStockItems.length)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 divide-y divide-[#e5eaf1] rounded-lg border border-[#e5eaf1]">
-                {lowStockItems.length === 0 ? (
-                  <div className="px-3 py-5 text-center text-sm font-bold text-[#64748b]">
-                    Үлдэгдэл багассан бараа байхгүй байна.
-                  </div>
-                ) : (
-                  lowStockItems.map((item) => (
-                    <div
-                      key={item.sku}
-                      className="grid min-h-12 grid-cols-[minmax(0,1fr)_52px] items-center gap-3 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black">
-                          {item.name}
-                        </p>
-                        <p className="truncate text-xs font-bold text-[#64748b]">
-                          {item.sku} · {item.category || "Ангилалгүй"}
-                        </p>
-                      </div>
-                      <span className="text-right text-sm font-black text-[#b91c1c]">
-                        {formatNumber(item.stock ?? 0)}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </SectionShell>
-
-          <SectionShell
-            title="Дуусаагүй ажиллагаа"
-            action={
-              <span className={`text-xs font-black ${data.pendingOperations.length > 0 ? "text-[#b45309]" : "text-[#047857]"}`}>
-                {formatNumber(data.pendingOperations.length)}
-              </span>
-            }
-          >
-            {data.pendingOperations.length === 0 ? (
-              <EmptyState>Хүлээгдэж буй эсвэл гацсан ажиллагаа алга.</EmptyState>
-            ) : (
-              <div className="divide-y divide-[#e5eaf1]">
-                {data.pendingOperations.slice(0, 10).map(operation => (
-                  <div key={`${operation.type}-${operation.requestId}-${operation.resourceId}`} className="px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="truncate text-sm font-black">
-                        {operation.resourceId || operation.requestId || operation.type}
-                      </p>
-                      <span className="rounded bg-[#fff7ed] px-2 py-1 text-[11px] font-black text-[#b45309]">
-                        {operation.type}
-                      </span>
-                    </div>
-                    <p className="mt-1 break-words text-xs font-bold text-[#64748b]">
-                      {operation.businessDate || "Огноогүй"} · {operation.actor || "Ажилтан тодорхойгүй"}
-                    </p>
-                    <p className="mt-1 text-xs font-bold text-[#94a3b8]">
-                      {operation.recoverable
-                        ? "Дахин хадгалах үед автоматаар үргэлжлүүлнэ"
-                        : "Менежер гараар шалгах шаардлагатай"}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SectionShell>
-
-          <SectionShell title="Барааны тооллогын тохируулга">
-            <div className="grid gap-3 p-4">
-              <label className="grid gap-1 text-xs font-black text-[#475569]">
-                Бараа
-                <select
-                  value={adjustmentSku}
-                  onChange={event => setAdjustmentSku(event.target.value)}
-                  className="h-11 rounded-lg border border-[#cbd5e1] bg-white px-3 text-sm font-bold text-[#111827]"
-                >
-                  <option value="">Бараа сонгох</option>
-                  {data.catalog.map(item => (
-                    <option key={item.sku} value={item.sku}>
-                      {item.name} ({item.sku}) · {formatNumber(item.stock ?? 0)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs font-black text-[#475569]">
-                Зөрүү (+ нэмэх, − хасах)
-                <input
-                  type="number"
-                  step="1"
-                  value={adjustmentDelta}
-                  onChange={event => setAdjustmentDelta(event.target.value)}
-                  className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
-                />
-              </label>
-              <label className="grid gap-1 text-xs font-black text-[#475569]">
-                Тооллогын тайлбар
-                <input
-                  value={adjustmentReason}
-                  onChange={event => setAdjustmentReason(event.target.value)}
-                  placeholder="Жишээ: 2026.08.17 тооллогоор зөрсөн"
-                  className="h-11 rounded-lg border border-[#cbd5e1] px-3 text-sm font-bold text-[#111827]"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={adjustmentSaving}
-                onClick={() => void submitInventoryAdjustment()}
-                className="h-11 rounded-lg bg-[#111827] px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {adjustmentSaving ? "Хадгалж байна…" : "Тохируулга хадгалах"}
-              </button>
-              {adjustmentMessage && (
-                <p className="break-words text-xs font-bold text-[#64748b]">
-                  {adjustmentMessage}
-                </p>
-              )}
-              <p className="text-xs font-bold leading-5 text-[#94a3b8]">
-                Барааны үлдэгдлийг шууд дарж өөрчлөхгүй бөгөөд засвар бүр Inventory_Log-д ажилтны нэр, шалтгаан, хүсэлтийн дугаартай бүртгэгдэнэ.
-              </p>
-            </div>
-          </SectionShell>
-
-          <SectionShell title="Их зарагдсан бараа">
-            {topItems.length === 0 ? (
-              <EmptyState>Өнөөдөр зарагдсан бараа бүртгэгдээгүй байна.</EmptyState>
-            ) : (
-              <div className="divide-y divide-[#e5eaf1]">
-                {topItems.map((item, index) => (
-                  <div
-                    key={item.name}
-                    className="grid min-h-14 grid-cols-[32px_minmax(0,1fr)_64px] items-center gap-3 px-4 py-2"
-                  >
-                    <span className="text-sm font-black text-[#94a3b8]">
-                      {index + 1}
-                    </span>
-                    <span className="truncate text-sm font-black">
-                      {item.name}
-                    </span>
-                    <span className="text-right text-sm font-black">
-                      {formatNumber(item.quantity)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SectionShell>
-
-          <SectionShell title="Шуурхай үйлдлүүд">
-            <div className="grid gap-2 p-4">
-              <a
-                href="/register"
-                className="flex min-h-12 items-center justify-between rounded-lg border border-[#111827] bg-[#111827] px-3 text-sm font-black text-white hover:bg-[#374151]"
-              >
-                <span>Касс ажиллуулах</span>
-                <span aria-hidden="true">›</span>
-              </a>
-              <a
-                href="/register"
-                className="flex min-h-12 items-center justify-between rounded-lg border border-[#cbd5e1] bg-white px-3 text-sm font-black text-[#111827] hover:bg-[#f8fafc]"
-              >
-                <span>Өр хаах</span>
-                <span aria-hidden="true">›</span>
-              </a>
-              <a
-                href="/register"
-                className="flex min-h-12 items-center justify-between rounded-lg border border-[#cbd5e1] bg-white px-3 text-sm font-black text-[#111827] hover:bg-[#f8fafc]"
-              >
-                <span>Өдрийн хаалт</span>
-                <span aria-hidden="true">›</span>
-              </a>
-            </div>
-          </SectionShell>
-        </aside>
+        </details>
       </main>
     </div>
   );
