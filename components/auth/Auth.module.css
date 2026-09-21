@@ -3,13 +3,12 @@
   background: #fff;
   color: #111;
   color-scheme: light;
-  font-size: 12px;
-  font-weight: 400;
+  font: 400 var(--ui-body-size)/1.5 var(--ui-font);
 }
 .loginPage ::selection, .session ::selection { background: #d2042d; color: #fff; }
 .topbar {
   height: 40px;
-  padding: 0 20px;
+  padding: 0 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -19,11 +18,11 @@
 .loginWorkspace { display: grid; grid-template-columns: 123px minmax(0, 1fr); min-height: calc(100dvh - 40px); }
 .index { border-right: .5px solid #8c8c8c; padding: 28px 16px; }
 .loginPanel { width: 100%; max-width: 480px; border-right: .5px solid #8c8c8c; }
-.titleBand { min-height: 72px; padding: 20px 24px; border-bottom: .5px solid #8c8c8c; }
+.titleBand { min-height: var(--ui-title-band); padding: 12px var(--ui-page-gutter); border-bottom: .5px solid #8c8c8c; }
 .titleBand h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 400; }
-.titleBand p { margin: 6px 0 0; color: #666; font-size: 12px; }
-.formBody { padding: 32px 24px; border-bottom: .5px solid #8c8c8c; }
-.form { display: grid; gap: 28px; }
+.titleBand p { margin: 4px 0 0; line-height:12px; color: var(--ui-muted); font-size: var(--ui-meta-size); }
+.formBody { padding: var(--ui-section-space) var(--ui-page-gutter); border-bottom: .5px solid #8c8c8c; }
+.form { display: grid; gap: 24px; }
 .staffList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0; border: 0; }
 .staffList legend { margin-bottom: 12px; }
 .staffOption { display: flex; align-items: center; gap: 10px; min-height: 48px; border: .5px solid #8c8c8c; padding: 8px 12px; font-size: 16px; cursor: pointer; }
@@ -33,9 +32,9 @@
 .label { display: grid; gap: 8px; font-size: 12px; font-weight: 400; }
 .input { width: 100%; min-width: 0; height: 40px; padding: 4px 0; border: 0; border-bottom: .5px solid #8c8c8c; border-radius: 0; background: transparent; color: #111; font-size: 16px; font-weight: 400; }
 .input:focus-visible, .primaryButton:focus-visible, .logoutButton:focus-visible { outline: 2px solid #d2042d; outline-offset: 3px; }
-.primaryButton { min-height: 40px; padding: 8px 16px; border: .5px solid #d2042d; border-radius: 0; background: #d2042d; color: #fff; font-size: 12px; font-weight: 400; cursor: pointer; }
+.primaryButton { min-height: var(--ui-control-height); padding: 8px 12px; border: .5px solid #d2042d; border-radius: 0; background: #d2042d; color: #fff; font-size: 12px; font-weight: 400; cursor: pointer; }
 .primaryButton:hover { background: #b80327; border-color: #b80327; }
-.primaryButton:disabled, .logoutButton:disabled { opacity: .5; cursor: wait; }
+.primaryButton:disabled, .logoutButton:disabled { background:var(--ui-disabled); border-color:var(--ui-disabled); color:var(--ui-muted); cursor:wait; }
 .error { margin: 0; padding: 12px 0; border-top: .5px solid #d2042d; color: #d2042d; font-size: 12px; line-height: 1.5; }
 .session { position:fixed; top:4px; right:12px; z-index:80; background:#fff; color:#111; font-size:12px; }
 .session summary { border:0; max-width:220px; min-height:32px; font-size:10px; }
@@ -43,11 +42,11 @@
 .logoutButton { flex-shrink: 0; min-height: 40px; padding: 8px 12px; border: 0; border-left: .5px solid #8c8c8c; border-radius: 0; background: #fff; color: #111; font-size: 12px; font-weight: 400; cursor: pointer; }
 .logoutButton:hover { background: #f5f5f5; }
 
-@media (max-width: 600px) { .loginWorkspace { grid-template-columns: minmax(0, 1fr); align-content: start; } .index { border-right: 0; border-bottom: .5px solid #8c8c8c; padding: 12px 20px; } .loginPanel { max-width: none; border-right: 0; } .titleBand { padding: 20px; } .formBody { padding: 28px 20px; } }
+@media (max-width: 600px) { .loginWorkspace { grid-template-columns: minmax(0, 1fr); align-content: start; } .index { border-right: 0; border-bottom: .5px solid #8c8c8c; padding: 12px 20px; } .loginPanel { max-width: none; border-right: 0; } }
 @media print { .session { display: none; } }
 .staffIdentity { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .staffIdentity button { min-height: 44px; border: .5px solid #8c8c8c; padding: 8px 12px; background: #fff; cursor: pointer; }
 .staffIdentity button:focus-visible { outline: 2px solid #d2042d; }
 .staffIdentity [role=alert] { color: #d2042d; }
 
-@media (min-width: 768px) { .titleBand { height:72px; padding:12px 24px; } .input { font-size:12px; } }
+@media (min-width: 768px) { .input { font-size:12px; } }

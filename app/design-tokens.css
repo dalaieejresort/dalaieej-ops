@@ -14,6 +14,18 @@
   --ui-topbar: 40px;
   --ui-rail: 123px;
   --ui-title-band: 72px;
+  --ui-font: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --ui-body-size: 12px;
+  --ui-meta-size: 10px;
+  --ui-title-size: 24px;
+  --ui-title-line: 32px;
+  --ui-control-height: 36px;
+  --ui-content-width: 1100px;
+  --ui-page-gutter: 24px;
+  --ui-section-space: 24px;
+}
+@media (max-width: 767px) {
+  :root { --ui-page-gutter: 16px; --ui-section-space: 16px; }
 }
 ::selection { background: var(--ui-accent); color: var(--ui-paper); }
 :where(button, a, input, select, textarea, summary):focus-visible {

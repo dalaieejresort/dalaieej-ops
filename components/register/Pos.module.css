@@ -1,8 +1,8 @@
 .pos {
   color-scheme: light;
   background: #fff !important;
-  color: #111;
-  font: 400 12px Arial, Helvetica, sans-serif;
+  color: var(--ui-ink);
+  font: 400 var(--ui-body-size)/1.5 var(--ui-font);
 }
 .pos *, .pos *::before, .pos *::after {
   border-radius: 0 !important;
@@ -23,8 +23,6 @@
 .pos :global([class*="text-xs"]), .pos :global([class*="text-[11px]"]) { font-size: 10px; }
 .pos :global([class*="text-2xl"]), .pos :global([class*="text-3xl"]) { font-size: 24px; }
 .pos :global([class*="text-[#6b7280]"]), .pos :global([class*="text-[#9ca3af]"]) { color: #666; }
-.topbar { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; height: 40px; padding: 0 16px; border-bottom: .5px solid #8c8c8c; background: #fff; font-size: 12px; }
-.topbar span:last-child { color: #666; font-size: 10px; }
 .pos > header { background: #fff !important; padding: 12px 16px; min-height: 72px; gap: 12px; }
 .pos > header h1 { font-size: 24px; font-weight: 400; }
 .pos > header .pageHeading p { font-size: 10px; }
@@ -33,37 +31,29 @@
 .pos main, .pos section, .pos aside { background: #fff; }
 .pos :global([class*="bg-[#f"]), .pos :global([class*="bg-[#e"]), .pos :global([class*="bg-white"]) { background-color: #fff; }
 .pos :global(button) { cursor: pointer; transition: background-color .12s; }
-.pos :global(button:not(:disabled):hover) { background-color: #f5f5f5 !important; color: #111; filter: none; }
+.pos :global(button:not(:disabled):hover) { background-color: #f5f5f5 !important; color: var(--ui-ink); filter: none; }
 .pos :global(button:not(:disabled):active) { transform: none !important; scale: 1 !important; background-color: #f0f0f0 !important; }
 .pos :global(button[class*="bg-[#111827]"]), .pos :global(button[style*="background-color"]), .pos :global(button[aria-pressed="true"]) { background: #f0f0f0 !important; color: #111 !important; border-color: #8c8c8c !important; }
 .pos :global(button[class*="bg-[#047857]"]), .pos :global(button[class*="bg-[#b91c1c]"]) { background: #d2042d !important; color: #fff !important; border-color: #d2042d !important; }
 .pos :global(button[class*="bg-[#047857]"]:hover), .pos :global(button[class*="bg-[#b91c1c]"]:hover) { background: #b80327 !important; color: #fff; }
 .pos :global(button:disabled) { background: #d9d9d9 !important; color: #666 !important; border-color: #d9d9d9 !important; cursor: not-allowed; opacity: 1; }
-.pos :global(input:not([type="checkbox"]):not([type="radio"])), .pos :global(select), .pos :global(textarea) { background: transparent !important; border: 0; border-bottom: .5px solid #8c8c8c; color: #111; font-weight: 400; }
+.pos :global(input:not([type="checkbox"]):not([type="radio"])), .pos :global(select), .pos :global(textarea) { background: transparent !important; border: 0; border-bottom: .5px solid #8c8c8c; color: var(--ui-ink); font-weight: 400; }
 .pos :global(input:focus-visible), .pos :global(select:focus-visible), .pos :global(textarea:focus-visible), .pos :global(button:focus-visible), .pos :global(a:focus-visible) { outline: 2px solid #d2042d !important; outline-offset: -2px; }
 .pos :global(.ring-2) { outline: 1px solid #111; outline-offset: -1px; background-color: #f0f0f0 !important; }
-.modeNav { display: none; }
 .productGrid { gap: 0; border-top: .5px solid #8c8c8c; border-left: .5px solid #8c8c8c; }
 .pos .productGrid > div { border: 0; border-right: .5px solid #8c8c8c; border-bottom: .5px solid #8c8c8c; }
 .pos :global([data-testid="product-tile"]) { min-height: 144px; height: auto; padding: 12px; background: #fff !important; }
 .pos :global([data-testid="product-tile"]:hover) { background: #f5f5f5 !important; }
 .pos :global([data-testid="product-tile"] > button) { min-height: 48px; background: transparent !important; font-size: 12px; }
-.pos :global([data-testid="product-tile"] div button) { min-height: 28px; border: .5px solid #8c8c8c; background: #fff; color: #111; white-space: normal; }
+.pos :global([data-testid="product-tile"] div button) { min-height: 28px; border: .5px solid #8c8c8c; background: #fff; color: var(--ui-ink); white-space: normal; }
 .pos :global([data-testid="complete-sale"]) { height: 40px; font-size: 12px; }
 /* Payment warnings retain their words and restrained status text. */
 .pos :global([class*="fixed"][class*="inset-0"]:not(aside)) { background: rgb(0 0 0 / .4) !important; backdrop-filter: none; }
 .pos :global([class*="fixed"][class*="inset-0"]:not(aside) > div) { background: #fff !important; border: .5px solid #8c8c8c; }
 .pos :global([class*="backdrop-blur"]) { backdrop-filter: none; }
-@media (min-width: 768px) {
-  .modeNav { display: flex; gap: 0; border: .5px solid #8c8c8c; }
-  .modeNav button { border-right: .5px solid #8c8c8c; }
-}
 @media (min-width: 1024px) {
   .pos { height: 100dvh; overflow: hidden; }
   .pos > header, .pos > main { margin-left: 123px; }
-  .modeNav { position: fixed; top: 40px; bottom: 0; left: 0; width: 123px; z-index: 35; flex-direction: column; border: 0; border-right: .5px solid #8c8c8c; background: #fff; padding-top: 16px; counter-reset: pos-nav; }
-  .modeNav button { display: flex; align-items: center; gap: 8px; min-height: 24px !important; height: 24px !important; padding: 0 8px; font-size: 10px !important; text-align: left; border: 0; }
-  .modeNav button::before { counter-increment: pos-nav; content: "0" counter(pos-nav); color: #666; font-size: 10px; }
   .pos > main > section { min-height: 0; }
   .pos > main > aside { min-height: 0; padding-bottom: 56px; }
 }
@@ -74,7 +64,7 @@
   .pos :global([data-testid="product-tile"] div button) { min-height: 36px; }
 }
 .pos > nav[aria-label="Гар утасны үндсэн цэс"] { background: #fff; gap: 0; padding-top: 0; padding-left: 0; padding-right: 0; }
-.pos > nav[aria-label="Гар утасны үндсэн цэс"] button { background: #fff; color: #111; border-right: .5px solid #8c8c8c; min-height: 56px; }
+.pos > nav[aria-label="Гар утасны үндсэн цэс"] button { background: #fff; color: var(--ui-ink); border-right: .5px solid #8c8c8c; min-height: 56px; }
 .pos > nav[aria-label="Гар утасны үндсэн цэс"] button[aria-expanded="true"] { background: #f0f0f0; }
 
 /* Compact mobile navigation shares the desktop rail's typographic hierarchy. */
@@ -94,9 +84,9 @@
 /* Shared order service fields. */
 .serviceFields { margin: 12px; padding: 12px; border: .5px solid #8c8c8c; }
 .serviceFields legend { padding: 0 4px; font-size: 12px; }
-.serviceFields label { display: block; font-size: 14px; margin-top: 8px; }
+.serviceFields label { display: block; font-size: var(--ui-body-size); margin-top: 8px; }
 .serviceFields input, .serviceFields textarea { width: 100%; display: block; min-height: 44px; padding: 8px 0; }
-.serviceFields p { color: #666; font-size: 12px; margin: 8px 0; }
+.serviceFields p { color: var(--ui-muted); font-size: var(--ui-meta-size); margin: 8px 0; }
 
 /* Keep the close control visible while long day reports scroll at any zoom. */
 .dayModalOverlay { z-index: 120; }
@@ -127,7 +117,6 @@
 }
 .phone > header, .phone > main { margin-left: 0; }
 .phone > header { position: static; }
-.phone .modeNav { display: none; }
 .phone > main { grid-template-columns: minmax(0, 1fr); }
 .phone > main > section {
   height: calc(100dvh - 11rem);
@@ -167,19 +156,29 @@
 .phone :global([data-testid="product-tile"]) { padding: 10px; }
 .phone :global([data-testid="product-tile"] div button) { min-height: 36px; }
 
-@media(min-width:1024px) { .pos { padding-top:40px; } .topbar { position:fixed; inset:0 0 auto; z-index:50; } .pos > header { height:72px; padding:8px 16px; } .modeNav { padding-top:72px; } }
 
 /* Navigation is shared across the operational screens. */
 .pos { padding-top:40px; }
-.pos > header.registerHeader { display:flex; flex-wrap:wrap; align-items:center; min-height:72px; height:auto; gap:10px 20px; padding:12px 20px; position:relative; z-index:40; }
+.pos > header.registerHeader { display:flex; flex-wrap:wrap; align-items:center; min-height:72px; height:auto; gap:12px 24px; padding:12px var(--ui-page-gutter); flex-shrink:0; border-bottom:var(--ui-rule); position:relative; z-index:40; }
 .pageHeading { min-width:0; }
-.pageHeading h1 { line-height:1.25; }
-.pageHeading p { display:flex; flex-wrap:wrap; gap:6px 12px; margin-top:4px; color:#666; }
+.pageHeading h1 { font-size:var(--ui-title-size); line-height:var(--ui-title-line); }
+.pageHeading p { display:flex; flex-wrap:wrap; gap:6px 12px; margin-top:4px; line-height:12px; color:var(--ui-muted); }
 .dayState { color:#666; }
 .dayState[data-state="open"] { color:#047857; }
 .headerActions { display:flex; align-items:center; gap:8px; margin-left:auto; }
-.pos .headerActions .dayAction { min-height:34px; height:auto; padding:8px 14px; background:#D2042D !important; color:#fff !important; border:.5px solid #D2042D; font-size:12px; }
+.pos .headerActions .dayAction { min-height:var(--ui-control-height); height:auto; padding:8px 12px; background:#D2042D !important; color:#fff !important; border:.5px solid #D2042D; font-size:12px; }
 .pos .headerActions .dayAction:hover:not(:disabled) { background:#B80327 !important; color:#fff !important; }
 .pos .headerActions .dayAction:disabled { background:#d9d9d9 !important; color:#666 !important; border-color:#d9d9d9; }
 @media(max-width:1023px) { .pos > header,.pos > main { margin-left:0; } }
-@media(max-width:767px) { .pos > header.registerHeader { padding:12px; } .pageHeading { flex:1 1 150px; } .headerActions { gap:6px; } .pos > header h1 { font-size:22px; } }
+@media(max-width:767px) { .pageHeading { flex:1 1 150px; } .headerActions { gap:6px; } }
+
+.pos h2 { font-size:var(--ui-body-size); line-height:18px; font-weight:400; }
+.pos table { border-collapse:collapse; font-size:var(--ui-body-size); }
+.pos th { color:var(--ui-muted); font-size:var(--ui-meta-size); font-weight:400; }
+.pos :is(th,td) { border-bottom:var(--ui-rule); font-variant-numeric:tabular-nums; }
+
+@media (min-width:768px) {
+  .pos:not(.phone) > main :is(:global(button.h-10),:global(button.h-11),:global(button.h-12),:global(input.h-10),:global(input.h-11)) {
+    min-height:var(--ui-control-height); height:var(--ui-control-height); font-size:var(--ui-body-size);
+  }
+}

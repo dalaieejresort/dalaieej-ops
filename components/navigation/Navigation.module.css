@@ -1,29 +1,33 @@
-.topbar { position:fixed; inset:0 0 auto; height:40px; z-index:60; display:flex; align-items:center; gap:16px; padding:0 16px; background:#fff; border-bottom:.5px solid #8c8c8c; color:#111; font:400 12px/1.4 Arial,sans-serif; }
-.context { color:#666; font-size:10px; }
-.rail { position:fixed; top:40px; bottom:0; left:0; width:123px; overflow-y:auto; background:#fff; border-right:.5px solid #8c8c8c; padding:14px 0; z-index:35; }
-.group { padding:10px 0; border-bottom:.5px solid #d9d9d9; }
+.topbar { position:fixed; inset:0 0 auto; height:var(--ui-topbar); z-index:60; display:flex; align-items:center; gap:16px; padding:0 16px; background:var(--ui-paper); border-bottom:.5px solid var(--ui-rule-color); color:var(--ui-ink); font:400 var(--ui-body-size)/1.5 var(--ui-font); }
+.context { color:var(--ui-muted); font-size:10px; }
+.rail { position:fixed; top:var(--ui-topbar); bottom:0; left:0; width:var(--ui-rail); overflow-y:auto; background:var(--ui-paper); border-right:.5px solid var(--ui-rule-color); padding:14px 0; z-index:35; }
+.group { padding:10px 0; border-bottom:.5px solid var(--ui-rule-color); }
 .group:last-child { border-bottom:0; }
-.group > p { padding:0 10px 6px; color:#777; font-size:10px; }
-.group > :is(a,button) { display:flex; align-items:center; gap:6px; width:100%; min-height:30px; padding:6px 10px; border:0; background:#fff; color:#111; font:400 10px/1.4 Arial,sans-serif; text-align:left; cursor:pointer; }
-.group > :is(a,button):hover { background:#f5f5f5; }
-.group > [aria-current] { background:#f0f0f0 !important; border-left:2px solid #D2042D; padding-left:8px; }
-.count { margin-left:auto; color:#666; font-variant-numeric:tabular-nums; }
-.menu { position:relative; flex-shrink:0; font:400 12px/1.4 Arial,sans-serif; }
-.menu > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:32px; padding:7px 10px; border:.5px solid #8c8c8c; list-style:none; cursor:pointer; background:#fff; color:#111; }
+.group > p { padding:0 10px 6px; color:var(--ui-muted); font-size:10px; }
+.group > :is(a,button) { display:flex; align-items:center; gap:6px; width:100%; min-height:24px; padding:4px 10px; border:0; background:var(--ui-paper); color:var(--ui-ink); font:400 var(--ui-meta-size)/1.5 var(--ui-font); text-align:left; cursor:pointer; }
+.group > :is(a,button):hover { background:var(--ui-hover); }
+.group > [aria-current] { background:var(--ui-selected) !important; border-left:2px solid var(--ui-accent); padding-left:8px; }
+.count { margin-left:auto; color:var(--ui-muted); font-variant-numeric:tabular-nums; }
+.menu { position:relative; flex-shrink:0; font:400 var(--ui-body-size)/1.5 var(--ui-font); }
+.menu > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:var(--ui-control-height); padding:8px 12px; border:.5px solid var(--ui-rule-color); list-style:none; cursor:pointer; background:var(--ui-paper); color:var(--ui-ink); }
 .menu > summary::-webkit-details-marker { display:none; }
-.menu > summary > span { color:#666; }
+.menu > summary > span { color:var(--ui-muted); }
 .menu > summary > .menuLabel { color:inherit; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.menu[open] > summary { background:#f0f0f0; }
-.menuPanel { position:absolute; top:100%; right:0; z-index:80; min-width:190px; max-width:calc(100vw - 24px); padding:4px 0; background:#fff; border:.5px solid #8c8c8c; }
-.menuPanel > :is(button,a) { display:block; width:100%; min-height:36px !important; height:auto !important; padding:9px 12px; border:0; background:#fff; color:#111; font:400 12px/1.4 Arial,sans-serif; text-align:left; cursor:pointer; }
-.menuPanel > :is(button,a):hover { background:#f5f5f5; }
-.menuPanel > p { padding:8px 12px; color:#666; font-size:10px; }
-.menuPanel hr { border:0; border-top:.5px solid #d9d9d9; margin:4px 0; }
+.menu[open] > summary { background:var(--ui-selected); }
+.menuPanel { position:absolute; top:100%; right:0; z-index:80; min-width:190px; max-width:calc(100vw - 24px); padding:4px 0; background:var(--ui-paper); border:.5px solid var(--ui-rule-color); }
+.menuPanel > :is(button,a) { display:block; width:100%; min-height:36px !important; height:auto !important; padding:9px 12px; border:0; background:var(--ui-paper); color:var(--ui-ink); font:400 var(--ui-body-size)/1.5 var(--ui-font); text-align:left; cursor:pointer; }
+.menuPanel > :is(button,a):hover { background:var(--ui-hover); }
+.menuPanel > p { padding:8px 12px; color:var(--ui-muted); font-size:10px; }
+.menuPanel hr { border:0; border-top:.5px solid var(--ui-rule-color); margin:4px 0; }
 .mobileMenu { display:none; }
-.mobileMenu > summary { border:0; padding:5px 8px; font-size:10px; }
+.mobileMenu > summary { min-height:32px; border:0; padding:5px 8px; font-size:10px; }
 .mobileMenu .menuPanel { left:0; right:auto; width:240px; max-height:calc(100dvh - 60px); overflow:auto; }
 .mobileMenu .group > :is(a,button) { font-size:12px; min-height:36px; }
 .alwaysMenu { display:block; }
-.topbar :is(a,summary):focus-visible,.rail :is(a,button):focus-visible,.menu :is(summary,button,a):focus-visible { outline:2px solid #D2042D; outline-offset:-2px; }
+.topbar :is(a,summary):focus-visible,.rail :is(a,button):focus-visible,.menu :is(summary,button,a):focus-visible { outline:2px solid var(--ui-accent); outline-offset:-2px; }
 @media(max-width:1023px) { .rail { display:none; } .mobileMenu { display:block; } .context { display:none; } .topbar { gap:8px; padding:0 12px; } }
 @media print { .topbar,.rail,.menu { display:none; } }
+
+/* Keep shared navigation independent of each workspace's button rules. */
+.rail .group > :is(a,button) { min-height:24px; height:auto; padding-block:4px; font-size:var(--ui-meta-size); line-height:16px; }
+.mobileMenu .group > :is(a,button) { padding-block:9px; line-height:18px; }
