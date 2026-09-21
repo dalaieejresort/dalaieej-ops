@@ -73,7 +73,7 @@ async function fixture() {
  }
  const records=async title=>(await db.query('SELECT fields FROM pos.named_records WHERE title=$1 ORDER BY row_number',[title])).rows.map(r=>r.fields);
  const stock=async()=>Number((await db.query('SELECT quantity FROM pos.stock_balances WHERE sku=$1',['INV-TEST'])).rows[0]?.quantity??0);
- return {db,request,records,stock,tx,storage,fail:()=>{failure=true;}};
+ return {db,request,records,stock,tx,storage,load,fail:()=>{failure=true;}};
 }
 const sale=(id,extra={})=>({clientRequestId:id,items:[{sku:'INV-TEST',name:'Цэвэр ус',category:'Ус',qty:2,unitPrice:1000}],method:'Бэлэн',paidStatus:'paid',total:2000,cashReceived:2000,...extra});
 test('PostgreSQL POS preserves complete sale/replay/refund/stock/day workflow',async()=>{
@@ -162,4 +162,43 @@ test('season generation rejects old screens without writes and accepts the refre
   assert.equal((await f.request('/api/products')).status,200);
   assert.equal((await f.request('/api/products','POST',payload,'owner',{'x-pos-generation':'new-season'})).status,200);
  }finally{delete process.env.POS_DATA_GENERATION;await f.db.close();}
+});
+
+
+test('hotel task claims, idempotency, conflicts, audit and room readiness remain atomic',async()=>{
+ const f=await fixture();try {
+  const hotel=f.load(path.join(root,'lib/server/hotel.ts'));
+  const now=new Date().toISOString(), today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ulaanbaatar'}).format(new Date());
+  await f.tx.withPosTransaction(async()=>{const doc=f.storage.createPosDocument();await doc.loadInfo();const sheet=await doc.addSheet({title:'Hotel_Feed',headerValues:['key','data','updated_at']});await sheet.addRows([{key:'current',data:JSON.stringify({date:today,through:today,checkedAt:now,rooms:[{id:'room1',name:'1',type:'Cabin',blocked:false}],reservations:[]}),updated_at:now}]);});
+  const a={username:'cleaner-a',displayName:'Cleaner A',role:'housekeeping'},b={username:'cleaner-b',displayName:'Cleaner B',role:'housekeeping'};
+  const save=(input,actor=a)=>f.tx.withPosTransaction(()=>hotel.saveHotel(input,actor));
+  const create={action:'create-task',requestId:'task-create',roomId:'room1',kind:'cleaning',title:'Clean room'};
+  const task=await save(create);assert.equal((await save(create)).id,task.id);assert.equal((await f.records('Hotel_Tasks')).length,1);
+  await assert.rejects(save({...create,title:'Different task'}),/давхардсан/);
+  await assert.rejects(save({action:'task',requestId:'early-done',id:task.id,version:1,change:'done'},b),/Эхлээд/);
+  const claimed=await save({action:'task',requestId:'claim-a',id:task.id,version:1,change:'claim'});assert.equal(claimed.assignee,a.username);
+  await assert.rejects(save({action:'task',requestId:'claim-b',id:task.id,version:1,change:'claim'},b),/өөр ажилтан/);
+  await assert.rejects(save({action:'task',requestId:'done-b',id:task.id,version:2,change:'done'},b),/Эхлээд/);
+  const done=await save({action:'task',requestId:'done-a',id:task.id,version:2,change:'done'});assert.equal(done.status,'done');
+  const ready={action:'readiness',requestId:'ready',roomId:'room1',version:0,status:'ready',note:'Inspected'};
+  const state=await save(ready);assert.equal(state.version,1);assert.equal((await save(ready)).version,1);
+  await assert.rejects(save({...ready,requestId:'stale',status:'dirty'}),/Өөр ажилтан/);
+  const before=(await f.records('Hotel_Operations')).length;f.fail();await assert.rejects(save({action:'task',requestId:'failed',id:task.id,version:3,change:'note',note:'Should roll back'}));
+  assert.equal((await f.records('Hotel_Operations')).length,before);
+  assert.equal(JSON.parse((await f.records('Hotel_Tasks'))[0].data).notes.length,0);
+ }finally{await f.db.close();}
+});
+
+test('hotel source failure retains the last feed, redacts housekeeping data and blocks stale ready confirmations',async()=>{
+ const f=await fixture();const oldFetch=globalThis.fetch,oldURL=process.env.HOTEL_FEED_URL,oldToken=process.env.HOTEL_FEED_TOKEN;
+ try {
+  const hotel=f.load(path.join(root,'lib/server/hotel.ts'));const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ulaanbaatar'}).format(new Date());
+  const feed={date:today,through:today,checkedAt:'2020-01-01T00:00:00Z',rooms:[{id:'r',name:'1'}],reservations:[{id:'s',propertyId:'private-property',guestName:'Private Guest',status:'confirmed',rooms:[]}]};
+  await f.tx.withPosTransaction(async()=>{const doc=f.storage.createPosDocument();await doc.loadInfo();const sheet=await doc.addSheet({title:'Hotel_Feed',headerValues:['key','data','updated_at']});await sheet.addRows([{key:'current',data:JSON.stringify(feed),updated_at:feed.checkedAt}]);});
+  process.env.HOTEL_FEED_URL='https://hotel.invalid';process.env.HOTEL_FEED_TOKEN='test-token';globalThis.fetch=async()=>{throw Error('Simulated upstream outage');};
+  const session={username:'cleaner',displayName:'Cleaner',role:'housekeeping'};
+  const board=await hotel.hotelBoard(session);assert.equal(board.stale,true);assert.equal(board.feed.rooms.length,1);assert.equal(board.feed.reservations[0].guestName,'');assert.equal(board.feed.reservations[0].propertyId,'');assert.ok(board.error);
+  await assert.rejects(f.tx.withPosTransaction(()=>hotel.saveHotel({requestId:'stale-ready',action:'readiness',roomId:'r',version:0,status:'ready',note:''},session)),/Cloudbeds/);
+  assert.equal((await f.records('Hotel_Rooms')).length,0);
+ }finally{globalThis.fetch=oldFetch;if(oldURL===undefined)delete process.env.HOTEL_FEED_URL;else process.env.HOTEL_FEED_URL=oldURL;if(oldToken===undefined)delete process.env.HOTEL_FEED_TOKEN;else process.env.HOTEL_FEED_TOKEN=oldToken;await f.db.close();}
 });

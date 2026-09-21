@@ -34,6 +34,8 @@ type StoredAccount = {
 
 const ROLE_RANK: Record<OpsRole, number> = {
   kitchen: 0,
+  reception: 0,
+  housekeeping: 0,
   waiter: 0,
   cashier: 1,
   manager: 2,
@@ -42,6 +44,8 @@ const ROLE_RANK: Record<OpsRole, number> = {
 
 function isRole(value: unknown): value is OpsRole {
   return (
+    value === "reception" ||
+    value === "housekeeping" ||
     value === "kitchen" ||
     value === "waiter" ||
     value === "cashier" ||
@@ -222,8 +226,8 @@ export function verifySessionToken(token: string | undefined | null) {
       return null;
     }
 
-    if (payload.role === "waiter" && !getAccounts().some(account =>
-      account.username === payload.username && account.role === "waiter" && account.active !== false)) return null;
+    if (["waiter", "reception", "housekeeping"].includes(payload.role) && !getAccounts().some(account =>
+      account.username === payload.username && account.role === payload.role && account.active !== false)) return null;
     return payload as OpsSession;
   } catch {
     return null;
@@ -271,6 +275,9 @@ export async function getServerSession() {
 }
 
 export function hasMinimumRole(session: OpsSession, minimumRole: OpsRole) {
+  if (minimumRole === "housekeeping") return ["housekeeping", "reception", "manager", "owner"].includes(session.role);
+  if (minimumRole === "reception") return ["reception", "manager", "owner"].includes(session.role);
+  if (session.role === "housekeeping" || session.role === "reception") return false;
   if (minimumRole === "kitchen") {
     return (
       session.role === "kitchen" ||

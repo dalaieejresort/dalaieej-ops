@@ -43,3 +43,9 @@ test('the daily overview is removed for every role while closing and stock remai
     assert.ok(items(role).some(item => item.href === '/products'));
   }
 });
+
+test('hotel is available to management while hotel staff have their own mobile workspace',()=>{
+ for(const role of ['owner','manager'])assert.ok(items(role).some(item=>item.href==='/hotel'));
+ for(const role of ['reception','housekeeping'])assert.deepEqual(items(role).map(item=>item.href),['/hotel']);
+ for(const role of ['waiter','kitchen','cashier'])assert.ok(!items(role).some(item=>item.href==='/hotel'));
+});

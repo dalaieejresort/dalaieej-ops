@@ -1,1 +1,1 @@
-export type OpsRole = "kitchen" | "waiter" | "cashier" | "manager" | "owner";
+export type OpsRole = "kitchen" | "waiter" | "cashier" | "manager" | "owner" | "reception" | "housekeeping";

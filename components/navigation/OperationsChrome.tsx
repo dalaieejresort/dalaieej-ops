@@ -9,7 +9,7 @@ import styles from "./Navigation.module.css";
 
 export function OperationsChrome({ role, active, tab, onTabChange, counts = {}, compact = false, service = false }: {
   role: OpsRole;
-  active: "register" | "products" | "archive" | "kitchen";
+  active: "register" | "products" | "archive" | "kitchen" | "hotel";
   tab?: RegisterTab;
   onTabChange?: (tab: RegisterTab) => void;
   counts?: Partial<Record<RegisterTab, number>>;

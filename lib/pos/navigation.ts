@@ -6,6 +6,7 @@ export type NavigationSection = { label: string; items: NavigationItem[] };
 
 export function operationsNavigation(role: OpsRole): NavigationSection[] {
   const manager = role === "manager" || role === "owner";
+  if (role === "reception" || role === "housekeeping") return [{ label: "Үйлчилгээ", items: [{ id: "hotel", label: "Буудал", href: "/hotel" }] }];
   if (role === "kitchen") return [{ label: "Үйлчилгээ", items: [{ id: "kitchen", label: "Гал тогоо", href: "/kitchen" }] }];
   const base = role === "waiter" ? "/waiter" : "/register";
   const tabs: NavigationItem[] = [
@@ -21,7 +22,7 @@ export function operationsNavigation(role: OpsRole): NavigationSection[] {
   ] });
   if (role !== "waiter") sections.push({ label: "Үйлчилгээ", items: [
     { id: "waiter", label: "Зөөгч", href: "/waiter" },
-    ...(manager ? [{ id: "kitchen", label: "Гал тогоо", href: "/kitchen" }] : []),
+    ...(manager ? [{ id: "kitchen", label: "Гал тогоо", href: "/kitchen" }, { id: "hotel", label: "Буудал", href: "/hotel" }] : []),
   ] });
   if (manager) sections.push({ label: "Холбоос", items: [{ id: "finance", label: "Санхүү ↗", href: "https://receipts.dalaieej.mn/dashboard" }] });
   return sections;

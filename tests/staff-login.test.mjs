@@ -67,3 +67,14 @@ test('shared owner password replaces owner credentials and preserves staff accou
   assert.throws(()=>auth.authenticateAccount('owner','bad-role'),/owner account/);
  }finally{for(const k of keys){if(old[k]===undefined)delete process.env[k];else process.env[k]=old[k];}}
 });
+
+
+test('hotel roles are isolated from POS and housekeeping cannot access guest contact details',()=>{
+ for(const role of ['housekeeping','reception']) {
+  assert.equal(auth.hasMinimumRole({role},'housekeeping'),true);
+  for(const target of ['cashier','waiter','kitchen','manager','owner'])assert.equal(auth.hasMinimumRole({role},target),false);
+ }
+ assert.equal(auth.hasMinimumRole({role:'housekeeping'},'reception'),false);
+ for(const role of ['reception','manager','owner'])assert.equal(auth.hasMinimumRole({role},'reception'),true);
+ for(const role of ['waiter','kitchen','cashier'])assert.equal(auth.hasMinimumRole({role},'housekeeping'),false);
+});

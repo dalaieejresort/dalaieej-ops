@@ -8,6 +8,8 @@ import styles from "./Auth.module.css";
 
 const ROLE_LABELS: Record<OpsRole, string> = {
   kitchen: "Гал тогоо",
+  reception: "Хүлээн авах",
+  housekeeping: "Үйлчилгээ",
   waiter: "Зөөгч",
   cashier: "Кассчин",
   manager: "Менежер",

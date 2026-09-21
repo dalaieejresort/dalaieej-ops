@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { site } from "@/lib/site-branding";
 import { KitchenDisplay } from "@/components/kitchen/KitchenDisplay";
@@ -16,6 +17,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function Home() {
   const session = await requirePageSession("/", "any");
+  if (session.role === "reception" || session.role === "housekeeping") redirect("/hotel");
   const businessDate = await getActiveBusinessDate();
 
   if (session.role === "kitchen") {
