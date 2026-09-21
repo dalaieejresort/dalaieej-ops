@@ -61,3 +61,5 @@
 .screen button[aria-pressed="true"] { background: #f0f0f0; }
 
 @media(min-width:1024px) { .screen input { font-size:12px; } .waiterNav { padding-top:72px; } .waiterNav button { height:24px; min-height:24px; padding:0 8px; } }
+.kitchenTime { color:#666; font-size:10px; }
+@media(min-width:1024px) { .withRail { padding-left:123px; } }

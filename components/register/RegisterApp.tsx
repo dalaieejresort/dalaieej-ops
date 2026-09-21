@@ -1,5 +1,7 @@
 "use client";
 
+import { OperationsChrome } from "@/components/navigation/OperationsChrome";
+import { ActionMenu } from "@/components/navigation/ActionMenu";
 import { PaymentEvidenceField } from "./PaymentEvidenceField";
 import { StaffIdentity } from "@/components/auth/StaffIdentity";
 import { NumberPad } from "@/components/input/NumberPad";
@@ -4428,142 +4430,36 @@ export function RegisterApp({
   return (
     <div data-register-mode={registerMode} data-cart-open={mobileCartOpen}
       className={`${styles.pos} ${phoneLayout ? styles.phone : ""} flex min-h-dvh flex-col bg-[#f3f4f6] text-[#111827]`}>
-      <div className={styles.topbar}><span>Dalai Eej</span><span>Operations / POS · {businessDate}</span></div>
-      <header className="sticky top-0 z-30 flex min-h-16 shrink-0 flex-wrap items-center gap-3 border-b border-[#d1d5db] bg-white px-3 py-3 md:static md:px-4">
+      <OperationsChrome role={role} active="register" tab={registerMode} onTabChange={selectRegisterMode}
+        counts={{charges:unpaidCharges.length,history:historySales.length}} compact={phoneLayout} service={phoneLayout} />
+      <header className={styles.registerHeader}>
         <div className={styles.pageHeading}>
-          <h1 className="text-lg font-bold leading-tight">{title}</h1>
-          <p className="text-xs font-medium text-[#6b7280]">{businessDate}</p>
+          <h1>{phoneLayout ? title : {sale:"Борлуулалт",charges:"Өр",history:"Түүх","day-close":"Өдрийн хаалт"}[registerMode]}</h1>
+          <p>{businessDate}<span className={styles.dayState} data-state={dayOpen ? "open" : "closed"}>
+            {dayStatus === "loading" ? "Шалгаж байна…" : dayOpen
+              ? cashOpeningPending ? "Үйлчилгээ нээлттэй · Касс баталгаажаагүй" : "Касс нээлттэй"
+              : dayClosed ? "Өдөр хаалттай" : "Өдөр нээгээгүй"}
+          </span></p>
         </div>
-
-        <nav aria-label="Кассын хэсгүүд" className={styles.modeNav}>
-          <button
-            type="button"
-            onClick={() => selectRegisterMode("sale")}
-            aria-pressed={registerMode === "sale"}
-            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
-              registerMode === "sale"
-                ? "bg-[#111827] text-white"
-                : "text-[#374151] hover:bg-white"
-            }`}
-          >
-            Борлуулалт
-          </button>
-          <button
-            type="button"
-            onClick={() => selectRegisterMode("charges")}
-            aria-pressed={registerMode === "charges"}
-            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
-              registerMode === "charges"
-                ? "bg-[#111827] text-white"
-                : "text-[#374151] hover:bg-white"
-            }`}
-          >
-            Өр
-            {unpaidCharges.length > 0 ? ` (${unpaidCharges.length})` : ""}
-          </button>
-          <button
-            type="button"
-            onClick={() => selectRegisterMode("history")}
-            aria-pressed={registerMode === "history"}
-            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
-              registerMode === "history"
-                ? "bg-[#111827] text-white"
-                : "text-[#374151] hover:bg-white"
-            }`}
-          >
-            Түүх
-            {historySales.length > 0 ? ` (${historySales.length})` : ""}
-          </button>
-          <button
-            type="button"
-            onClick={() => selectRegisterMode("day-close")}
-            disabled={isWaiter}
-            aria-pressed={registerMode === "day-close"}
-            className={`h-9 shrink-0 rounded px-3 text-sm font-extrabold ${
-              registerMode === "day-close"
-                ? "bg-[#111827] text-white"
-                : "text-[#374151] hover:bg-white"
-            }`}
-          >
-            Өдрийн хаалт
-          </button>
-        </nav>
-
-        <div className="order-2 ml-auto flex flex-wrap items-center justify-end gap-2 md:order-none">
-          <div
-            className={`flex h-10 items-center rounded-md border px-3 text-xs font-black ${
-              dayOpen
-                ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                : dayClosed
-                  ? "border-[#e5e7eb] bg-[#f8fafc] text-[#374151]"
-                  : "border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]"
-            }`}
-          >
-            {dayStatus === "loading"
-              ? "Өдөр..."
-              : dayOpen
-                ? isWaiter ? "Үйлчилгээ нээлттэй" : cashOpeningPending ? "Үйлчилгээ нээлттэй · Касс баталгаажаагүй" : `Нээлттэй · ${formatMNT(daySession?.startingCash ?? 0)}`
-                : dayClosed
-                  ? "Хаалттай"
-                  : "Өдөр нээгээгүй"}
-          </div>
-          {isWaiter && !dayOpen && <button
-            type="button"
-            onClick={() => openDayModal("start-service")}
-            disabled={dayClosed || dayStatus === "saving" || dayStatus === "loading"}
-            className="min-h-11 border px-3 text-sm font-bold disabled:opacity-50"
-          >Үйлчилгээ эхлүүлэх</button>}
-          {!isWaiter && <button
-            type="button"
-            onClick={() => openDayModal(dayOpen ? "close" : "open")}
-            disabled={dayOpen && !cashOpeningPending && !canManageOperations}
-            title={dayOpen && !cashOpeningPending && !canManageOperations ? "Өдрийг зөвхөн менежер хаана" : undefined}
-            className={`h-10 rounded-md px-3 text-sm font-black text-white ${
-              dayOpen
-                ? "bg-[#b91c1c] hover:bg-[#991b1b]"
-                : "bg-[#047857] hover:bg-[#065f46]"
-            } disabled:bg-[#94a3b8]`}
-          >
+        <div className={styles.headerActions}>
+          {isWaiter && !dayOpen && <button type="button" onClick={() => openDayModal("start-service")}
+            disabled={dayClosed || dayStatus === "saving" || dayStatus === "loading"} className={styles.dayAction}>Үйлчилгээ эхлүүлэх</button>}
+          {!isWaiter && <button type="button" onClick={() => openDayModal(dayOpen ? "close" : "open")}
+            disabled={dayStatus === "loading" || dayStatus === "saving" || (dayOpen && !cashOpeningPending && !canManageOperations)}
+            className={styles.dayAction}>
             {cashOpeningPending ? "Касс нээх" : dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
           </button>}
-          {canManageOperations && (
-            <a href="/products" className="flex h-10 items-center border border-[#cbd5e1] bg-white px-3 text-sm">
-              Бараа / Stock
-            </a>
-          )}
-          {canManageOperations && (
-            <button
-              type="button"
-              onClick={openVoidModal}
-              className="h-10 rounded-md border border-[#fecaca] bg-white px-3 text-sm font-black text-[#b91c1c] hover:bg-[#fef2f2]"
-            >
-              Буцаалт
-            </button>
-          )}
-          {isWaiter || title === "Зөөгч" ? <StaffIdentity name={staffName} /> : <span className="hidden h-10 items-center rounded-md border border-[#cbd5e1] bg-[#f8fafc] px-3 text-sm font-black text-[#334155] sm:flex">
-            {staffName}
-          </span>}
-          <button
-            type="button"
-            onClick={() => {
+          <ActionMenu>
+            {canManageOperations && <button type="button" onClick={openVoidModal}>Буцаалт / хүчингүй</button>}
+            <button type="button" onClick={() => {
               void loadCatalog({ fresh: true });
               void loadSharedSalesData({ fresh: true });
               void loadDayStatus({ fresh: true });
-            }}
-            aria-label="Мэдээлэл шинэчлэх"
-            className="h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc]"
-          >
-            <span className={phoneLayout ? "" : "md:hidden"} aria-hidden="true">↻</span>
-            {!phoneLayout && <span className="hidden md:inline">Шинэчлэх</span>}
-          </button>
-          {!phoneLayout && <button
-            type="button"
-            onClick={toggleFullscreen}
-            className="hidden h-10 rounded-md border border-[#cbd5e1] bg-white px-3 text-sm font-semibold hover:bg-[#f8fafc] sm:block"
-          >
-            {isFullscreen ? "Цонхтой" : "Бүтэн дэлгэц"}
-          </button>}
+            }}>Мэдээлэл шинэчлэх</button>
+            {!phoneLayout && <button type="button" onClick={toggleFullscreen}>{isFullscreen ? "Цонхтой горим" : "Бүтэн дэлгэц"}</button>}
+          </ActionMenu>
         </div>
+        {(isWaiter || title === "Зөөгч") && <StaffIdentity name={staffName} />}
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
@@ -6296,14 +6192,14 @@ export function RegisterApp({
       {!voidModalOpen && !dayModalMode ? (
         <nav
           aria-label="Гар утасны үндсэн цэс"
-          className={`fixed inset-x-0 bottom-0 z-40 grid ${role === "owner" ? "grid-cols-6" : "grid-cols-5"} gap-1 border-t border-[#555555] bg-[#2b2b2b] px-1.5 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.2)] md:hidden`}
+          className={`fixed inset-x-0 bottom-0 z-40 grid ${isWaiter ? "grid-cols-4" : "grid-cols-5"} gap-1 border-t border-[#555555] bg-[#2b2b2b] px-1.5 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.2)] md:hidden`}
         >
           {([
             ["sale", "01", "Зарах"],
             ["charges", "02", "Өр"],
             ["history", "03", "Түүх"],
             ["day-close", "04", "Хаалт"],
-          ] as const).map(([mode, symbol, label]) => (
+          ] as const).filter(([mode]) => !isWaiter || mode !== "day-close").map(([mode, symbol, label]) => (
             <button
               key={mode}
               type="button"

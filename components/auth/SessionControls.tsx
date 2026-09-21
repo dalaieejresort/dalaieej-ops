@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionMenu } from "@/components/navigation/ActionMenu";
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { OpsRole } from "@/lib/auth-types";
@@ -36,10 +37,8 @@ export function SessionControls({
 
   return (
     <div className={styles.session}>
-      <span className={styles.identity} title={`${displayName} · ${ROLE_LABELS[role]}`}>
-        <span className={styles.displayName}>{displayName}</span>
-        <span className={styles.role}>{ROLE_LABELS[role]}</span>
-      </span>
+      <ActionMenu label={displayName}>
+        {displayName !== ROLE_LABELS[role] && <p>{ROLE_LABELS[role]}</p>}
       <button
         type="button"
         disabled={submitting}
@@ -53,6 +52,7 @@ export function SessionControls({
       >
         {submitting ? "Гарч байна…" : "Гарах"}
       </button>
+      </ActionMenu>
     </div>
   );
 }

@@ -1,5 +1,9 @@
 "use client";
 
+import type { OpsRole } from "@/lib/auth-types";
+import { OperationsChrome } from "@/components/navigation/OperationsChrome";
+import { ActionMenu } from "@/components/navigation/ActionMenu";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "../service/Service.module.css";
 import { useRouter } from "next/navigation";
@@ -10,6 +14,7 @@ import type {
 } from "@/lib/server/kitchen-queue";
 
 type KitchenDisplayProps = {
+  role: OpsRole;
   businessDate: string;
   authenticatedStaffName: string;
 };
@@ -72,6 +77,7 @@ function actionStatus(action: KitchenAction): KitchenOrderStatus | "archived" {
 }
 
 export function KitchenDisplay({
+  role,
   businessDate,
   authenticatedStaffName,
 }: KitchenDisplayProps) {
@@ -230,8 +236,8 @@ export function KitchenDisplay({
   }
 
   return (
-    <main className={`${styles.screen} ${styles.kitchen}`}>
-      <div className={styles.topbar}><span>Dalai Eej</span><span>Гал тогоо · {businessDate}</span></div>
+    <main className={`${styles.screen} ${styles.kitchen} ${role !== "kitchen" ? styles.withRail : ""}`}>
+      <OperationsChrome role={role} active="kitchen" compact={role === "kitchen"} />
       <header className={styles.kitchenHeader}>
         <div className="min-w-48">
           <p className="text-xs font-normal  text-black">
@@ -240,12 +246,7 @@ export function KitchenDisplay({
           <h1 className="text-2xl font-normal">Захиалгын дэлгэц</h1>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <div className="rounded-none border border-[#8c8c8c] bg-white px-3 py-2 text-right">
-            <p className="text-xs font-normal text-[#666666]">{businessDate.replaceAll("-", ".")}</p>
-            <p className="text-lg font-normal tabular-nums">
-              {now.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit" })}
-            </p>
-          </div>
+          <span className={styles.kitchenTime}>{businessDate} · {now.toLocaleTimeString("mn-MN", {hour:"2-digit",minute:"2-digit"})}</span>
           <button
             type="button"
             onClick={() => void enableSound()}
@@ -254,6 +255,7 @@ export function KitchenDisplay({
           >
             {soundEnabled ? "Дуу асаалттай" : "Дуу асаах"}
           </button>
+          <ActionMenu>
           <button
             type="button"
             onClick={() => void loadOrders(true)}
@@ -277,6 +279,7 @@ export function KitchenDisplay({
           >
             {authenticatedStaffName} · Гарах
           </button>
+          </ActionMenu>
         </div>
       </header>
 

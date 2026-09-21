@@ -21,6 +21,7 @@ export default async function Home() {
   if (session.role === "kitchen") {
     return (
       <KitchenDisplay
+        role={session.role}
         businessDate={businessDate}
         authenticatedStaffName={session.displayName}
       />

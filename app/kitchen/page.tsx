@@ -10,6 +10,7 @@ export default async function KitchenPage() {
 
   return (
     <KitchenDisplay
+        role={session.role}
       businessDate={await getActiveBusinessDate()}
       authenticatedStaffName={session.displayName}
     />

@@ -1,5 +1,9 @@
 "use client";
 
+import type { OpsRole } from "@/lib/auth-types";
+import { OperationsChrome } from "@/components/navigation/OperationsChrome";
+import { ActionMenu } from "@/components/navigation/ActionMenu";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./OpsDashboard.module.css";
 import {
@@ -193,6 +197,7 @@ function dashboardFromManagementBoard(
 
 type OpsDashboardProps = {
   businessDate: string;
+  role: OpsRole;
 };
 
 function statusText(session: DaySession | null) {
@@ -335,7 +340,7 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function OpsDashboard({ businessDate }: OpsDashboardProps) {
+export function OpsDashboard({ businessDate, role }: OpsDashboardProps) {
   const [data, setData] = useState<DashboardData>(EMPTY_DATA);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errors, setErrors] = useState<string[]>([]);
@@ -670,50 +675,22 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
 
   return (
     <div className={styles.workspace}>
-      <div className={styles.topbar}><a href="/ops">Dalai Eej / Operations</a><span>{businessDate}</span></div>
-      <nav className={styles.rail} aria-label="Operations navigation">
-        <a href="/register"><span>01</span> Касс</a>
-        <a href="/ops" aria-current="page"><span>02</span> Удирдлага</a>
-        <a href="/kitchen"><span>03</span> Гал тогоо</a>
-        <a href="/waiter"><span>04</span> Үйлчилгээ</a>
-        <a href="/products"><span>05</span> Бараа / Stock</a>
-        <a href="/archive"><span>06</span> Улирлын архив</a>
-        <a href="https://receipts.dalaieej.mn/dashboard"><span>07</span> Санхүү ↗</a>
-      </nav>
+      <OperationsChrome role={role} active="ops" />
       <header className="border-b border-[#d7dde7] bg-white">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-4 px-4 py-4 sm:px-6">
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-black">Dalai Eej Operations</h1>
+            <h1 className="truncate text-xl font-black">Өдрийн тойм</h1>
             <p className="text-sm font-bold text-[#64748b]">{businessDate}</p>
           </div>
 
-          <nav className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
-            <a
-              href="/register"
-              className="flex h-10 items-center rounded-lg bg-[#111827] px-4 text-sm font-black text-white hover:bg-[#374151]"
-            >
-              Касс руу очих
-            </a>
-            <button
-              type="button"
-              onClick={() => void loadDashboard(true)}
-              className="h-10 rounded-lg border border-[#cbd5e1] bg-white px-4 text-sm font-black text-[#111827] hover:bg-[#f8fafc]"
-            >
-              Шинэчлэх
-            </button>
-            <button
-              type="button"
-              onClick={() => setAutoRefresh((current) => !current)}
-              aria-pressed={autoRefresh}
-              className={`h-10 rounded-lg border px-4 text-sm font-black ${
-                autoRefresh
-                  ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]"
-                  : "border-[#cbd5e1] bg-white text-[#475569]"
-              }`}
-            >
-              Авто: {autoRefresh ? "асаалттай" : "унтраастай"}
-            </button>
-          </nav>
+          <div className="ml-auto">
+            <ActionMenu>
+              <button type="button" onClick={() => void loadDashboard(true)}>Мэдээлэл шинэчлэх</button>
+              <button type="button" onClick={() => setAutoRefresh(current => !current)} aria-pressed={autoRefresh}>
+                Авто шинэчлэлт: {autoRefresh ? "асаалттай" : "унтраастай"}
+              </button>
+            </ActionMenu>
+          </div>
         </div>
       </header>
 

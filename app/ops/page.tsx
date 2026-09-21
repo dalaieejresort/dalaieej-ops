@@ -6,6 +6,6 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Management" };
 
 export default async function OpsPage() {
-  await requirePageSession("/ops", "manager");
-  return <OpsDashboard businessDate={await getActiveBusinessDate()} />;
+  const session = await requirePageSession("/ops", "manager");
+  return <OpsDashboard role={session.role} businessDate={await getActiveBusinessDate()} />;
 }

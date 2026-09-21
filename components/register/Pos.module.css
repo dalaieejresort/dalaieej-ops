@@ -168,3 +168,18 @@
 .phone :global([data-testid="product-tile"] div button) { min-height: 36px; }
 
 @media(min-width:1024px) { .pos { padding-top:40px; } .topbar { position:fixed; inset:0 0 auto; z-index:50; } .pos > header { height:72px; padding:8px 16px; } .modeNav { padding-top:72px; } }
+
+/* Navigation is shared across the operational screens. */
+.pos { padding-top:40px; }
+.pos > header.registerHeader { display:flex; flex-wrap:wrap; align-items:center; min-height:72px; height:auto; gap:10px 20px; padding:12px 20px; position:relative; z-index:40; }
+.pageHeading { min-width:0; }
+.pageHeading h1 { line-height:1.25; }
+.pageHeading p { display:flex; flex-wrap:wrap; gap:6px 12px; margin-top:4px; color:#666; }
+.dayState { color:#666; }
+.dayState[data-state="open"] { color:#047857; }
+.headerActions { display:flex; align-items:center; gap:8px; margin-left:auto; }
+.pos .headerActions .dayAction { min-height:34px; height:auto; padding:8px 14px; background:#D2042D !important; color:#fff !important; border:.5px solid #D2042D; font-size:12px; }
+.pos .headerActions .dayAction:hover:not(:disabled) { background:#B80327 !important; color:#fff !important; }
+.pos .headerActions .dayAction:disabled { background:#d9d9d9 !important; color:#666 !important; border-color:#d9d9d9; }
+@media(max-width:1023px) { .pos > header,.pos > main { margin-left:0; } }
+@media(max-width:767px) { .pos > header.registerHeader { padding:12px; } .pageHeading { flex:1 1 150px; } .headerActions { gap:6px; } .pos > header h1 { font-size:22px; } }
