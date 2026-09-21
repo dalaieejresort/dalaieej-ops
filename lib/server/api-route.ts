@@ -62,6 +62,9 @@ export function withProtectedApiRoute(
     if (process.env.POS_WRITES_PAUSED === "true" && method !== "GET" && method !== "HEAD") {
       return NextResponse.json({ error: "POS storage migration in progress. Please retry shortly.", code: "POS_MAINTENANCE" }, { status: 503, headers: { "Retry-After": "60" } });
     }
+    if (process.env.POS_DATA_GENERATION && method !== "GET" && method !== "HEAD" && request.headers.get("x-pos-generation") !== process.env.POS_DATA_GENERATION) {
+      return NextResponse.json({ error: "POS шинэчлэгдсэн. Хуудсыг дахин ачаална уу. / Reload the POS before saving.", code: "POS_GENERATION_CHANGED" }, { status: 409 });
+    }
     try {
       const response = await withPosTransaction(() => handler(request), response => response.ok);
       response.headers.set("x-request-id", requestId);

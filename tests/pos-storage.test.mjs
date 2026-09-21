@@ -66,9 +66,9 @@ async function fixture() {
   const inv=await doc.addSheet({title:'Inventory_Log',headerValues:['Transaction ID','Timestamp','SKU (Барааны код)','Item Description','Type (Хөдөлгөөн)','Quantity (Тоо)','Location (Байршил)','Handled By','Payment Method','Room Number']});
   await inv.addRows([['OPENING','','INV-TEST','Цэвэр ус','Орлого',10,'Тек','Test owner','','']]);
  });
- async function request(route,method='GET',body,role='owner') {
+ async function request(route,method='GET',body,role='owner',headers={}) {
   const url=new URL(route,'http://localhost');const api=load(path.join(root,'app',url.pathname,'route.ts'));
-  const response=await api[method](new Request(url,{method,headers:{'content-type':'application/json',...(role?{'test-role':role}:{})},...(body?{body:JSON.stringify(body)}:{})}));
+  const response=await api[method](new Request(url,{method,headers:{'content-type':'application/json',...(role?{'test-role':role}:{}),...headers},...(body?{body:JSON.stringify(body)}:{})}));
   return {status:response.status,data:await response.json()};
  }
  const records=async title=>(await db.query('SELECT fields FROM pos.named_records WHERE title=$1 ORDER BY row_number',[title])).rows.map(r=>r.fields);
@@ -127,4 +127,39 @@ test('unpaid edits and split settlement preserve order items, claims, replay, an
   assert.equal(results[0].data.balance,0);
   assert.equal((await f.records('Payments_Log')).reduce((n,p)=>n+Number(p.amount),0),3000);
  }finally{await f.db.close();}
+});
+
+test('product creation and stock receiving are unique, replay-safe and work before cash opening',async()=>{
+ const f=await fixture();try {
+  assert.equal((await f.request('/api/products','GET',null,null)).status,401);
+  const create={action:'create',clientRequestId:'product-1',name:'New bottled water',category:'Ус',guestPrice:2500,staffPrice:2000};
+  const pair=await Promise.all([f.request('/api/products','POST',create),f.request('/api/products','POST',create)]);
+  assert.ok(pair.every(r=>r.status===200),JSON.stringify(pair));assert.equal(pair[0].data.sku,pair[1].data.sku);
+  const sku=pair[0].data.sku;
+  assert.equal((await f.records('Inventory_Catalogue')).filter(r=>r['SKU (Барааны код)']===sku).length,1);
+  assert.equal((await f.request('/api/products','POST',{...create,clientRequestId:'product-2'})).status,400);
+  assert.equal((await f.request('/api/products','POST',{...create,name:'Changed'})).status,400);
+  const receive={action:'receive',clientRequestId:'stock-1',sku,kind:'opening',quantity:12,reason:'Physical opening count'};
+  assert.equal((await f.request('/api/products','POST',receive)).status,200);
+  assert.equal((await f.request('/api/products','POST',receive)).status,200);
+  let list=await f.request('/api/products');assert.equal(list.data.products.find(p=>p.sku===sku).stock,12);
+  assert.equal((await f.request('/api/products','POST',{...receive,clientRequestId:'stock-2'})).status,400);
+  assert.equal((await f.request('/api/products','POST',{...receive,clientRequestId:'stock-3',kind:'delivery',quantity:3})).status,200);
+  list=await f.request('/api/products');assert.equal(list.data.products.find(p=>p.sku===sku).stock,15);
+  assert.equal((await f.request('/api/products','POST',{...receive,clientRequestId:'invalid-1',sku:'INV-NOT-FOUND'})).status,400);
+  assert.equal((await f.request('/api/products','POST',{...receive,clientRequestId:'invalid-2',quantity:-2})).status,400);
+  assert.equal((await f.records('Day_Sessions')).length,0);
+ }finally{await f.db.close();}
+});
+test('season generation rejects old screens without writes and accepts the refreshed client',async()=>{
+ const f=await fixture();try {
+  process.env.POS_DATA_GENERATION='new-season';
+  const payload={action:'create',name:'Season product',category:'Ус',guestPrice:1000,staffPrice:900,clientRequestId:'season-client'};
+  const before=(await f.records('Inventory_Catalogue')).length;
+  assert.equal((await f.request('/api/products','POST',payload)).status,409);
+  assert.equal((await f.request('/api/products','POST',payload,'owner',{'x-pos-generation':'old-season'})).status,409);
+  assert.equal((await f.records('Inventory_Catalogue')).length,before);
+  assert.equal((await f.request('/api/products')).status,200);
+  assert.equal((await f.request('/api/products','POST',payload,'owner',{'x-pos-generation':'new-season'})).status,200);
+ }finally{delete process.env.POS_DATA_GENERATION;await f.db.close();}
 });

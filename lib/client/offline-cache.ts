@@ -1,3 +1,4 @@
+import { POS_DATA_GENERATION } from "@/lib/pos/data-generation";
 type OfflineCacheEntry<T> = {
   savedAt: number;
   value: T;
@@ -5,7 +6,7 @@ type OfflineCacheEntry<T> = {
 
 export type OfflineCacheValue<T> = OfflineCacheEntry<T>;
 
-const CACHE_PREFIX = "dalaieej:offline:";
+const CACHE_PREFIX = `dalaieej:offline:${POS_DATA_GENERATION}:`;
 
 export function readOfflineCache<T>(key: string): OfflineCacheValue<T> | null {
   if (typeof window === "undefined") return null;

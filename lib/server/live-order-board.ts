@@ -1,3 +1,4 @@
+import { POS_DATA_GENERATION } from "@/lib/pos/data-generation";
 import "server-only";
 
 import { Redis } from "@upstash/redis";
@@ -15,7 +16,7 @@ type BoardMeta = {
   initializedAt: string;
 };
 
-const LIVE_ORDER_BOARD_KEY = "dalaieej:live:orders:v1";
+const LIVE_ORDER_BOARD_KEY = `dalaieej:live:orders:${POS_DATA_GENERATION}`;
 const LIVE_ORDER_META_FIELD = "__board_meta__";
 const BOARD_TTL_SECONDS = 72 * 60 * 60;
 const BOARD_WRITE_TIMEOUT_MS = 2_000;

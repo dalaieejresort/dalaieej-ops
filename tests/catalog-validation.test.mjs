@@ -31,3 +31,13 @@ test('correcting the duplicate restores both products on the next validation', (
   const catalog = [product('INV-0205', 'Bebeto'), product('INV-0207', 'Mentos')];
   assert.deepEqual(validateCatalogSkus(catalog), { items: catalog, conflicts: [] });
 });
+
+test('packaged food remains counted stock even when its name contains a dessert keyword',()=>{
+ const source=ts.transpileModule(readFileSync(new URL('../lib/pos/inventory.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+ const inventoryModule={exports:{}};new Function('exports',source)(inventoryModule.exports);
+ const {isUnlimitedInventoryItem}=inventoryModule.exports;
+ assert.equal(isUnlimitedInventoryItem({sku:'INV-0038',category:'Бэлэн хүнс',name:'Lotte chocopie 4ш 112гр'}),false);
+ assert.equal(isUnlimitedInventoryItem({category:'Дессерт',name:'Apple pie'}),true);
+ assert.equal(isUnlimitedInventoryItem({category:'',name:'Apple pie'}),true);
+ assert.equal(isUnlimitedInventoryItem({sku:'INV-0188',category:'Архи',name:'Hennessy shot'}),true);
+});

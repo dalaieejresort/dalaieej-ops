@@ -1,3 +1,4 @@
+import { POS_DATA_GENERATION } from "@/lib/pos/data-generation";
 import "server-only";
 
 import { Redis } from "@upstash/redis";
@@ -35,7 +36,7 @@ function boardKey(businessDate: string) {
   if (!isValidBusinessDate(businessDate)) {
     throw new Error("Invalid management board business date");
   }
-  return `dalaieej:management:${businessDate}:v1`;
+  return `dalaieej:management:${businessDate}:${POS_DATA_GENERATION}`;
 }
 
 async function withBoardWriteTimeout<T>(operation: Promise<T>) {

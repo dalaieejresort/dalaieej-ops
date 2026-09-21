@@ -94,9 +94,12 @@ export async function verifySnapshot(sql,snapshot,schema=schemaName()) {
  for(const r of catalog.records)if(Math.abs((m.get(String(r.raw_cells[skuI]))??0)-Number(r.raw_cells[stockI]??0))>1e-8)throw Error('SQL stock differs');
  return {verified:true,datasets:datasets.length,records:snapshot.tables.reduce((n,t)=>n+t.records.length,0),stockVerified:snapshot.stockVerified,sourceSha256:snapshot.sourceSha256,totals:snapshot.totals};
 }
-export async function backup(sql,schema=schemaName()) {
+export async function backup(sql,schema=schemaName(),{preserveTimestamps=false}={}) {
  // One database transaction captures all tables at one consistent snapshot.
- const result=await sql.transaction(['datasets','records','imports','audit'].map(table=>sql.query(`SELECT * FROM "${schema}".${table} ORDER BY ${table==='records'?'dataset_id,row_number':table==='imports'?'source_sha256':'id'}`)),{isolationLevel:'RepeatableRead',readOnly:true});
+ const timestamps={records:'updated_at',imports:'imported_at',audit:'recorded_at'};
+ // JavaScript Date truncates PostgreSQL microseconds. Cutover snapshots must
+ // preserve them to support an exact source comparison before clearing data.
+ const result=await sql.transaction(['datasets','records','imports','audit'].map(table=>sql.query(`SELECT *${preserveTimestamps&&timestamps[table]?`,to_char(${timestamps[table]} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ${timestamps[table]}`:''} FROM "${schema}".${table} ORDER BY ${table==='records'?'dataset_id,row_number':table==='imports'?'source_sha256':'id'}`)),{isolationLevel:'RepeatableRead',readOnly:true});
  const data={format:'dalaieej-pos-backup-v1',createdAt:new Date().toISOString(),schema,tables:Object.fromEntries(['datasets','records','imports','audit'].map((name,i)=>[name,result[i]]))};
  return {...data,sha256:hash(data)};
 }
@@ -112,7 +115,8 @@ export async function restore(sql,archive,schema=schemaName()) {
  }
  queries.push(sql.query(`SELECT setval(pg_get_serial_sequence('"${schema}".audit','id'),GREATEST(COALESCE((SELECT max(id) FROM "${schema}".audit),0),1),EXISTS(SELECT 1 FROM "${schema}".audit))`));
  await sql.transaction(queries);
- const copy=await backup(sql,schema);
+ const preserveTimestamps=Object.entries({records:'updated_at',imports:'imported_at',audit:'recorded_at'}).some(([table,key])=>data.tables[table].some(row=>typeof row[key]==='string'&&/\.\d{6}Z$/.test(row[key])));
+ const copy=await backup(sql,schema,{preserveTimestamps});
  for(const table of Object.keys(data.tables))if(hash(data.tables[table])!==hash(copy.tables[table]))throw Error('Restore comparison failed: '+table);
  return {verified:true,schema,sha256};
 }

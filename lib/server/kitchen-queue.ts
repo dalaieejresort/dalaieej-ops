@@ -1,3 +1,4 @@
+import { POS_DATA_GENERATION } from "@/lib/pos/data-generation";
 import "server-only";
 import { deferPosEffect } from "./pos-storage/transaction";
 import { isKitchenTicketItem } from "@/lib/pos/preparation";
@@ -49,7 +50,7 @@ type KitchenOrderInput = {
   createdAt?: string;
 };
 
-const KITCHEN_QUEUE_KEY = "dalaieej:kitchen:orders:v1";
+const KITCHEN_QUEUE_KEY = `dalaieej:kitchen:orders:${POS_DATA_GENERATION}`;
 const QUEUE_TTL_SECONDS = 72 * 60 * 60;
 const ORDER_SAVE_TIMEOUT_MS = 2_000;
 

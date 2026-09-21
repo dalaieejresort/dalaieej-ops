@@ -29,7 +29,7 @@ test('POS ticket and kitchen queue use the same food routing, including salad an
 test('kitchen handoff retains table, billing account and preparation notes; replay preserves readiness; edits create a new revision',async()=>{
   const saved=new Map();
   const redis={hget:async(_key,id)=>saved.get(id),hdel:async(_key,id)=>saved.delete(id),pipeline(){let entry;return {hset(_key,value){entry=value;return this;},expire(){return this;},async exec(){for(const [key,value]of Object.entries(entry))saved.set(key,value);}};}};
-  const {syncKitchenOrder}=load('lib/server/kitchen-queue.ts',{'@upstash/redis':{Redis:{fromEnv:()=>redis}},'@/lib/pos/preparation':preparation});
+  const {syncKitchenOrder}=load('lib/server/kitchen-queue.ts',{'@upstash/redis':{Redis:{fromEnv:()=>redis}},'@/lib/pos/preparation':preparation,'@/lib/pos/data-generation':{POS_DATA_GENERATION:'test'}});
   const input={orderId:'TEST',businessDate:'2026-09-14',roomOrGuest:'7',serviceTable:'12',preparationNotes:'Сонгиногүй',staff:'Waiter A',items:[{sku:'SALAD',name:'Грек салат',qty:2}]};
   const first=await syncKitchenOrder(input);
   assert.equal(first.serviceTable,'12');assert.equal(first.roomOrGuest,'7');assert.equal(first.preparationNotes,'Сонгиногүй');assert.equal(first.items[0].quantity,2);

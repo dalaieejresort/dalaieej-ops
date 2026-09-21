@@ -4527,6 +4527,11 @@ export function RegisterApp({
             {cashOpeningPending ? "Касс нээх" : dayOpen ? "Хаалт хийх" : "Өдөр нээх"}
           </button>}
           {canManageOperations && (
+            <a href="/products" className="flex h-10 items-center border border-[#cbd5e1] bg-white px-3 text-sm">
+              Бараа / Stock
+            </a>
+          )}
+          {canManageOperations && (
             <button
               type="button"
               onClick={openVoidModal}

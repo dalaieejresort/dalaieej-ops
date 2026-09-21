@@ -676,7 +676,9 @@ export function OpsDashboard({ businessDate }: OpsDashboardProps) {
         <a href="/ops" aria-current="page"><span>02</span> Удирдлага</a>
         <a href="/kitchen"><span>03</span> Гал тогоо</a>
         <a href="/waiter"><span>04</span> Үйлчилгээ</a>
-        <a href="https://receipts.dalaieej.mn/finance"><span>05</span> Санхүү ↗</a>
+        <a href="/products"><span>05</span> Бараа / Stock</a>
+        <a href="/archive"><span>06</span> Улирлын архив</a>
+        <a href="https://receipts.dalaieej.mn/dashboard"><span>07</span> Санхүү ↗</a>
       </nav>
       <header className="border-b border-[#d7dde7] bg-white">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-4 px-4 py-4 sm:px-6">

@@ -1,0 +1,26 @@
+.workspace { padding-top:40px; min-height:100dvh; padding-bottom:64px; background:#fff; color:#000; font:400 12px/1.5 Arial,sans-serif; }
+.topbar { position:fixed; inset:0 0 auto; height:40px; display:flex; align-items:center; padding:0 16px; border-bottom:.5px solid #8c8c8c; background:#fff; z-index:50; }
+.nav { position:fixed; top:40px; bottom:0; width:123px; padding-top:72px; border-right:.5px solid #8c8c8c; background:#fff; }
+.nav a { display:block; padding:5px 8px; font-size:10px; border-bottom:.5px solid #8c8c8c; }
+.nav a[aria-current] { background:#f0f0f0; }
+.main { margin-left:123px; max-width:1040px; border-right:.5px solid #8c8c8c; }
+.title { min-height:72px; padding:16px 24px; border-bottom:.5px solid #8c8c8c; }
+.title h1 { font-size:24px; font-weight:400; }
+.title p,.muted { color:#666; }
+.forms { display:grid; grid-template-columns:1fr 1fr; }
+.section { min-width:0; padding:24px; border-bottom:.5px solid #8c8c8c; }
+.forms .section:first-child { border-right:.5px solid #8c8c8c; }
+.section h2 { font-size:16px; font-weight:400; margin-bottom:12px; }
+.section label { display:grid; gap:4px; margin:12px 0; }
+.section input,.section select { width:100%; min-width:0; padding:8px; border:.5px solid #8c8c8c; background:#fff; border-radius:0; }
+.section button,.button { display:inline-block; padding:9px 14px; margin-top:8px; border:.5px solid #8c8c8c; cursor:pointer; }
+.section button[type=submit] { background:#D2042D; color:#fff; border-color:#D2042D; }
+.section button:disabled { opacity:.5; cursor:wait; }
+.feedback { padding:16px 24px; border-bottom:.5px solid #8c8c8c; }
+.workspace :is(a,button,input,select):focus-visible { outline:2px solid #D2042D; outline-offset:2px; }
+.tableWrap { overflow-x:auto; }
+.section table { width:100%; border-collapse:collapse; text-align:left; }
+.section th,.section td { padding:10px 8px; border-bottom:.5px solid #ccc; font-weight:400; vertical-align:top; }
+.section td:first-child { min-width:160px; }
+.section th { color:#666; font-size:10px; }
+@media(max-width:767px) { .nav { position:static; display:flex; width:100%; padding:0; overflow:auto; border-right:0; border-bottom:.5px solid #8c8c8c; } .nav a { white-space:nowrap; padding:10px; border:0; } .main { margin-left:0; border-right:0; } .forms { grid-template-columns:minmax(0,1fr); } .forms .section:first-child { border-right:0; } .section,.title { padding:16px; } .section input,.section select { font-size:16px; } }

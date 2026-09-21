@@ -189,9 +189,9 @@ export function isUnlimitedInventoryItem(item: {
   name?: unknown;
   sku?: unknown;
 }) {
-  return (
-    isUnlimitedInventoryCategory(item.category) ||
-    isUnlimitedInventorySku(item.sku) ||
-    isMadeToOrderInventoryName(item.name)
-  );
+  if (isUnlimitedInventoryCategory(item.category) || isUnlimitedInventorySku(item.sku)) return true;
+  // Packaged food is counted stock: "chocopie" must not match the kitchen's
+  // fallback "pie" keyword and disappear from stock receiving.
+  if (normalizeInventoryCategory(item.category) === "бэлэн хүнс") return false;
+  return isMadeToOrderInventoryName(item.name);
 }

@@ -1,3 +1,4 @@
+import { POS_DATA_GENERATION } from "@/lib/pos/data-generation";
 const DEFAULT_READ_TIMEOUT_MS = 8000;
 const activeReadRequests = new Map<string, Promise<Response>>();
 let readBackoffUntil = 0;
@@ -18,7 +19,10 @@ export async function fetchWithTimeout(
   init?: RequestInit,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
 ) {
-  if (init?.signal) return fetch(input, init);
+  const headers = new Headers(init?.headers);
+  headers.set("x-pos-generation", POS_DATA_GENERATION);
+  init = { ...init, headers };
+  if (init.signal) return fetch(input, init);
 
   const method = (init?.method ?? "GET").toUpperCase();
   const readKey = method === "GET" ? readRequestKey(input) : "";
