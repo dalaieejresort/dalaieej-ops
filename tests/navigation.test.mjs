@@ -9,7 +9,7 @@ const source = ts.transpileModule(
 ).outputText;
 const loaded = { exports: {} };
 new Function('exports', source)(loaded.exports);
-const items = (role, service = false) => loaded.exports.operationsNavigation(role, service).flatMap(section => section.items);
+const items = role => loaded.exports.operationsNavigation(role).flatMap(section => section.items);
 
 test('navigation respects the different staff workspaces and owner-only archive', () => {
   for (const role of ['waiter', 'cashier', 'kitchen']) {
@@ -23,9 +23,9 @@ test('navigation respects the different staff workspaces and owner-only archive'
   assert.ok(items('owner').some(item => item.id === 'archive'));
 });
 
-test('cross-page tab links target the selected register or waiter workflow', () => {
-  for (const [role, service, base] of [['owner', false, '/register'], ['cashier', false, '/register'], ['waiter', false, '/waiter'], ['owner', true, '/waiter']]) {
-    for (const item of items(role, service).filter(item => item.tab)) {
+test('staff with desktop access always get desktop destinations; restricted waiters keep their permitted workspace', () => {
+  for (const [role, base] of [['owner', '/register'], ['manager', '/register'], ['cashier', '/register'], ['waiter', '/waiter']]) {
+    for (const item of items(role).filter(item => item.tab)) {
       const url = new URL(item.href, 'https://ops.dalaieej.mn');
       assert.equal(url.pathname, base);
       assert.equal(url.searchParams.get('tab'), item.tab);

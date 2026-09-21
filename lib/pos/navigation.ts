@@ -4,10 +4,10 @@ export type RegisterTab = "sale" | "charges" | "history" | "day-close";
 export type NavigationItem = { id: string; label: string; href: string; tab?: RegisterTab };
 export type NavigationSection = { label: string; items: NavigationItem[] };
 
-export function operationsNavigation(role: OpsRole, service = false): NavigationSection[] {
+export function operationsNavigation(role: OpsRole): NavigationSection[] {
   const manager = role === "manager" || role === "owner";
   if (role === "kitchen") return [{ label: "Үйлчилгээ", items: [{ id: "kitchen", label: "Гал тогоо", href: "/kitchen" }] }];
-  const base = service || role === "waiter" ? "/waiter" : "/register";
+  const base = role === "waiter" ? "/waiter" : "/register";
   const tabs: NavigationItem[] = [
     { id: "sale", tab: "sale", label: "Борлуулалт", href: `${base}?tab=sale` },
     { id: "charges", tab: "charges", label: "Өр", href: `${base}?tab=charges` },
