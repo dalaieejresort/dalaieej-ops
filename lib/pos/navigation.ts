@@ -17,7 +17,6 @@ export function operationsNavigation(role: OpsRole): NavigationSection[] {
   const sections: NavigationSection[] = [{ label: "Өдөр тутам", items: tabs }];
   if (manager) sections.push({ label: "Удирдлага", items: [
     { id: "products", label: "Бараа / Үлдэгдэл", href: "/products" },
-    { id: "ops", label: "Өдрийн тойм", href: "/ops" },
     ...(role === "owner" ? [{ id: "archive", label: "Улирлын архив", href: "/archive" }] : []),
   ] });
   if (role !== "waiter") sections.push({ label: "Үйлчилгээ", items: [

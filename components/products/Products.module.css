@@ -56,3 +56,11 @@
   .forms .section > .muted { min-height: 0; }
   .section input, .section select { min-height: 44px; font-size: 16px; }
 }
+
+.adjustmentForm { max-width: 600px; }
+.adjustmentForm fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
+.section [role=alert] { color: var(--ui-accent); }
+.section .filter { display: flex; align-items: center; gap: 8px; }
+.section .filter input { width: 16px; min-height: 16px; accent-color: var(--ui-accent); }
+.section[id] { scroll-margin-top: calc(var(--ui-topbar) + 12px); }
+.button { color: inherit; text-decoration: none; }

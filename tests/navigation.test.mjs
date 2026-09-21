@@ -32,3 +32,14 @@ test('staff with desktop access always get desktop destinations; restricted wait
     }
   }
 });
+
+
+test('the daily overview is removed for every role while closing and stock remain accessible', () => {
+  for (const role of ['waiter', 'cashier', 'kitchen', 'manager', 'owner']) {
+    assert.ok(items(role).every(item => item.href !== '/ops' && item.id !== 'ops'));
+  }
+  for (const role of ['manager', 'owner']) {
+    assert.ok(items(role).some(item => item.tab === 'day-close'));
+    assert.ok(items(role).some(item => item.href === '/products'));
+  }
+});

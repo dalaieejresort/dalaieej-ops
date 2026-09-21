@@ -504,7 +504,7 @@ export function MobileApp({ businessDate }: MobileAppProps) {
 
         <section className="mt-4 grid grid-cols-2 gap-3">
           <ActionLink href="/register" label="Касс" />
-          <ActionLink href="/ops" label="Ops" variant="secondary" />
+          <ActionLink href="/register?tab=day-close" label="Өдрийн хаалт" variant="secondary" />
         </section>
 
         <section className="mt-5">

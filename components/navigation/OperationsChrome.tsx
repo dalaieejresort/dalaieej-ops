@@ -3,12 +3,13 @@
 import Link from "next/link";
 import type { OpsRole } from "@/lib/auth-types";
 import { operationsNavigation, type RegisterTab } from "@/lib/pos/navigation";
+import { OperationalChecks } from "@/components/system/OperationalChecks";
 import { ActionMenu } from "./ActionMenu";
 import styles from "./Navigation.module.css";
 
 export function OperationsChrome({ role, active, tab, onTabChange, counts = {}, compact = false, service = false }: {
   role: OpsRole;
-  active: "register" | "products" | "ops" | "archive" | "kitchen";
+  active: "register" | "products" | "archive" | "kitchen";
   tab?: RegisterTab;
   onTabChange?: (tab: RegisterTab) => void;
   counts?: Partial<Record<RegisterTab, number>>;
@@ -36,6 +37,7 @@ export function OperationsChrome({ role, active, tab, onTabChange, counts = {}, 
       <ActionMenu label="Хэсгүүд" className={`${styles.mobileMenu} ${compact ? styles.alwaysMenu : ""}`}>
         <nav aria-label="Үйл ажиллагааны хэсгүүд">{content()}</nav>
       </ActionMenu>
+      {(role === "manager" || role === "owner") && <OperationalChecks />}
     </div>
     {!compact && <nav className={styles.rail} aria-label="Үйл ажиллагааны үндсэн цэс">{content()}</nav>}
   </>;

@@ -1,11 +1,11 @@
 # Products, stock and season archives
 
-Managers and owners can open https://ops.dalaieej.mn/products from **Бараа / Stock** in the POS or Management navigation.
+Managers and owners can open https://ops.dalaieej.mn/products from **Бараа / Үлдэгдэл** in the POS navigation.
 
 - **New product:** enter a distinct name, category and selling prices. The server allocates the next unused `INV-####` SKU. The product starts at zero stock.
 - **Opening stock:** select an existing product, enter its physically counted quantity and a reason. Use this once, before any movements for that product.
 - **Delivery:** select the product, quantity received and supplier/invoice reference. It adds to existing stock. Both forms work before opening the cash register.
-- **Corrections:** use Management's stock-count adjustment with a signed quantity difference and reason.
+- **Corrections:** use the stock-count adjustment on the Products page with a signed quantity difference and reason.
 - Food and services with unlimited availability do not use stock receiving. Stock receiving does not create a financial payment or purchase receipt; record that separately on receipts.dalaieej.mn.
 
 Creation and receiving require manager access and run in the same transaction as the operation journal. Repeating the same request cannot create a second product or delivery; changing the payload while reusing its request ID is rejected. Stock receipts use the catalogue's SKU and canonical name.
@@ -13,6 +13,15 @@ Creation and receiving require manager access and run in the same transaction as
 Owners can download history from https://ops.dalaieej.mn/archive. Seasons run **September 1–August 31**, named by ending year, matching receipts.dalaieej.mn. September 2026 belongs to Season 2027. Undated records remain separately identified. The complete recovery download includes the original catalogue, all record values, row counters, imports and audit history.
 
 Archiving does not settle old debts or resolve historical SKU discrepancies. The reset removes them from live POS activity while preserving the evidence in private archives. Catalogue products remain; stock starts at zero. Order and receipt allocation counters continue, so identifiers are not reused.
+
+## Daily workflow
+
+The separate **Өдрийн тойм** dashboard has been removed. Existing `/ops` bookmarks redirect to **Өдрийн хаалт**.
+
+- **Борлуулалт → Өр → Өдрийн хаалт:** sell, collect outstanding balances, then compare sales, payments, expected cash and counted cash before closing.
+- **Бараа / Үлдэгдэл:** create products, receive stock, review every tracked product with stock at or below three, and enter signed stock-count corrections. Corrections retain their reason, actor and idempotent request ID, and require an open cash day.
+- Managers and owners see **Анхаар!** in the shared header when data checks, unfinished operations or check-loading failures need attention. Details include the existing manual missing-line repair. Healthy checks stay out of the header; **Өгөгдлийн шалгалт** in the account menu opens them on demand. Checks refresh while the page is visible, and the dialog offers a fresh read.
+- Failed saves remain visible at the affected form. A failed check is shown as unavailable/stale, not proof that the data is healthy.
 
 ## Cutover procedure
 

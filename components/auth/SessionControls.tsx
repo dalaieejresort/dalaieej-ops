@@ -39,6 +39,7 @@ export function SessionControls({
     <div className={styles.session}>
       <ActionMenu label={displayName}>
         {displayName !== ROLE_LABELS[role] && <p>{ROLE_LABELS[role]}</p>}
+      {(role === "manager" || role === "owner") && <button type="button" onClick={() => window.dispatchEvent(new Event("pos:open-checks"))}>Өгөгдлийн шалгалт</button>}
       <button
         type="button"
         disabled={submitting}
