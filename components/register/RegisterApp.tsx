@@ -4530,7 +4530,7 @@ export function RegisterApp({
                     disabled={!cartState.lastAddition || saleStatus === "saving"}
                     aria-label="Сүүлд нэмсэн барааг буцаах"
                     title={cartState.lastAddition ? `${cartState.lastAddition.name}: сүүлийн нэмэлтийг буцаах` : "Буцаах нэмэлт алга"}
-                    className="h-11 shrink-0 rounded-md border border-[#cbd5e1] bg-[#fff7e6] px-3 text-sm font-bold text-[#111827] hover:bg-[#ffedc2] disabled:bg-white disabled:opacity-40"
+                    className={`h-11 shrink-0 rounded-md border border-[#cbd5e1] bg-[#fff7e6] px-3 text-sm font-bold text-[#111827] hover:bg-[#ffedc2] disabled:bg-white disabled:opacity-40 ${phoneLayout ? "" : "lg:hidden"}`}
                   >
                     ↶ Буцаах
                   </button>
