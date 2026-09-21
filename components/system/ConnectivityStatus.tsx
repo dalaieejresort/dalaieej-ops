@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import styles from "./ConnectivityStatus.module.css";
-import type { OpsRole } from "@/lib/auth-types";
 
 type ConnectionState =
   | "checking"
@@ -27,11 +26,10 @@ function statusMessage(state: ConnectionState) {
   return "";
 }
 
-export function ConnectivityStatus({ role }: { role?: OpsRole }) {
+export function ConnectivityStatus() {
   const pathname = usePathname();
   const loginRoute = pathname === "/login";
   const [state, setState] = useState<ConnectionState>("checking");
-  const [lastHealthyAt, setLastHealthyAt] = useState<Date | null>(null);
 
   const checkHealth = useCallback(async () => {
     if (!window.navigator.onLine) {
@@ -46,7 +44,6 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
         | null;
       if (response.ok) {
         setState(payload?.writesPaused ? "maintenance" : "healthy");
-        setLastHealthyAt(new Date());
         return;
       }
       if (payload?.code === "POS_DATABASE_UNAVAILABLE") {
@@ -85,21 +82,7 @@ export function ConnectivityStatus({ role }: { role?: OpsRole }) {
     };
   }, [checkHealth, loginRoute]);
 
-  if (loginRoute) return null;
-
-  if (state === "healthy") {
-    if (role === "kitchen") return null;
-    return (
-      <div role="status" className={styles.connected}>
-        <span>Өгөгдөл холбогдсон</span>
-        <time className={styles.timestamp} dateTime={lastHealthyAt?.toISOString()}>
-          {lastHealthyAt?.toLocaleTimeString("mn-MN", { hour: "2-digit", minute: "2-digit", hour12: false })}
-        </time>
-      </div>
-    );
-  }
-
-  if (state === "checking") return null;
+  if (loginRoute || state === "healthy" || state === "checking") return null;
 
   return (
     <div
