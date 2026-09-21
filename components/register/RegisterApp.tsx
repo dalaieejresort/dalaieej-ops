@@ -7,6 +7,8 @@ import { NumberPad } from "@/components/input/NumberPad";
 import { isKitchenTicketItem } from "@/lib/pos/preparation";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { cartReducer } from "@/lib/pos/cart";
+import { getHistoryEntryKey } from "@/lib/pos/history";
+import { validateCatalogSkus } from "@/lib/pos/catalog-validation";
 import {
   readOfflineCache,
   removeOfflineCache,
@@ -1883,7 +1885,7 @@ export function RegisterApp({
   const [historyMessage, setHistoryMessage] = useState("");
   const [historyQueryInput, setHistoryQueryInput] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
-  const [selectedHistoryTransactionId, setSelectedHistoryTransactionId] =
+  const [selectedHistoryEntryKey, setSelectedHistoryEntryKey] =
     useState("");
   const [unpaidCharges, setUnpaidCharges] = useState<UnpaidCharge[]>([]);
   const [chargesStatus, setChargesStatus] = useState<CatalogStatus>("loading");
@@ -2018,10 +2020,10 @@ export function RegisterApp({
 
   const applySalesHistory = useCallback((history: RecentSale[]) => {
     setHistorySales(history);
-    setSelectedHistoryTransactionId((current) =>
-      history.some((sale) => sale.transactionId === current)
+    setSelectedHistoryEntryKey((current) =>
+      history.some((sale) => getHistoryEntryKey(sale) === current)
         ? current
-        : history[0]?.transactionId ?? "",
+        : history[0] ? getHistoryEntryKey(history[0]) : "",
     );
   }, []);
 
@@ -2111,7 +2113,7 @@ export function RegisterApp({
       }
 
       setHistorySales([]);
-      setSelectedHistoryTransactionId("");
+      setSelectedHistoryEntryKey("");
       setHistoryStatus("sample");
       setHistoryMessage(
         error instanceof Error ? error.message : "Төлөгдсөн түүх авч чадсангүй",
@@ -2176,7 +2178,7 @@ export function RegisterApp({
       setSelectedChargeIds([]);
       setChargesStatus("sample");
       setHistorySales([]);
-      setSelectedHistoryTransactionId("");
+      setSelectedHistoryEntryKey("");
       setHistoryStatus("sample");
       const message =
         error instanceof Error ? error.message : "Өр, түүх шинэчилж чадсангүй";
@@ -2578,7 +2580,8 @@ export function RegisterApp({
       document.removeEventListener("fullscreenchange", syncFullscreenState);
   }, []);
 
-  const products = useMemo(() => getDisplayProducts(catalog), [catalog]);
+  const validatedCatalog = useMemo(() => validateCatalogSkus(catalog), [catalog]);
+  const products = useMemo(() => getDisplayProducts(validatedCatalog.items), [validatedCatalog]);
 
   const visibleProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -2701,14 +2704,14 @@ export function RegisterApp({
       requestAnimationFrame(() => document.getElementById("register-cart")?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }
   }
-  const activeHistoryTransactionId = filteredHistorySales.some(
-    (sale) => sale.transactionId === selectedHistoryTransactionId,
+  const activeHistoryEntryKey = filteredHistorySales.some(
+    (sale) => getHistoryEntryKey(sale) === selectedHistoryEntryKey,
   )
-    ? selectedHistoryTransactionId
-    : filteredHistorySales[0]?.transactionId ?? "";
+    ? selectedHistoryEntryKey
+    : filteredHistorySales[0] ? getHistoryEntryKey(filteredHistorySales[0]) : "";
   const selectedHistorySale =
     filteredHistorySales.find(
-      (sale) => sale.transactionId === activeHistoryTransactionId,
+      (sale) => getHistoryEntryKey(sale) === activeHistoryEntryKey,
     ) ?? null;
   const selectedHistorySaleTotal =
     selectedHistorySale?.saleTotal ?? selectedHistorySale?.total ?? 0;
@@ -4559,7 +4562,7 @@ export function RegisterApp({
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
-        <section className="flex h-[calc(100dvh-11rem)] min-h-[420px] flex-col border-r border-[#d1d5db] md:h-auto md:min-h-[360px] md:max-h-[70dvh] lg:min-h-0 lg:max-h-none">
+        <section key={registerMode} className="flex h-[calc(100dvh-11rem)] min-h-[420px] flex-col border-r border-[#d1d5db] md:h-auto md:min-h-[360px] md:max-h-[70dvh] lg:min-h-0 lg:max-h-none">
           {registerMode === "day-close" ? (
             <>
               <div className="shrink-0 border-b border-[#d1d5db] bg-white px-4 py-3">
@@ -4705,6 +4708,16 @@ export function RegisterApp({
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 md:pb-3">
+                {validatedCatalog.conflicts.length > 0 && (
+                  <div role="alert" className="mb-3 rounded-md border border-[#f59e0b] bg-[#fffbeb] px-3 py-2 text-sm font-medium text-[#92400e]">
+                    Давхардсан кодтой барааг түр нуусан. Каталогийн кодыг засаж, шинэчилнэ үү:
+                    <ul className="mt-1 list-inside list-disc">
+                      {validatedCatalog.conflicts.map(({ sku, names }) => (
+                        <li key={sku}>{sku}: {names.join(", ")}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {catalogStatus === "error" && (
                   <div className="mb-3 rounded-md border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-sm font-medium text-[#b91c1c]">
                     Каталог шинэчлэгдсэнгүй: {catalogMessage}
@@ -5006,18 +5019,19 @@ export function RegisterApp({
                 ) : (
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                     {filteredHistorySales.map((sale) => {
+                      const entryKey = getHistoryEntryKey(sale);
                       const balance = sale.balance ?? 0;
                       const isPartial = sale.paidStatus === "partial" || balance > 0;
 
                       return (
                         <button
-                          key={sale.transactionId}
+                          key={entryKey}
                           type="button"
                           onClick={() =>
-                            setSelectedHistoryTransactionId(sale.transactionId)
+                            setSelectedHistoryEntryKey(entryKey)
                           }
                           className={`rounded-md border bg-white p-3 text-left shadow-sm transition hover:border-[#2563eb] hover:shadow ${
-                            activeHistoryTransactionId === sale.transactionId
+                            activeHistoryEntryKey === entryKey
                               ? "border-[#111827] ring-2 ring-[#111827]"
                               : "border-[#d1d5db]"
                           }`}
